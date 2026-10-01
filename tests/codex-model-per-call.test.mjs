@@ -162,7 +162,7 @@ test("Codex answering as a model works in Branch's own empty folder, and only th
   await provider.complete(request());
   const args = calls[0];
   assert.deepEqual(args.slice(args.indexOf("-C"), args.indexOf("-C") + 3), ["-C", dir, "--skip-git-repo-check"]);
-  assert.deepEqual(codexArgs(["exec", "--json", "-"], "gpt-5.5"), ["exec", "-c", "model=gpt-5.5", "--json", "-"], "no folder given: the trust check stays");
+  assert.deepEqual(codexArgs(["exec", "--json", "-"], "gpt-5.5"), ["exec", "-c", "model=gpt-5.5", "-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="never"', "--json", "-"], "no folder given: the trust check stays");
   assert.ok(!programCall("codex", "/work").args.includes("--skip-git-repo-check"), "a hand-off to the owner's own folder keeps Codex's trust check");
 });
 

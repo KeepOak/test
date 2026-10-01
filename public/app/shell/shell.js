@@ -8,7 +8,8 @@ import { on, run } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, openDlg, toast } from "../core/ui.js";
 import { greyOut, markLive } from "../core/features.js";
 import { stillOutOfSight } from "../core/still.js";
-import { head as chatHead, openConversation, startFresh, addDockItem } from "../chat/chat.js";
+import { head as chatHead, openConversation, startFresh, addDockItem, conversationWho } from "../chat/chat.js";
+import { contextMeter } from "./context-audit.js";
 import { groups, lineOf, currentOf, freshIn, linePinned, lastAt, sid as idOf } from "../chat/trunkline.js"; // trunk-one-row
 import { statusItems } from "../chat/messages.js";
 import { initExtras, gatewayOn, readGateway } from "./extras.js";
@@ -47,11 +48,12 @@ import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
 import { projectRows, loadProjects } from "../places/project.js"; // area projects: the fold's rows and a project's own page
 import { initWhatCan } from "../flows/whatcan.js"; // the "What can Branch do" gallery
 import { homeButton, initHome } from "./home.js"; // RES-701: the Home panel beside any page
+import { olderConversationsHTML, initSessionPages } from "./session-pages.js";
 import { simpleButton, initSimple } from "./simple.js"; // RES-704: the Simple / Advanced switch
 
 const WIDE = matchMedia("(min-width: 761px)");
 export const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], ["automations", "clock", "Automations"],
-  ["library", "book", "Library"], ["team", "users", "Team"], ["customize", "sliders", "Customize"]];
+  ["library", "book", "Library"], ["team", "users", "Team"], ["customize", "sliders", "Customize"], ["seasons", "star", "Seasons"]];
 
 /* A place's own header, the prototype's placeHead: on a narrow window the button that slides the list in, and Settings.
    It sits in the title-bar row at every width, as the conversation's header does (drawShell). */
@@ -169,7 +171,7 @@ function list() {
   return `<nav class="list" aria-label="${t("people.home.list")}">
     ${hidden("projects") ? "" : `<button class="lh lh-btn" type="button" data-act="projtoggle" aria-expanded="${!!S.projOpen}" data-hide="projects">${ic(S.projOpen ? "down" : "chev", "s")}${t("memory.movein.kind.project")}</button>${S.projOpen ? projectRows() : ""}`}
     ${pinned.length ? `<div class="lh">${t("window.shell.shell.pinned")}</div>${rows(pinned)}` : ""}
-    ${recent.length ? `<div class="lh${recentClass()}">${t("window.shell.shell.recent")}${markAllButton()}</div>${rows(recent)}` : ""}${putAwayEntries()}</nav>`;
+    ${recent.length ? `<div class="lh${recentClass()}">${t("window.shell.shell.recent")}${markAllButton()}</div>${rows(recent)}` : ""}${olderConversationsHTML()}${putAwayEntries()}</nav>`;
 }
 
 function side() {
@@ -199,6 +201,7 @@ function status() {
   return `<button class="sb" type="button" data-act="machines"><span class="dot ${link.up ? "" : "off"}"></span><span class="sbt18c">${link.up ? t("layout.connected") : t("window.shell.shell.not-connected")}</span><span class="where18c"> · ${esc(machineName() || t("window.shell.shell.this-computer"))}</span></button>
     ${hidden("gateway") ? "" : `<button class="sb" type="button" data-act="gwpop" data-hide="gateway" data-tip="${t("window.shell.shell.the-gateway-keeps-branch-running-in")}"><span class="dot${link.up && gatewayOn() ? "" : " off"}"></span><span class="sbt18c">${!link.up || gatewayOn() == null ? t("window.settings.gateway.gateway") : gatewayOn() ? t("window.shell.shell.gateway-on") : t("window.shell.shell.gateway-off")}</span></button>`}
     ${statusItems()}
+    ${contextMeter(conversationWho().sessionId)}
     ${updateItem()}
     <button class="sb tasks10" type="button" data-act="tasks10" data-tip="${t("window.shell.shell.what-is-running-in-the-background")}"><i class="${working() ? "lit10" : ""}"></i>${working()} ${t("window.shell.shell.running")}</button>${pausedChip()}
     ${petHTML("status")}
@@ -269,6 +272,7 @@ export function initShell() {
   initAutoUpdate();
   initUpdating(); // the update screen (shell/updating.js)
   initSearch();
+  initSessionPages();
   initThemes();
   initPalette();
   initPerson();
@@ -341,7 +345,8 @@ function rowMenu(e) {
   const id = esc(row.dataset.id), s = E.sessions.find((x) => sessionId(x) === row.dataset.id), tr = line ?? (s && trunkFor(s));
   const pin = line ? mi("tl-pin", "pin", linePinned(line) ? t("accounts.action.unpin") : t("window.shell.extras.pin-to-top"), "", `data-id="${esc(line.id)}"`)
     + mi("rename-id", "edit", t("accounts.action.rename"), "", `data-id="${esc(line.chatSessionId)}"`) : convItems(row.dataset.id);
-  const base = mi("chat", "chat", t("ov.open"), "", `data-id="${id}"${line ? ` data-line="${esc(line.id)}"` : ""}`) + unreadItem(row.dataset.id) + pin;
+  const pane = row.dataset.id !== S.chat ? mi("pane-add", "cols15", t("window.panes.open-in-pane"), "", `data-id="${id}"`) : ""; // RES-703
+  const base = mi("chat", "chat", t("ov.open"), "", `data-id="${id}"${line ? ` data-line="${esc(line.id)}"` : ""}`) + pane + unreadItem(row.dataset.id) + pin;
   const tid = esc(tr?.id ?? "");
   const trunk = tr ? mi("new-with", "plus", t("window.shell.shell.new-conversation-with-name", { name: esc(tr.name) }), "", `data-id="${tid}"`) + roomItems(tr.id) + mi("pausetrunk", "pause", tr.paused ? t("autonomy.resume") : t("autonomy.pause"), "", `data-id="${tid}"`) + mi("edit", "sliders", t("window.shell.shell.edit-trunk"), "", `data-id="${tid}"`) + "<hr>" + mi("remove", "trash", t("strip.menu.remove"), "", `data-id="${tid}"`) : "";
   /* A room's own row ends with the prototype's "Leave and archive", greyed: the engine keeps no leaving or archiving of

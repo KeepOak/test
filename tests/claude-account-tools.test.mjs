@@ -92,12 +92,13 @@ test("Claude model variants use canonical account switching and helper account r
   assert.equal(run.status, "completed"); assert.match(run.output, /variant helper proof/);
   assert.ok(f.seen.every((body) => body.model === "claude-sonnet-5"));
   assert.ok(f.launches.every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.homeOf(pool, second)));
-  const before = f.launches.length;
+  // A native transport now serves every round of one conversation, so launches and requests are counted apart.
+  const before = f.launches.length, beforeSeen = f.seen.length;
   const helper = await f.app.runtime.delegate("Read proof.txt", f.app.runtime.context({ runId: run.id }), ["files.read"], "", {
     model: `${pool}-haiku-4-5`, accountRef: { pool, account: third },
   });
   assert.equal(helper.status, "completed"); assert.match(helper.output, /variant helper proof/);
-  assert.ok(f.seen.slice(before).every((body) => body.model === "claude-haiku-4-5"));
+  assert.ok(f.seen.slice(beforeSeen).every((body) => body.model === "claude-haiku-4-5"));
   assert.ok(f.launches.slice(before).every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.homeOf(pool, third)));
   assert.equal(f.service.pool(pool).defaultAccount, "primary");
 });
@@ -106,6 +107,7 @@ test("parallel helpers use distinct saved Claude accounts through Branch's tool 
   await writeFile(join(f.root, "workspace", "proof.txt"), "helper account proof\n");
   const parent = await f.app.runtime.run({ prompt: "Read proof.txt", permissions: ["files.read"] });
   assert.equal(parent.status, "completed");
+  const offset = f.launches.length;
   const context = f.app.runtime.context({ runId: parent.id });
   const prompts = [second, third].map((account) => f.app.runtime.delegate("Read proof.txt", context, ["files.read"], "", {
     model: pool, accountRef: { pool, account },
@@ -113,7 +115,7 @@ test("parallel helpers use distinct saved Claude accounts through Branch's tool 
   const children = await Promise.all(prompts);
   assert.ok(children.every((run) => run.status === "completed" && run.output.includes("helper account proof")));
   assert.equal(new Set(children.map((run) => run.sessionId)).size, 2);
-  assert.deepEqual([...new Set(f.launches.slice(2).map((call) => call.env.CLAUDE_CONFIG_DIR))].sort(),
+  assert.deepEqual([...new Set(f.launches.slice(offset).map((call) => call.env.CLAUDE_CONFIG_DIR))].sort(),
     [f.service.homeOf(pool, second), f.service.homeOf(pool, third)].sort());
   for (const child of children)
     assert.equal(f.app.store.events(child.id).filter((event) => event.kind === "tool.completed" && event.data.name === "files.read").length, 1);
@@ -315,4 +317,13 @@ test("models-ui: a specialist's saved Claude account answers its helpers through
   assert.equal(child.status, "completed", child.output); assert.match(child.output, /specialist account proof/);
   assert.ok(f.launches.slice(before).every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.homeOf(pool, third)), "the saved account's own Claude folder");
   assert.equal(f.service.pool(pool).defaultAccount, "primary", "the owner's account order is untouched");
+});
+test("the window's model list names the account pool of every Claude variant, as the accounts service does (MODEL-135)", async (t) => {
+  const f = await fixture(t);
+  const listed = f.app.runtime.models.summary(f.app.runtime.owner).presets;
+  for (const id of [pool, `${pool}-sonnet`, `${pool}-haiku-4-5`]) {
+    const one = listed.find((preset) => preset.id === id);
+    assert.ok(one, `${id} is listed`);
+    assert.equal(one.accountPool, f.service.poolFor(f.app.runtime.models.presets.get(id)).pool, `${id} uses the Claude account pool`);
+  }
 });

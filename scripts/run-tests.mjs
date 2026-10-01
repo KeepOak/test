@@ -16,6 +16,9 @@
 // which is where the weights come from (scripts/test-weights.mjs). `--list` prints the files and runs nothing.
 // `--files-from=selected-tests.json` runs an explicit selector-produced subset and refuses any path that is not part
 // of the discovered suite, and an empty subset. With --lane and --shard it is split like the whole suite.
+// `--retry-failed` (merge-queue and push runs only) runs a failed file once more, alone, after the share has finished,
+// when at most RETRY_AT_MOST files failed and none ran past its limit; a file that passes then is named flaky, not
+// hidden. On 2026-09-30 load-driven browser flakes ejected four merge-queue groups in an hour.
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -252,12 +255,39 @@ export async function runPool(files, { kindOf, limits, cost = () => 0, runOne = 
   return results;
 }
 
+export const RETRY_AT_MOST = 2;
+
+/**
+ * Run each failed file once more, one at a time, and resolve with the files that still fail and the ones that passed
+ * on the second run (flaky). No retry when more than RETRY_AT_MOST failed (that is a real break) or a file ran past its
+ * limit (a second run would not fit the job's time).
+ */
+export async function retryFailed(failed, { runOne = runFile, onDone = () => {}, passed = (result) => result.status === 0 } = {}) {
+  if (!failed.length || failed.length > RETRY_AT_MOST || failed.some((result) => result.timedOut))
+    return { stillFailed: failed, flaky: [] };
+  const stillFailed = [], flaky = [];
+  for (const first of failed) {
+    const second = await runOne(first.file);
+    onDone(second);
+    if (passed(second)) flaky.push(second);
+    else stillFailed.push(first);
+  }
+  return { stillFailed, flaky };
+}
+
 /** Print one finished file's output under a header, and name it again if it failed. */
 function report(result) {
   const status = testProcessStatus(result, [result.file], () => {});
   console.log(`\n── ${posix(result.file)} · ${result.seconds.toFixed(1)} s · ${status === 0 ? "passed" : "FAILED"}`);
   process.stdout.write(result.output);
   if (status !== 0) testProcessStatus(result, [result.file]);
+}
+
+/** Say a file passed only on its second run: a warning in the log and a line in the job's summary, so it gets fixed. */
+function nameFlaky(file) {
+  const words = `${posix(file)} failed, then passed when run again alone (flaky).`;
+  console.log(`::warning file=${posix(file)}::${words}`);
+  if (process.env.GITHUB_STEP_SUMMARY) writeFileSync(process.env.GITHUB_STEP_SUMMARY, `- ${words}\n`, { flag: "a" });
 }
 
 function chooseFiles(argv) {
@@ -293,7 +323,14 @@ async function main() {
     kindOf: (file) => kind.get(file), limits: { shared: shared || 3, browser: browser || 1, desktop: 1 },
     cost: costOf(weights), runOne: (file) => runFile(file, { limit }), onDone: report,
   });
-  const failed = results.filter((result) => testProcessStatus(result, [result.file], () => {}) !== 0);
+  let failed = results.filter((result) => testProcessStatus(result, [result.file], () => {}) !== 0);
+  if (argv.includes("--retry-failed") && failed.length) {
+    console.log(`\nRunning ${failed.length} failed file(s) once more, alone.`);
+    const retried = await retryFailed(failed, { runOne: (file) => runFile(file, { limit }), onDone: report,
+      passed: (result) => testProcessStatus(result, [result.file], () => {}) === 0 });
+    failed = retried.stillFailed;
+    for (const result of retried.flaky) nameFlaky(result.file);
+  }
   if (process.env.BRANCH_TEST_TIMINGS) {
     const timings = Object.fromEntries(results.map((r) => [posix(r.file), Math.round(r.seconds * 1000) / 1000]).sort());
     writeFileSync(process.env.BRANCH_TEST_TIMINGS, `${JSON.stringify(timings, null, 2)}\n`);

@@ -131,6 +131,33 @@ test("B5 sending and the answer follow the newest message, unless the person has
   assert.deepEqual(errors, []);
 });
 
+/* The browser sends a queued scroll on the next frame. When a redraw has replaced the conversation's box in that frame, the
+   scroll lands on the old box, off the page, whose sizes all read 0, so it looked like a reader at the bottom: the next
+   drawing pulled someone reading further up down to the newest message (the twin of trunkline.js lineAfter, #1125).
+   Here the queued scroll and the redraw are made in one step. */
+test("B5 a scroll that lands on a box a redraw already replaced does not pull the reader down", async (t) => {
+  const { page, errors } = await fixture(t, { name: "scripted", async complete() { return { content: long, toolCalls: [] }; } });
+  await send(page, "First, a long answer please.");
+  await scrollUp(page);
+  assert.equal(await top(page), 0, "control: reading from the top");
+  await redrawn(page);
+  assert.equal(await top(page), 0, "control: the window knows the reader is up");
+  const replaced = await page.evaluate(async () => {
+    const { renderNow } = await import("/app/core/dom.js"), { S } = await import("/app/core/state.js");
+    const box = document.getElementById("scroll");
+    box.scrollTop = 1; // a scroll the browser sends on the next frame
+    box.scrollTop = 0;
+    S.view = "settings"; renderNow(); S.view = "chat"; renderNow(); // the conversation drawn anew, in a new box
+    const gone = !box.isConnected && document.getElementById("scroll") !== box;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))); // the queued scroll is sent
+    return gone;
+  });
+  assert.equal(replaced, true, "control: the box the scroll was queued on was replaced");
+  await redrawn(page);
+  assert.equal(await top(page), 0, "a scroll on a box off the page does not pull the reader down");
+  assert.deepEqual(errors, []);
+});
+
 test("B5 a real answer landing does not pull someone reading further up down (NAS 545cb4d)", async (t) => {
   let release = null, calls = 0;
   const { page, errors } = await fixture(t, { name: "scripted", async complete() {

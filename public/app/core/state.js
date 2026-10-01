@@ -2,11 +2,12 @@
    invented). Only the few window choices worth keeping between visits are saved, in this browser. */
 
 import { api } from "./api.js";
+import { readSessionPages, resetSessionPages, sessionPrincipal } from "./session-pages.js";
 import { render } from "./dom.js";
 import { t } from "../../i18n.js";
 
 const SAVED_KEY = "branch-window";
-const SAVED = ["level", "placesShut", "theme", "sideW", "paneW", "dockW", "rail", "sideHidden", "home19", "simple", "simpleFrom", "advLevel"];
+const SAVED = ["level", "placesShut", "theme", "sideW", "paneW", "dockW", "rail", "sideHidden", "home19", "panes19", "simple", "simpleFrom", "advLevel"];
 
 export const S = {
   view: "chat",
@@ -25,12 +26,14 @@ export const S = {
   dockW: null,
   rail: false,
   sideHidden: false,
+  panes19: null, // RES-703: the panes beside the open conversation, their widths and the active one (chat/panes.js)
   home19: { open: false, sid: null }, // RES-701: the Home panel open or not, and its own conversation (shell/home.js)
   signedIn: true,
 };
 
 export const E = {
   state: null,
+  stateReadAt: 0,
   trunks: [],
   trunkModes: {},
   rooms: [],
@@ -51,31 +54,53 @@ export function save() {
 }
 
 /* The engine's picture of things: state, the Trunks and the conversation list. */
-export async function refresh() {
+let refreshGeneration = 0;
+export async function refresh(isCurrent = () => true) {
+  const mine = ++refreshGeneration;
+  const current = (profiles = E.profiles) => mine === refreshGeneration && isCurrent(profiles);
+  if (!current()) return;
   /* One request first: until the engine accepts the window, every refused request counts against sign-in. */
   const state = await api("state");
-  const [trunks, sessions, profiles] = await Promise.all([
+  const stateReadAt = Date.now();
+  if (!current()) return;
+  const [trunks, profiles] = await Promise.all([
     api("trunks").catch(() => null),
-    api("sessions?limit=50").catch(() => null),
     api("profiles").catch(() => null),
   ]);
+  if (!current(profiles ?? E.profiles)) return;
+  if (resetSessionPages(profiles ?? E.profiles)) {
+    if (!current(profiles ?? E.profiles)) return;
+    E.sessions = [];
+  }
+  if (!current(profiles ?? E.profiles)) return;
   /* A read that failed keeps what the window last had. Emptied, one refused or dropped GET /api/trunks lost every Trunk
      and the modes: "@Ada …" then found no Ada and went out as an ordinary message in a new conversation (trunks-ui on
      CI), and the side list lost its Trunks and conversations until the next read. */
   if (profiles) E.profiles = profiles;
+  if (!current()) return;
   E.state = state;
+  E.stateReadAt = stateReadAt;
   if (trunks) {
+    if (!current()) return;
     E.trunks = trunks.trunks ?? (Array.isArray(trunks) ? trunks : []);
     E.trunksRead = true; // pass 18: an empty Trunks list is a welcome only when the engine answered
     E.trunkModes = trunks.modes ?? {};
     E.defaultTrunkId = trunks.defaultId ?? null; // the default Trunk answers every chat nobody routed elsewhere
+    if (!current()) return;
     E.rooms = Array.isArray(trunks.rooms) ? trunks.rooms : [];
+    if (!current()) return;
     if (Array.isArray(trunks.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
   }
+  const who = sessionPrincipal(E.profiles);
+  const stillHere = () => current() && sessionPrincipal(E.profiles) === who && S.signedIn
+    && !document.getElementById("app")?.classList.contains("locked-b17");
+  const sessions = await readSessionPages(E.profiles, stillHere);
+  if (!stillHere()) return;
   if (sessions) {
     E.sessions = sessions.sessions ?? [];
     E.putAway = { archived: sessions.archived ?? 0, deleted: sessions.deleted ?? 0 }; // chat/putaway.js: Archived, Recently Deleted
   }
+  if (!stillHere()) return;
   E.loaded = true;
   render();
 }

@@ -1,4 +1,6 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { processAlive } from "./process-alive.js";
+import { randomBytes } from "node:crypto";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -43,11 +45,34 @@ export interface Attachment {
   version: string;
 }
 
+/**
+ * The note is written whole or not at all: a copy beside it, renamed over it. Written in place, a window starting at that
+ * moment read an empty file, took it for no engine and started a second one beside it (or a joined window relaunched).
+ */
 export async function writeRunning(
   dataDir: string, instance: Omit<RunningInstance, "startedAt"> & { startedAt?: string },
 ): Promise<void> {
   const value = RunningSchema.parse({ ...instance, startedAt: instance.startedAt ?? new Date().toISOString() });
-  await writeFile(join(dataDir, runningFileName), JSON.stringify(value), { mode: 0o600 });
+  const path = join(dataDir, runningFileName);
+  const next = `${path}.${randomBytes(6).toString("hex")}.next`;
+  await writeFile(next, JSON.stringify(value), { mode: 0o600, flag: "wx" });
+  try {
+    await renameSoon(next, path);
+  } catch (error) {
+    await rm(next, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+/** Windows refuses a rename over a file another program has open for a moment; it is tried again briefly. */
+async function renameSoon(from: string, to: string): Promise<void> {
+  for (let tries = 0; ; tries++) {
+    try { return await rename(from, to); } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (tries >= 20 || (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")) throw error;
+      await new Promise((done) => setTimeout(done, 25));
+    }
+  }
 }
 export async function clearRunning(dataDir: string): Promise<void> {
   await rm(join(dataDir, runningFileName), { force: true });
@@ -64,7 +89,9 @@ async function savedToken(dataDir: string): Promise<string | null> {
   } catch { return null; }
 }
 const stillAlive = (pid: number): boolean => {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try { process.kill(pid, 0); } catch { return false; }
+  // Keep this attachment probe's existing permission-error behavior; classify only a proved Linux PID.
+  return process.platform !== "linux" || processAlive(pid);
 };
 
 /**

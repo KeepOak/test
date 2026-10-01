@@ -1,16 +1,21 @@
 import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { audit, auditSources, type AuditSource } from "./audit.js";
 import type { CommandContext } from "./channels/chat-commands.js";
-import { errorText } from "./contracts.js";
+import { errorText, type ToolContext } from "./contracts.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { prepareToolName, selfDevelopmentLockdownRefusal, type SelfDevelopmentContract } from "./self-development-contract.js";
 import { lockdownActive } from "./lockdown.js";
-import { PrepareSourceChangeSchema, prepareBranchSourceChange, type SelfDevelopmentDeps } from "./self-development.js";
+import { PrepareSourceChangeSchema, prepareBranchSourceChange, ownerOnly, type SelfDevelopmentDeps } from "./self-development.js";
 import { boundedDiff, nothingPreparedYet, type BoundedDiff } from "./self-development-diff.js";
 import { HttpError } from "./server-http.js";
 import { currentTaskRun } from "./task-scope.js";
+import { currentPerson } from "./people/context.js";
+import { typedBy } from "./seasons/evidence.js";
+import { sourceArrived } from "./self-development-arrival.js";
+import { ownBuild, ownBuildHistory } from "./hot-update/window-files.js";
 
 /**
  * A change to Branch itself, asked for from a chat app.
@@ -80,7 +85,7 @@ const sourceOf = (channel: string): AuditSource =>
 export class SourceChangeRequests {
   private readonly db: DatabaseSync;
 
-  constructor(private readonly deps: SelfDevelopmentDeps) {
+  constructor(private readonly deps: SelfDevelopmentDeps, private readonly locked: () => boolean = () => false) {
     this.db = deps.store.sqlite;
     ensureRequestTable(this.db);
     // A yes Branch was still preparing when it stopped waits for the owner again.
@@ -92,6 +97,29 @@ export class SourceChangeRequests {
   file(input: { text: string; from: RequestSender }): SourceChangeRequest {
     if (startedWithShortLivedKey() || currentTaskRun())
       throw new Error("A request to change Branch is filed from a chat message itself, never by a key or a task.");
+    return this.insert(input);
+  }
+
+  /** An explicit local owner task can request development without approving its own contract. */
+  fileOwnerTask(text: string, context: ToolContext): SourceChangeRequest {
+    ownerOnly(context, this.deps.store, this.deps.ownersDefaultTurn);
+    const run = this.deps.store.run(context.runId);
+    if (context.owner !== this.deps.owner || !run || !typedBy(this.deps.store, run, null)
+      || (currentTaskRun() && currentTaskRun() !== context.runId)) throw new Error("A source request must belong to the owner's own task");
+    return this.insert({ text, from: { channel: "branch", chatId: run.sessionId, senderId: this.deps.owner,
+      senderName: "Owner task", messageId: context.runId } });
+  }
+
+  /** Read-only proof; the caller cannot supply the running engine's identity. */
+  installed(id: string): boolean {
+    this.deps.store.profiles.requireOwner("Checking an installed source change");
+    if (startedWithShortLivedKey()) return false;
+    const request = this.get(id);
+    return Boolean(request?.status === "approved" && request.worktree && request.answeredAt
+      && sourceArrived(this.deps.store, this.deps.owner, request.worktree, request.answeredAt, ownBuild(), ownBuildHistory()));
+  }
+
+  private insert(input: { text: string; from: RequestSender }): SourceChangeRequest {
     const from = SenderSchema.parse({ ...input.from, senderName: input.from.senderName.slice(0, 120) });
     if (!input.text.trim()) throw new Error("Say what you would like changed in Branch.");
     if (input.text.length > maxRequestLength)
@@ -115,6 +143,18 @@ export class SourceChangeRequests {
       .all(this.deps.owner).map((row) => fromRow(row as Record<string, unknown>));
   }
 
+  /** The owner can review the immutable preparation identity without choosing an arbitrary folder. */
+  prepared(id: string): { request: SourceChangeRequest; contract: SelfDevelopmentContract } {
+    this.ownerHere("Reviewing a prepared change to Branch itself");
+    const request = this.get(id);
+    if (!request || request.status !== "approved" || !request.worktree)
+      throw new Error("Approve this request with your own contract terms before publishing it.");
+    const contract = this.deps.contracts.current(this.deps.owner, request.worktree);
+    if (!contract || request.sourceSha !== contract.sourceSha || request.revision !== contract.revision)
+      throw new Error("The prepared contract changed. Review its current terms before publishing.");
+    return { request, contract };
+  }
+
   /**
    * The owner's yes, with the terms the owner wrote: checked with the tool's own parameters, then
    * prepared exactly as the tool prepares them. The request is taken before any Git runs, so two yeses
@@ -128,7 +168,8 @@ export class SourceChangeRequests {
       throw new Error("Sending Git work to a remote is switched off, so Branch's own source cannot be prepared. The request is still waiting.");
     this.take(id);
     try {
-      const prepared = await prepareBranchSourceChange(this.deps, ask, signal);
+      const prepared = await prepareBranchSourceChange(this.prepareDeps(), ask, signal);
+      this.preparingOwner();
       const contract = prepared.contract as SelfDevelopmentContract;
       this.settle(id, "approved", { at: new Date().toISOString(), worktree: contract.worktreePath, revision: contract.revision, sourceSha: contract.sourceSha });
       this.record(id, `${contract.worktreePath} revision ${contract.revision}`, "approved");
@@ -165,8 +206,24 @@ export class SourceChangeRequests {
   /** Only the owner, in the Branch app: never a household person, a short-lived key, or anything inside a task. */
   private ownerHere(what: string): void {
     this.deps.store.profiles.requireOwner(what);
+    if (this.locked() || currentPerson()) throw new Error(`${what} requires the unlocked owner's window.`);
     if (startedWithShortLivedKey()) throw new Error(`${what} is the owner's own, in the Branch app; a short-lived key cannot do it.`);
     if (currentTaskRun()) throw new Error(`${what} is the owner's own, in the Branch app; a task cannot do it, whoever started it.`);
+  }
+  private preparingOwner(): void {
+    this.ownerHere(answering);
+    if (lockdownActive(this.deps.store, this.deps.owner) || !this.deps.registry.names().includes(prepareToolName))
+      throw new Error("Source preparation approval was revoked. Review the request again.");
+  }
+  private prepareDeps(): SelfDevelopmentDeps {
+    const check = () => this.preparingOwner();
+    return { ...this.deps, recheckApproval: check,
+      git: async (options, signal) => { check(); const result = await this.deps.git(options, signal); check(); return result; },
+      exists: async (path) => {
+        check();
+        const result = await (this.deps.exists?.(path) ?? stat(path).then(() => true, () => false));
+        check(); return result;
+      } };
   }
   private get(id: string): SourceChangeRequest | undefined {
     const row = this.db.prepare("SELECT * FROM self_development_requests WHERE id=? AND owner=?").get(id, this.deps.owner);

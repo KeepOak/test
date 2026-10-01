@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBranch, savePolicy } from "../dist/index.js";
 import { loadIntegrations } from "../dist/integrations/bootstrap.js";
@@ -98,12 +98,19 @@ test("a command in the worktree, listed in its contract, runs behind the real OS
   { skip: process.platform === "win32" || !(await wallReport()).available }, async (t) => {
   const branch = await withSource(t, { project: "worktree", permissions: ["shell.execute"] });
   // Run from src/ui, which the contract's src/ui/** covers whole: writes are held to that folder.
+  const protectedNote = join(branch.workspace, worktree, "src", "ui", ".agents", "keep.txt");
+  await mkdir(join(protectedNote, ".."), { recursive: true });
+  await writeFile(protectedNote, "protected\n");
   const { failed, result } = await branch.command({ executable: "sh", cwd: `${worktree}/src/ui`,
-    args: ["-c", "echo ok > inside.txt; echo PWNED >> ../../../../src/main.ts; for f in ../../../../src/main.ts; do echo PWNED >> $f; done; echo x > ../../package.json"] });
+    args: ["-c", 'echo ok > inside.txt; echo scratch > "$TMPDIR/private.txt"; /bin/cat "$TMPDIR/private.txt"; echo PWNED >> ../../../../src/main.ts; for f in ../../../../src/main.ts; do echo PWNED >> $f; done; echo x > ../../package.json; echo PWNED > .agents/keep.txt'] });
   assert.equal(failed, null, failed);
   assert.equal(await readFile(join(branch.workspace, worktree, "src", "ui", "inside.txt"), "utf8"), "ok\n", "a write in the allowed folder works");
   assert.equal(await branch.protectedFile(), original, "the sandbox blocked the write to the protected checkout");
   assert.equal(existsSync(join(branch.workspace, worktree, "package.json")), false, "and the write outside the allowed folder");
+  assert.match(result.stdout, /scratch/, "the private temporary folder is writable");
+  assert.equal(await readFile(protectedNote, "utf8"), "protected\n", "the protected host file stays unchanged");
+  // Linux may allow earlier outside-folder writes into its throwaway /tmp view. This final write
+  // targets a real protected mount, so a nonzero exit proves an actual denial rather than a shadow write.
   assert.notEqual(result.exitCode, 0);
   assert.equal(result.target.cwd.endsWith(join("self-remove-button", "src", "ui")), true);
   // From the worktree itself the contract's src/ui/** does not cover the folder, so it is refused first.
@@ -134,8 +141,10 @@ test("the stand-in sandbox: available holds the command to the worktree, missing
   const yes = await guardWith(t, async () => true);
   const held = await yes.guard("shell.execute", { cwd: `${worktree}/src` }, { runId: "r" });
   assert.equal(held.writesConfinedTo, join(yes.workspace, worktree, "src"), "held to the folder it runs in");
-  for (const name of ["code.run", "process.start"])
-    await assert.rejects(yes.guard(name, { cwd: worktree }, { runId: "r" }), /cannot hold the program it starts to one folder/, name);
+  await assert.rejects(yes.guard("code.run", { cwd: worktree }, { runId: "r" }), /cannot hold the program it starts to one folder/);
+  // SELF-304: a program left running is walled by the shell the same way, so it is held to the folder it runs in too.
+  const left = await yes.guard("process.start", { cwd: `${worktree}/src` }, { runId: "r" });
+  assert.equal(left.writesConfinedTo, join(yes.workspace, worktree, "src"));
   const no = await guardWith(t, async () => false);
   await assert.rejects(no.guard("shell.execute", { cwd: `${worktree}/src` }, { runId: "r" }),
     /commands are refused on this computer: it has no sandbox that can hold a command's writes to one folder/);
@@ -166,19 +175,21 @@ function realGit() {
 test("on Linux a held command sees /run and the home empty, but for the folders of the programs it runs",
   { skip: process.platform !== "linux" || !(await wallReport()).available }, async (t) => {
   const branch = await withSource(t, { project: "worktree", permissions: ["shell.execute"] });
-  // Full paths: this shell is given no search path. The home is read from the system, not the environment.
+  // Full paths: this shell is given no search path. Check the account home AND an overridden HOME.
   const script = [
     'h=$(/usr/bin/getent passwd "$(/usr/bin/id -u)" | /usr/bin/cut -d: -f6)',
-    'echo "HOME=$h"', "/bin/ls -A /run", "echo SPLIT", '/bin/ls -A "$h"', "echo END"].join("; ");
-  const { failed, result } = await branch.command({ executable: "sh", cwd: `${worktree}/src/ui`, args: ["-c", script] });
+    'echo "HOME=$h"', "/bin/ls -A /run || exit", "echo SPLIT", '/bin/ls -A "$h" || exit', "echo ALTERNATE", '/bin/ls -A "$1" || exit', "echo END"].join("; ");
+  const { failed, result } = await branch.command({ executable: "sh", cwd: `${worktree}/src/ui`, args: ["-c", script, "held-home-check", homedir()] });
   assert.equal(failed, null, failed);
   const out = String(result?.stdout ?? "");
+  assert.equal(result?.exitCode, 0, String(result?.stderr ?? ""));
   assert.match(out, /^HOME=\/\S+\n[\s\S]*SPLIT\n[\s\S]*END\n$/, `the listing really ran: ${out} ${String(result?.stderr ?? "")}`);
-  const [run, home] = out.replace(/^HOME=.*\n/, "").replace(/END\n$/, "").split("SPLIT\n");
+  const [run, homes] = out.replace(/^HOME=.*\n/, "").replace(/END\n$/, "").split("SPLIT\n");
   assert.equal(run.trim(), "", "nothing of /run shows: no message bus, no package daemon, no per-user sockets");
   // Only the first folder on the way to a program's own folder (a version manager's, say) may show in the home.
   const allowed = new Set([".nvm", ".local", ".volta", ".asdf", ".fnm", ".n", "bin", "lib"]);
-  for (const name of home.trim().split("\n").filter(Boolean)) assert.ok(allowed.has(name), `${name} in the home is hidden`);
+  for (const home of homes.split("ALTERNATE\n")) for (const name of home.trim().split("\n").filter(Boolean))
+    assert.ok(allowed.has(name), `${name} in either home is hidden`);
 });
 
 test("on Linux a held command given a file it could not see is refused before it runs, saying why and what works instead",

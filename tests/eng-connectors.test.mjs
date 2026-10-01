@@ -286,7 +286,8 @@ test("command-line tools: found without running them, allowed by name, never a b
   const shell = { extra: () => ({}) };
   clis.attach(shell, ["git"]);
   const added = clis.add({ name: "kubectl" });
-  assert.match(added.said, /It asks before every command/);
+  // Owner ruling 2026-09-30: commands no rule covers ship as "allow", so the owner's approval settings decide.
+  assert.match(added.said, /Your approval settings decide which of its commands run without asking/);
   assert.equal(shell.extra().kubectl.path, join(bin, `kubectl${exe}`), "the shell runs it from the next command");
   assert.throws(() => clis.add({ name: "kubectl" }), /already/);
   assert.throws(() => clis.add({ name: "git" }), /not found|already/);

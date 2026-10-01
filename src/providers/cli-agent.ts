@@ -6,10 +6,13 @@ import { z } from "zod";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { currentAccountCall, refuseSignInForTrunk } from "../accounts/context.js"; // mac7/lockdown-fix
 import { startCall } from "../windows-command.js";
+import { killWindowsTree } from "../integrations/shell-process.js";
 import { assertRealAgentAllowed } from "./real-agent-guard.js"; // owner-dm-signin: never the real program from a test
 import { codexDefaultModel, codexVerified, codexModelsFor, type CodexModels, type CodexProbe, type CodexTry } from "../codex-models.js";
 import { closeWarmCodex, startCodexAppServer, warmCodexTurn, type StartAppServer } from "../asks/codex-app-server.js";
+import { codexTransportEnvironment } from "./codex-environment.js";
 import { claudeSubscriptionModels } from "./claude-models.js";
+import { closeNativeSubscriptions } from "./claude-subscription-continuation.js";
 
 /**
  * Batch 20 (wave 8): using a coding assistant already installed on this computer as a model.
@@ -124,13 +127,29 @@ export const cliAgentCatalog: CliAgentRow[] = [
  * most capable one Codex takes (src/codex-models.ts).
  */
 export { codexDefaultModel };
-/** Codex's arguments with the chosen model named, right after `exec` (Codex reads `-c key=value` as a one-call setting). */
+/** Reject a custom invocation that could override the model provider's fixed read-only policy. */
+function checkCodexPolicy(args: readonly string[]): void {
+  const flags = /^(?:--(?:sandbox|permissions|ask-for-approval|full-auto|approve-for-me|yolo|dangerously-bypass-approvals-and-sandbox)|-[sa])(?:=|$)/;
+  const settings = /^(?:sandbox_mode|sandbox_workspace_write|approval_policy|approvals_reviewer|default_permissions|permissions)(?:\.|$)/;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    const config = arg === "-c" || arg === "--config" ? args[i + 1]
+      : arg.startsWith("--config=") ? arg.slice(9) : arg.startsWith("-c") ? arg.slice(2) : undefined;
+    const key = config?.split("=", 1)[0]?.replace(/[\s"']/g, "");
+    if (flags.test(arg) || /^-[sa][^\s]/.test(arg) || key && settings.test(key))
+      throw new Error("Codex used as a model requires read-only access and no approvals. Remove sandbox or approval overrides from this connection's arguments.");
+  }
+}
+/** Codex as a model: one-call model, read-only sandbox and no approval escalation, independent of saved defaults. */
 export function codexArgs(args: readonly string[], model: string, workDir: string | null = null): string[] {
-  const at = args.indexOf("exec");
+  const at = args.findIndex((arg) => arg === "exec" || arg === "e");
+  checkCodexPolicy(args);
+  if (at < 0 || args.slice(0, at).includes("--")) throw new Error("Codex used as a model requires an exec invocation with read-only access and no approvals.");
   // QA 2026-09-28: Codex answering as a model works in Branch's own empty folder, which Branch made and nothing else
   // uses, so the git-repository trust check is skipped for that one folder only; any other folder keeps it.
   const where = workDir ? ["-C", workDir, "--skip-git-repo-check"] : [];
-  return at < 0 ? [...args] : [...args.slice(0, at + 1), "-c", `model=${model}`, ...where, ...args.slice(at + 1)];
+  const policy = ["-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="never"'];
+  return [...args.slice(0, at), "exec", "-c", `model=${model}`, ...policy, ...where, ...args.slice(at + 1)];
 }
 /** Codex programs found to have no app-server this run; they answer through exec. */
 const noAppServer = new Set<string>();
@@ -281,6 +300,17 @@ export function streamJsonQuestion(prompt: string): string {
   return `${JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: prompt }] } })}\n`;
 }
 type Child = ReturnType<typeof spawn>;
+/**
+ * P0 (self-build): on Windows an npm-installed program (Codex) is Node running its launcher, which starts the real
+ * program and only passes signals on. Ending Node takes the real program with it but not what that had started, so
+ * the whole tree is ended instead. Elsewhere the launcher passes the signal on, and the program is not in a group of
+ * its own, so the plain kill stays.
+ */
+function endTree(child: Child): void {
+  if (process.platform === "win32" && child.pid && child.exitCode === null)
+    void killWindowsTree(child.pid).then((ended) => { if (!ended) child.kill(); }, () => child.kill());
+  else child.kill();
+}
 /** Whether a program (its process and its pipes) keeps Branch's own process running, as a task waiting on it must. */
 function holdOpen(child: Child, hold: boolean): void {
   for (const handle of [child, child.stdin, child.stdout, child.stderr] as unknown as ({ ref?: () => void; unref?: () => void } | null)[])
@@ -322,13 +352,15 @@ function prepareSpare(key: string, row: CliAgentRow, env: NodeJS.ProcessEnv): vo
 }
 /** Stops every program started ahead of time (Branch closing). */
 export function closeSpareAgents(): void {
+  closeNativeSubscriptions();
   closeWarmCodex(); // QA 2026-09-28: the warm Codex app-servers too
   for (const [key, spare] of spares) { clearTimeout(spare.timer); spare.child.kill(); spares.delete(key); }
 }
 
 export const runCliAgent: SpawnAgent = (row, prompt, signal, limits, home, onLine) =>
   new Promise((resolve) => {
-    const env = home ? { ...strippedEnvironment(), [home.name]: home.path } : strippedEnvironment();
+    const base = { ...strippedEnvironment(), ...(row.id === "codex" ? codexTransportEnvironment() : {}) };
+    const env = home ? { ...base, [home.name]: home.path } : base;
     const warm = readsStreamJson(row.args), key = JSON.stringify([row.command, row.args, home?.name ?? "", home?.path ?? ""]);
     const child = (warm ? spareFor(key) : null) ?? startProgram(row, env);
     let stdout = "", stderr = "", settled = false;
@@ -342,11 +374,11 @@ export const runCliAgent: SpawnAgent = (row, prompt, signal, limits, home, onLin
       if (warm && code === 0) prepareSpare(key, row, env);
       resolve({ code, stdout, stderr, ...(missing ? { missing: true } : {}), ...(silent ? { silent: true } : {}) });
     };
-    const stop = (): void => { child.kill(); finish(null); };
+    const stop = (): void => { endTree(child); finish(null); };
     const timer = setTimeout(stop, limits.timeoutMs);
     timer.unref?.();
     // A program that prints nothing at all is stuck (a prompt nobody will answer, a model it hangs on): stopped early.
-    const quiet = limits.firstOutputMs ? setTimeout(() => { child.kill(); finish(null, false, true); }, limits.firstOutputMs) : undefined;
+    const quiet = limits.firstOutputMs ? setTimeout(() => { endTree(child); finish(null, false, true); }, limits.firstOutputMs) : undefined;
     quiet?.unref?.();
     signal.addEventListener("abort", stop, { once: true });
     // stream-json ends with its result line; the program may take seconds more to exit, which nobody needs to wait for.
@@ -474,7 +506,8 @@ export class CliAgentProvider implements Provider {
    */
   private async viaAppServer(request: CompletionRequest, start: StartAppServer): Promise<Completion | null> {
     const model = this.codexModel();
-    const env = this.home ? { ...strippedEnvironment(), [this.home.name]: this.home.path } : strippedEnvironment();
+    const base = { ...strippedEnvironment(), ...codexTransportEnvironment() };
+    const env = this.home ? { ...base, [this.home.name]: this.home.path } : base;
     const thread = { model, ...(ownCodex(this.row) ? { cwd: codexWorkDir() } : {}), env, ...(this.home ? { home: this.home.path } : {}),
       ...(this.limits.firstOutputMs ? { silenceMs: this.limits.firstOutputMs } : {}) };
     try {
@@ -496,7 +529,7 @@ export class CliAgentProvider implements Provider {
   }
   /** The model check (src/codex-models.ts): Codex's version, and one tiny call per model, read as accepted or refused. */
   probe(): CodexProbe {
-    const at = this.row.args.indexOf("exec"), limits = { timeoutMs: 90_000, maxOutputChars: 20_000 };
+    const at = this.row.args.findIndex((arg) => arg === "exec" || arg === "e"), limits = { timeoutMs: 90_000, maxOutputChars: 20_000 };
     const run = (row: CliAgentRow, prompt: string) => this.home
       ? this.spawnAgent(row, prompt, AbortSignal.timeout(limits.timeoutMs), limits, this.home)
       : this.spawnAgent(row, prompt, AbortSignal.timeout(limits.timeoutMs), limits);

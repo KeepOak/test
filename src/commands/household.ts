@@ -39,7 +39,7 @@ const householdCommands: Readonly<Record<string, Allowed>> = {
   go: "any", inbox: "any", automations: "any", library: "any", customize: "any", settings: "any",
   help: "bare", whoami: "any", version: "any",
   // The person's own conversation, which POST /api/commands/run has checked is theirs.
-  model: "any", think: "any", export: "any", tokens: "any", queue: "bare",
+  model: "any", think: "any", export: "any", tokens: "any", queue: "bare", history: "bare",
   // Narrowed to the person's own tasks, conversations and remembered facts in their handlers.
   stop: "any", status: "any", sessions: "any", memory: "any", usage: "any",
   // Whether Lockdown is on, which holds their tasks too; switching it stays the owner's.

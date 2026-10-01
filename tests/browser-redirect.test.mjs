@@ -22,6 +22,16 @@ const context = (permissions = ["browser.read", "browser.interact"]) => ({
   budget: new Budget(), permissions: new Set(permissions), depth: 0,
 });
 
+/* Cleanup hooks run in registration order, so these fixture servers close before the browser.
+   A service worker may retain an active connection indefinitely. Stop accepting connections, then
+   close only this disposable server's connections so cleanup cannot wait on a later browser hook. */
+async function closeFixture(server) {
+  const closed = once(server, "close");
+  server.close();
+  server.closeAllConnections();
+  await closed;
+}
+
 /** A site that signs a member in with a redirect, the way nearly every site does. */
 async function siteThatRedirects() {
   const asked = [];
@@ -58,7 +68,7 @@ async function siteThatRedirects() {
   await once(server, "listening");
   return {
     origin: `http://127.0.0.1:${server.address().port}`, asked,
-    close: async () => { server.close(); await once(server, "close"); },
+    close: async () => { await closeFixture(server); },
   };
 }
 
@@ -85,13 +95,13 @@ test("a redirect to a website the owner did not allow is still refused, and neve
   const forbidden = createServer((_request, response) => { forbiddenHits += 1; response.end("must not load"); });
   forbidden.listen(0, "127.0.0.1");
   await once(forbidden, "listening");
-  t.after(async () => { forbidden.close(); await once(forbidden, "close"); });
+  t.after(async () => { await closeFixture(forbidden); });
   const elsewhere = `http://127.0.0.1:${forbidden.address().port}`;
 
   const allowed = createServer((_request, response) => { response.writeHead(302, { location: elsewhere }); response.end(); });
   allowed.listen(0, "127.0.0.1");
   await once(allowed, "listening");
-  t.after(async () => { allowed.close(); await once(allowed, "close"); });
+  t.after(async () => { await closeFixture(allowed); });
   const origin = `http://127.0.0.1:${allowed.address().port}`;
 
   const browser = new BranchBrowser({ allowedOrigins: [origin] });
@@ -105,7 +115,7 @@ test("the network policy checks the redirect destination before it is fetched", 
   const destination = createServer((_request, response) => { destinationHits += 1; response.end("must not load"); });
   destination.listen(0, "127.0.0.1");
   await once(destination, "listening");
-  t.after(async () => { destination.close(); await once(destination, "close"); });
+  t.after(async () => { await closeFixture(destination); });
   const destinationOrigin = `http://127.0.0.1:${destination.address().port}`;
 
   const source = createServer((_request, response) => {
@@ -114,7 +124,7 @@ test("the network policy checks the redirect destination before it is fetched", 
   });
   source.listen(0, "127.0.0.1");
   await once(source, "listening");
-  t.after(async () => { source.close(); await once(source, "close"); });
+  t.after(async () => { await closeFixture(source); });
   const sourceOrigin = `http://127.0.0.1:${source.address().port}`;
   const checked = [];
   const browser = new BranchBrowser({ allowedOrigins: [sourceOrigin, destinationOrigin] });
@@ -139,7 +149,7 @@ test("a pop-up cannot send its first request to an unlisted website", async (t) 
   const forbidden = createServer((_request, response) => { forbiddenHits += 1; response.end("must not load"); });
   forbidden.listen(0, "127.0.0.1");
   await once(forbidden, "listening");
-  t.after(async () => { forbidden.close(); await once(forbidden, "close"); });
+  t.after(async () => { await closeFixture(forbidden); });
   const forbiddenOrigin = `http://127.0.0.1:${forbidden.address().port}`;
 
   const allowed = createServer((_request, response) => {
@@ -148,7 +158,7 @@ test("a pop-up cannot send its first request to an unlisted website", async (t) 
   });
   allowed.listen(0, "127.0.0.1");
   await once(allowed, "listening");
-  t.after(async () => { allowed.close(); await once(allowed, "close"); });
+  t.after(async () => { await closeFixture(allowed); });
   const allowedOrigin = `http://127.0.0.1:${allowed.address().port}`;
   const browser = new BranchBrowser({ allowedOrigins: [allowedOrigin] });
   t.after(() => browser.close());
@@ -175,7 +185,7 @@ test("being sent to a website costs the task the same as going there by name", a
   });
   second.listen(0, "127.0.0.1");
   await once(second, "listening");
-  t.after(async () => { second.close(); await once(second, "close"); });
+  t.after(async () => { await closeFixture(second); });
   const elsewhere = `http://127.0.0.1:${second.address().port}`;
 
   const first = createServer((request, response) => {
@@ -185,7 +195,7 @@ test("being sent to a website costs the task the same as going there by name", a
   });
   first.listen(0, "127.0.0.1");
   await once(first, "listening");
-  t.after(async () => { first.close(); await once(first, "close"); });
+  t.after(async () => { await closeFixture(first); });
   const origin = `http://127.0.0.1:${first.address().port}`;
 
   // Both websites are allowed. What is limited is how many of them one task may visit.
@@ -219,7 +229,7 @@ test("a pop-up cannot be redirected to an unlisted website either", async (t) =>
   });
   forbidden.listen(0, "127.0.0.1");
   await once(forbidden, "listening");
-  t.after(async () => { forbidden.close(); await once(forbidden, "close"); });
+  t.after(async () => { await closeFixture(forbidden); });
   const elsewhere = `http://127.0.0.1:${forbidden.address().port}`;
 
   const allowed = createServer((request, response) => {
@@ -230,7 +240,7 @@ test("a pop-up cannot be redirected to an unlisted website either", async (t) =>
   });
   allowed.listen(0, "127.0.0.1");
   await once(allowed, "listening");
-  t.after(async () => { allowed.close(); await once(allowed, "close"); });
+  t.after(async () => { await closeFixture(allowed); });
   const origin = `http://127.0.0.1:${allowed.address().port}`;
 
   const browser = new BranchBrowser({ allowedOrigins: [origin] });
@@ -267,7 +277,7 @@ test("a frame from another allowed website cannot be redirected to an unlisted o
   const forbidden = createServer((_request, response) => { forbiddenHits += 1; response.end("must not load"); });
   forbidden.listen(0, "127.0.0.1");
   await once(forbidden, "listening");
-  t.after(async () => { forbidden.close(); await once(forbidden, "close"); });
+  t.after(async () => { await closeFixture(forbidden); });
   const forbiddenOrigin = `http://127.0.0.1:${forbidden.address().port}`;
 
   const framedAsked = [];
@@ -283,7 +293,7 @@ test("a frame from another allowed website cannot be redirected to an unlisted o
   });
   framed.listen(0, "127.0.0.1");
   await once(framed, "listening");
-  t.after(async () => { framed.close(); await once(framed, "close"); });
+  t.after(async () => { await closeFixture(framed); });
   // Another website: a different host name is a different site, so Chromium puts its frame in its own process.
   const framedOrigin = `http://localhost:${framed.address().port}`;
 
@@ -293,7 +303,7 @@ test("a frame from another allowed website cannot be redirected to an unlisted o
   });
   page.listen(0, "127.0.0.1");
   await once(page, "listening");
-  t.after(async () => { page.close(); await once(page, "close"); });
+  t.after(async () => { await closeFixture(page); });
   const pageOrigin = `http://127.0.0.1:${page.address().port}`;
 
   const browser = new BranchBrowser({ allowedOrigins: [pageOrigin, framedOrigin] });
@@ -316,7 +326,7 @@ test("a page in Branch's own window cannot start a shared worker that fetches an
   const forbidden = createServer((_request, response) => { forbiddenHits += 1; response.end("must not load"); });
   forbidden.listen(0, "127.0.0.1");
   await once(forbidden, "listening");
-  t.after(async () => { forbidden.close(); await once(forbidden, "close"); });
+  t.after(async () => { await closeFixture(forbidden); });
   const forbiddenOrigin = `http://127.0.0.1:${forbidden.address().port}`;
   const allowed = createServer((request, response) => {
     if (request.url.startsWith("/wk.js")) {
@@ -329,7 +339,7 @@ test("a page in Branch's own window cannot start a shared worker that fetches an
   });
   allowed.listen(0, "127.0.0.1");
   await once(allowed, "listening");
-  t.after(async () => { allowed.close(); await once(allowed, "close"); });
+  t.after(async () => { await closeFixture(allowed); });
   const allowedOrigin = `http://127.0.0.1:${allowed.address().port}`;
   const browser = new BranchBrowser({ allowedOrigins: [allowedOrigin] });
   t.after(() => browser.close());
@@ -346,7 +356,7 @@ test("a page in Branch's own window cannot start a service worker round the bloc
   const forbidden = createServer((request, response) => { hits.push(request.url); response.end("must not load"); });
   forbidden.listen(0, "127.0.0.1");
   await once(forbidden, "listening");
-  t.after(async () => { forbidden.close(); await once(forbidden, "close"); });
+  t.after(async () => { await closeFixture(forbidden); });
   const forbiddenOrigin = `http://127.0.0.1:${forbidden.address().port}`;
   const allowed = createServer((request, response) => {
     if (request.url.startsWith("/sw.js")) {
@@ -371,7 +381,7 @@ go("deleted", () => navigator.serviceWorker.register("/sw.js?2"));
   });
   allowed.listen(0, "127.0.0.1");
   await once(allowed, "listening");
-  t.after(async () => { allowed.close(); await once(allowed, "close"); });
+  t.after(async () => { await closeFixture(allowed); });
   const allowedOrigin = `http://127.0.0.1:${allowed.address().port}`;
   const browser = new BranchBrowser({ allowedOrigins: [allowedOrigin] });
   t.after(() => browser.close());
@@ -390,7 +400,7 @@ test("in the owner's browser, a service worker their own browsing registered can
   const forbidden = createServer((request, response) => { hits.push(request.url); response.setHeader("access-control-allow-origin", "*"); response.end("must not load"); });
   forbidden.listen(0, "127.0.0.1");
   await once(forbidden, "listening");
-  t.after(async () => { forbidden.close(); await once(forbidden, "close"); });
+  t.after(async () => { await closeFixture(forbidden); });
   const forbiddenOrigin = `http://127.0.0.1:${forbidden.address().port}`;
   // The owner's own site, whose worker passes every request of the pages it controls on, as many real ones do.
   const allowed = createServer((request, response) => {
@@ -419,7 +429,7 @@ new Image().src = ${JSON.stringify(`${forbiddenOrigin}/frame-image-`)} + ${JSON.
   });
   allowed.listen(0, "127.0.0.1");
   await once(allowed, "listening");
-  t.after(async () => { allowed.close(); await once(allowed, "close"); });
+  t.after(async () => { await closeFixture(allowed); });
   const allowedOrigin = `http://127.0.0.1:${allowed.address().port}`;
   // Started the way Chrome starts, with each website in a process of its own, as the owner's browser is.
   const browser = await chromium.launch({ headless: true, args: ["--site-per-process"] });
@@ -450,7 +460,7 @@ new Image().src = ${JSON.stringify(`${forbiddenOrigin}/frame-image-`)} + ${JSON.
   });
   framer.listen(0, "::");
   await once(framer, "listening");
-  t.after(async () => { framer.close(); await once(framer, "close"); });
+  t.after(async () => { await closeFixture(framer); });
   const framing = (host, src) => `http://${host}:${framer.address().port}/?src=${encodeURIComponent(src)}`;
   const cases = {
     first: framing("localhost", `${allowedOrigin}/frame?tag=first`),
