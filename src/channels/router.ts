@@ -157,13 +157,13 @@ export interface ChannelAdapter {
    * `format` (optional): which parts of `text` are code, and whether the message should arrive without a
    * notification sound. An app that cannot show code differently leaves it out and sends the words as they are.
    */
-  send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
+  send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat, gate?: SendGate): Promise<string | undefined>;
   /** Guarded reply preview only. Explicit unsupported refusals may fall back; ambiguous sends must throw. */
-  sendStream?(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined>;
+  sendStream?(chatId: string, text: string, replyToMessageId?: string, gate?: SendGate): Promise<string | undefined>;
   /** Finalize native previews before delivery, cancellation or steps adoption. Sends no new text. */
-  finishStream?(chatId: string, messageId: string): Promise<void>;
+  finishStream?(chatId: string, messageId: string, gate?: SendGate): Promise<void>;
   /** Ephemeral private-chat preview, with no message id. The final answer must still use `send`. */
-  sendDraft?(chatId: string, draftId: number, text: string): Promise<void>;
+  sendDraft?(chatId: string, draftId: number, text: string, gate?: SendGate): Promise<void>;
   /**
    * The app's own command picker (Discord's slash commands; Telegram's "/" menu in #590), filled from the same catalog
    * every surface reads. An empty list clears it. Absent means the app keeps its commands elsewhere (Slack's are in the
@@ -531,6 +531,8 @@ export class ChannelRouter {
   /** Aborts own-message edits and deletes still on their way out: all of them, or those through one chat app. */
   stopMessageSends(reason: string, channel?: string): void {
     for (const [sending, through] of this.messageSends) if (channel === undefined || through === channel) sending.abort(new Error(reason));
+    for (const turn of this.turns.values())
+      if (channel === undefined || turn.messages[0]?.channel === channel) turn.reply?.cancel(false);
   }
   async attach(adapter: ChannelAdapter, policy: ChannelPolicy): Promise<void> {
     if (this.adapters.has(adapter.id)) throw new Error(`Channel ${adapter.id} is already attached`);
@@ -1690,7 +1692,7 @@ export class ChannelRouter {
     const turn: ChatTurnState = { phase: "running", runId, startedAt: Date.now(), passed: 0, dropped: false,
       messages: [message], notes: [], waiters: [], live: null, reply: null, quote: this.quoteStateFor(message, () => turn.messages) };
     turn.live = this.liveFor(message, () => turn.runId);
-    turn.reply = this.replyFor(message);
+    turn.reply = this.replyFor(message, turn);
     this.turns.set(key, turn);
     turn.live?.start();
     const off = this.store.onEvent((id, kind, data) => {
@@ -2132,9 +2134,15 @@ export class ChannelRouter {
   private replyFor(message: InboundMessage, turn?: ChatTurnState): ReplyStream | null {
     const adapter = this.adapters.get(message.channel)?.adapter;
     if (!adapter?.edit || message.chatKind !== "direct" || this.switches().liveStatus === "off" || !this.liveOn()) return null;
+    const who = this.store.profiles.active()?.id ?? null;
     return new ReplyStream({ adapter, chatId: message.chatId, messageId: message.messageId,
       ...(turn ? { quote: () => this.quoteIn(turn) } : {}),
-      allowed: () => this.liveOn() && this.senderAllowed(message.channel, message.senderId) },
+      signal: () => turn?.runId ? this.runtime.activeRunSignal(turn.runId) : null,
+      allowed: () => !turn?.dropped && this.adapters.get(message.channel)?.adapter === adapter
+        && (this.store.profiles.active()?.id ?? null) === who
+        && !lockedDown(this.store, this.runtime.owner) && this.liveOn()
+        && this.senderAllowed(message.channel, message.senderId)
+        && (!turn?.runId || !["cancelled", "interrupted"].includes(this.store.run(turn.runId)?.status ?? "")) },
     (text) => this.outboundGuard(this.hideLeaks(text)), this.liveTiming.editEveryMs);
   }
   /**

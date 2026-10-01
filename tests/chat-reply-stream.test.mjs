@@ -48,7 +48,7 @@ test("revocation mid-stream prevents edits and timer sends", async () => {
   stream.text("Some words "); await delay(20);
   allowed = false;
   stream.text("more words "); await delay(20);
-  assert.equal(await stream.finish("Full answer"), null);
+  await assert.rejects(stream.finish("Full answer"), ReplyDeliveryUncertain);
   assert.equal(calls.length, 1);
 });
 test("long final answer places first chunk and returns every remaining chunk", async () => {

@@ -2,6 +2,7 @@ import { randomInt } from "node:crypto";
 import type { LiveTarget, OutboundGuard } from "./live-status.js";
 import { retryAfterMs } from "./live-status.js";
 import { chunkText } from "./deliveries.js";
+import type { SendGate } from "./router.js";
 
 /** An outbound acknowledgement is missing; another message is not a safe fallback. */
 export class ReplyDeliveryUncertain extends Error {
@@ -20,6 +21,8 @@ export class ReplyStream {
   private draftDisabled = false;
   private deliveryUncertain = false;
   private closed = false;
+  private readonly sending = new AbortController();
+  private taskSignal: AbortSignal | null = null;
   private failures = 0;
   private pausedUntil = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -49,6 +52,7 @@ export class ReplyStream {
   }
   text(delta: string): void {
     if (this.closed || this.failures >= 2) return;
+    try { this.gate().check(); } catch { this.cancel(false); return; }
     // The final output comes from the runtime. Keep only enough preview for the first message.
     this.words = (this.words + delta).slice(0, this.limit * 2);
     if (this.timer) return;
@@ -61,17 +65,21 @@ export class ReplyStream {
     }, Math.max(this.intervalMs, this.pausedUntil - Date.now()));
     this.timer.unref();
   }
-  cancel(finalize = true): void {
+  private closeAdmission(): void {
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
+  }
+  cancel(finalize = true): void {
+    this.closeAdmission();
+    this.sending.abort(new Error("Reply preview was cancelled"));
     if (finalize && this.target.adapter.finishStream) void this.enqueue(async () => {
       if (this.messageId) await this.stop(this.messageId);
     }).catch(() => undefined);
   }
   /** Close admission and settle every earlier preview/stop before an error can become a fresh reply. */
   async finishError(): Promise<boolean> {
-    this.cancel(false);
+    this.closeAdmission();
     return this.enqueue(async () => {
       // A queued write can acquire its id (or lose its acknowledgement) after cancellation.
       // Stop only that exact acknowledged message, including when another failure already held it.
@@ -79,13 +87,14 @@ export class ReplyStream {
         try { await this.stop(this.messageId); }
         catch { return false; }
       }
-      return !this.deliveryUncertain;
+      return !this.deliveryUncertain && this.allowed();
     });
   }
   async finish(text: string): Promise<PlacedReply | null> {
-    this.cancel(false);
+    this.closeAdmission();
     return this.enqueue(async () => {
       if (this.deliveryUncertain) throw new ReplyDeliveryUncertain(this.messageId);
+      if (!this.allowed()) throw this.hold();
       // Native drafts have no message id: the caller persists the full answer with its ordinary send path.
       if (!this.messageId) return null;
       const id = this.messageId;
@@ -111,8 +120,24 @@ export class ReplyStream {
     return new ReplyDeliveryUncertain(this.messageId);
   }
   private async stop(id: string): Promise<void> {
-    try { await this.target.adapter.finishStream?.(this.target.chatId, id); }
+    try {
+      const gate = this.gate();
+      gate.check();
+      await this.target.adapter.finishStream?.(this.target.chatId, id, gate);
+      gate.check();
+    }
     catch { throw this.hold(); }
+  }
+  private allowed(): boolean {
+    return !this.sending.signal.aborted && !this.taskSignal?.aborted && (this.target.allowed?.() ?? true);
+  }
+  private gate(): SendGate {
+    const task = this.taskSignal ??= this.target.signal?.() ?? null;
+    const signal = task ? AbortSignal.any([this.sending.signal, task]) : this.sending.signal;
+    return { signal, check: () => {
+      signal.throwIfAborted();
+      if (!this.allowed()) throw new Error("Reply delivery is no longer allowed");
+    } };
   }
   private async put(text: string): Promise<void> {
     if (this.closed || !text.trim() || Date.now() < this.pausedUntil || this.failures >= 2) return;
@@ -123,9 +148,11 @@ export class ReplyStream {
   }
   private async checked(text: string): Promise<string | null> {
     try {
-      if (!(this.target.allowed?.() ?? true)) return null;
+      const gate = this.gate();
+      gate.check();
       const checked = await this.guard(text);
-      return checked.blocked ? null : checked.text;
+      gate.check();
+      return checked.blocked || !this.allowed() ? null : checked.text;
     } catch { return null; }
   }
   private async write(text: string, reconcile = false): Promise<boolean> {
@@ -137,13 +164,18 @@ export class ReplyStream {
     }
     let starting = false;
     try {
-      if (!(this.target.allowed?.() ?? true) || !this.target.adapter.edit || Date.now() < this.pausedUntil) return false;
-      if (this.messageId) await this.target.adapter.edit(this.target.chatId, this.messageId, text);
+      if (!this.allowed() || !this.target.adapter.edit || Date.now() < this.pausedUntil) return false;
+      const gate = this.gate();
+      gate.check();
+      if (this.messageId) await this.target.adapter.edit(this.target.chatId, this.messageId, text, undefined, gate);
       else {
         starting = true;
-        const send = this.target.adapter.sendStream?.bind(this.target.adapter) ?? this.target.adapter.send.bind(this.target.adapter);
-        this.messageId = await send(this.target.chatId, text, this.target.quote ? this.target.quote() : this.target.messageId) ?? null;
+        const replyTo = this.target.quote ? this.target.quote() : this.target.messageId;
+        this.messageId = await (this.target.adapter.sendStream
+          ? this.target.adapter.sendStream(this.target.chatId, text, replyTo, gate)
+          : this.target.adapter.send(this.target.chatId, text, replyTo, undefined, gate)) ?? null;
       }
+      gate.check();
       if (!this.messageId) { this.deliveryUncertain ||= starting; this.failures = 2; return false; }
       this.shown = text;
       this.failures = 0;
@@ -159,9 +191,12 @@ export class ReplyStream {
   }
   /** Hermes Agent's draft-to-edit fallback (MIT), using the same guarded, serialized preview as ordinary edits. */
   private async draft(text: string): Promise<boolean | null> {
-    if (this.closed || !(this.target.allowed?.() ?? true) || Date.now() < this.pausedUntil) return false;
+    if (this.closed || !this.allowed() || Date.now() < this.pausedUntil) return false;
     try {
-      await this.target.adapter.sendDraft!(this.target.chatId, this.draftId, text);
+      const gate = this.gate();
+      gate.check();
+      await this.target.adapter.sendDraft!(this.target.chatId, this.draftId, text, gate);
+      gate.check();
       this.shown = text;
       this.failures = 0;
       return true;
@@ -170,7 +205,7 @@ export class ReplyStream {
       if (wait) { this.pausedUntil = Date.now() + wait; return false; }
       // A topic may refuse drafts even when the bot supports them. Preserve this chat's exact address on fallback.
       this.draftDisabled = true;
-      return this.closed ? false : null;
+      return this.closed || !this.allowed() ? false : null;
     }
   }
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
