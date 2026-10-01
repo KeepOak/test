@@ -22,6 +22,7 @@ import { commandTuning } from '../knobs/commands.js'; // R17-S10
 import type { Store } from '../store.js';
 import { ChannelPolicySchema, type ChannelAdapter, type ChannelRouter } from '../channels/router.js';
 import { TelegramAdapter, telegramBotId } from '../channels/telegram.js';
+import { telegramInbox } from '../channels/telegram-inbox.js';
 import { DiscordAdapter } from '../channels/discord.js';
 import { SlackAdapter } from '../channels/slack.js';
 import { WhatsAppAdapter } from '../channels/whatsapp.js';
@@ -563,7 +564,8 @@ async function buildChannel(channel: ChannelConfig, env: NodeJS.ProcessEnv, host
     // apiBase cannot be used to reach somewhere the owner never allowed.
     // mac3/never-break: the read position is kept, so messages sent during a restart are answered.
     const position = channelPosition(host.store, channel.id, undefined, telegramBotId(token)); // kept per bot
-    return new TelegramAdapter({ id: channel.id, token, fetch: guardedFetch, ...base, ...(position ? { position } : {}) });
+    const inbox = telegramInbox(host.store, telegramBotId(token), channel.id); // each update saved before Telegram is told it arrived
+    return new TelegramAdapter({ id: channel.id, token, fetch: guardedFetch, ...base, ...(position ? { position } : {}), ...(inbox ? { inbox } : {}) });
   }
   if (channel.type === 'discord')
     return new DiscordAdapter({ id: channel.id, token: await credential(channel.tokenSecret, env, host),

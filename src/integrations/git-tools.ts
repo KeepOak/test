@@ -217,6 +217,13 @@ export function githubAccessForPublication(registry: ToolRegistry): GitHubAccess
 export function registerGitHubProject(registry: ToolRegistry, github: GitHubAccess, git?: GitTools): void {
   githubConnections.set(registry, github);
   registry.register({
+    name: "github.pull_request_reviews", permission: "github.manage",
+    description: "Read a pull request's submitted review states, requested changes and inline file comments with their commit and line. Follow nextPage with the same limit for more comments. Use the feedback to fix the existing source branch and push again; this tool never approves or merges. REST does not expose resolved-thread status, so resolution is unknown.",
+    parameters: z.object({ repo: repositoryPath, number: z.number().int().positive(),
+      page: z.number().int().min(1).max(1000).default(1), limit: z.number().int().min(1).max(100).default(25) }).strict(),
+    execute: (input) => github.pullRequestReviews(input),
+  });
+  registry.register({
     name: "github.issues", permission: "github.manage",
     description: "List the issues on a GitHub repository, newest first, saying which of them are really pull requests.",
     parameters: z.object({ repo: repositoryPath, state: z.enum(["open", "closed", "all"]).default("open"), limit: z.number().int().min(1).max(50).default(20) }).strict(),

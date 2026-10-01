@@ -12,6 +12,7 @@ import { activationJournalName, databaseFormat, openActivationJournal } from "./
 import { storeMigrations } from "./migrations.js";
 import { assessRollback, observeForRollback } from "./rollback.js";
 import { databaseName } from "../install/layout.js";
+import { markStoppedOnPurpose } from "../install/systemd.js";
 import { openGatewayRecord } from "./flight-record.js";
 
 /**
@@ -71,7 +72,8 @@ export async function runGatewayIfSwitchedOn(input: { dataDir: string; script: s
     record.asked(why);
     if (closing) return;
     closing = true;
-    void gateway.stop().finally(() => process.exit(code));
+    // A stop on purpose under systemd leaves with its own code, so the service is not started again (src/install/systemd.ts).
+    void gateway.stop().finally(() => process.exit(code || Number(process.exitCode ?? 0)));
   };
   const gateway: Gateway = new Gateway({ ...input, presence: true,
     rollBack: async (watch) => {
@@ -86,15 +88,15 @@ export async function runGatewayIfSwitchedOn(input: { dataDir: string; script: s
       }
       stop("the update was put back", 1);
     },
-    quit: () => stop("branch quit"),
+    quit: () => { markStoppedOnPurpose(); stop("branch quit"); },
     onWorker: (event) => {
       if (event.kind === "ready") record.log.write({ level: "info", component: "gateway", message: "The engine is ready", fields: { pid: event.ready.pid ?? null, version: event.ready.version } });
       else record.log.write({ level: "error", component: "gateway", message: event.why ?? "The engine stopped unexpectedly", fields: { code: event.code, signal: event.signal, tripped: event.tripped } });
     } });
   const url = await gateway.start();
   console.log(`Branch gateway listening at ${url}\nThe engine runs behind it and is started again if it stops.`);
-  process.once("SIGINT", () => stop("Ctrl+C"));
-  process.once("SIGTERM", () => stop("asked to stop"));
+  process.once("SIGINT", () => { markStoppedOnPurpose(); stop("Ctrl+C"); });
+  process.once("SIGTERM", () => { markStoppedOnPurpose(); stop("asked to stop"); });
   return true;
 }
 

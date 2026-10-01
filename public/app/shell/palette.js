@@ -4,7 +4,7 @@
    from the engine's own search (GET /api/search, asked once typing pauses): a message opens its conversation with the
    words found, a document opens to read (places/docread.js). */
 
-import { $, esc, applyCss, renderNow } from "../core/dom.js";
+import { $, esc, applyCss, renderNow, composing } from "../core/dom.js";
 import { S, E, ownName, chatFace } from "../core/state.js";
 import { setLockdown } from "../chat/approvals.js";
 import { on, run, has } from "../core/actions.js";
@@ -164,7 +164,7 @@ export function initPalette() {
   document.addEventListener("keydown", (e) => {
     if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
     if (pressed(e, "palette")) { e.preventDefault(); openPalette(); return; }
-    if (!P.el) return;
+    if (!P.el || composing(e)) return; // arrows, Escape and Enter while composing belong to the input method
     if (e.key === "Escape") { e.stopPropagation(); closePalette(); }
     else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); P.sel = Math.max(0, Math.min(P.items.length - 1, P.sel + (e.key === "ArrowDown" ? 1 : -1))); selectPalette(); }
     else if (e.key === "Enter" && e.target.id === "pal-in") { e.preventDefault(); pick(P.sel); }

@@ -1,8 +1,8 @@
 /**
  * Where a chat app's stream of messages was read up to, kept in the saved-work database so that
  * after a restart the messages that arrived in the meantime are fetched and answered — and the ones
- * already answered are not answered twice. A position is saved only after its message was handled,
- * so a message cut off by a crash is fetched again (see docs/never-break.md, threat 3).
+ * already answered are not answered twice. Telegram's position moves on as soon as an update is saved to its inbox
+ * (src/channels/telegram-inbox.ts), which keeps a message cut off by a crash for the restart (docs/never-break.md).
  *
  * `reader` names what the position belongs to (a Telegram bot's id). A position saved by another reader, or saved
  * before readers were named, is never used: Telegram numbers each bot's updates on their own ("Update identifiers

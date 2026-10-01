@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { assertRealScreenAllowed } from './real-screen-guard.js'; // dogfood follow-up
 import { tmpdir } from 'node:os';
-import { DesktopScriptRunner, powerShellPath, scriptEnvironment, type PosixDesktopOptions } from './desktop-script.js';
+import { DesktopScriptRunner, builtinModules, powerShellPath, scriptEnvironment, type PosixDesktopOptions } from './desktop-script.js';
 
 /**
  * The small notice that sits on top of everything while the assistant is using the screen, with a
@@ -17,6 +17,7 @@ export const bannerTitle = 'Branch is using your screen';
 
 const bannerScript = String.raw`
 $ErrorActionPreference = 'Stop'
+${builtinModules}
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Branch is using your screen'
@@ -75,11 +76,16 @@ export const noBannerRefusal = 'Branch can only use your screen and keyboard fro
 const bannerFailed = 'The notice with the Stop button could not be shown, so Branch has not touched your screen.';
 
 export interface BannerOptions { platform?: string; window?: BannerWindowFactory }
+/** A long-lived view's notice, independent of a task putting its shorter notice up or taking it down. */
+export interface BannerLease { visible(): boolean; release(): Promise<void> }
 
 export class DesktopBanner {
   private child: ChildProcess | undefined;
-  private hiding = false;
+  private readonly hiddenChildren = new WeakSet<ChildProcess>();
   private window: BannerWindow | undefined;
+  private readonly taskStops = new Set<() => void>();
+  private readonly leases = new Set<() => void>();
+  private starting: Promise<void> | undefined;
   constructor(
     private readonly runner: DesktopScriptRunner, private readonly executable = powerShellPath,
     private readonly options: BannerOptions = {},
@@ -94,19 +100,53 @@ export class DesktopBanner {
    * which happens within a moment of the click because the notice's own process ends there.
    */
   async show(onStop: () => void): Promise<void> {
-    if (this.platform !== 'win32') return this.showWindow(onStop);
+    this.taskStops.add(onStop);
+    try { await this.ensureVisible(); }
+    catch (error) { this.taskStops.delete(onStop); throw error; }
+  }
+  /** A remote view keeps its Stop button when a task ends or the owner hands control back to a task. */
+  async acquire(onStop: () => void): Promise<BannerLease> {
+    let released = false;
+    const stopped = () => { released = true; onStop(); };
+    this.leases.add(stopped);
+    try {
+      await this.ensureVisible();
+      if (!this.visible) throw new Error(bannerFailed);
+    } catch (error) { this.leases.delete(stopped); throw error; }
+    return {
+      visible: () => !released && this.visible,
+      release: async () => {
+        if (released) return;
+        released = true;
+        this.leases.delete(stopped);
+        if (!this.leases.size && !this.taskStops.size) await this.hideNotice();
+      },
+    };
+  }
+  private async ensureVisible(): Promise<void> {
+    if (this.visible) return;
+    if (!this.starting) this.starting = this.showNotice();
+    try { await this.starting; } finally { this.starting = undefined; }
+  }
+  private stopped(): void {
+    const callbacks = [...this.taskStops, ...this.leases];
+    this.taskStops.clear();
+    this.leases.clear();
+    for (const callback of callbacks) { try { callback(); } catch { /* One failed task cannot swallow another view's Stop. */ } }
+  }
+  private async showNotice(): Promise<void> {
+    if (this.platform !== 'win32') return this.showWindow(() => this.stopped());
     if (this.visible) return;
     const path = await this.runner.materialise('branch-banner.ps1', bannerScript);
-    this.hiding = false;
     assertRealScreenAllowed(); // dogfood follow-up: never the real screen from a test without the opt-in
     const child = spawn(this.executable, ['-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-File', path], {
       cwd: tmpdir(), windowsHide: true, stdio: 'ignore', env: scriptEnvironment(),
     });
     this.child = child;
-    child.on('error', () => { this.child = undefined; });
+    child.on('error', () => { if (this.child === child) this.child = undefined; });
     child.once('exit', () => {
-      this.child = undefined;
-      if (!this.hiding) onStop();
+      if (this.child === child) this.child = undefined;
+      if (!this.hiddenChildren.has(child)) this.stopped();
     });
     await new Promise((resolve) => setTimeout(resolve, 600));
   }
@@ -135,6 +175,12 @@ export class DesktopBanner {
   }
   /** Takes the notice down because the work is over, which is not the same as the person stopping it. */
   async hide(): Promise<void> {
+    this.taskStops.clear();
+    if (this.leases.size) return;
+    await this.hideNotice();
+  }
+  private async hideNotice(): Promise<void> {
+    await this.starting?.catch(() => undefined);
     if (this.platform !== 'win32') {
       const window = this.window;
       this.window = undefined;
@@ -143,7 +189,7 @@ export class DesktopBanner {
     }
     const child = this.child;
     if (!child) return;
-    this.hiding = true;
+    this.hiddenChildren.add(child);
     this.child = undefined;
     child.kill();
     await new Promise((resolve) => setTimeout(resolve, 150));

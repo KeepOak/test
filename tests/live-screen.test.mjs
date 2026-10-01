@@ -1,22 +1,18 @@
-/* parity-b2: the owner's live view of this computer's screen (GET /api/panels/screen, src/live-screen.ts, and
-   DesktopControl.liveFrames). Frames stream down one request only while a view holds it open, from one reader shared by
-   every open view, and only for the owner at this computer's own window: never while Lockdown or the app lock is on,
-   never through a door (a paired phone), never while a sign-in is under way, and never while the owner's screen switch
-   is off or a password window is showing. The reader is a stand-in that counts its frames and whether it was let go:
-   every refused caller leaves the count where it was, and every way a view ends lets it go.
-   design/redesign/tools/mutate-live-screen.mjs drops each guard in turn and expects this file to go red. */
+/* parity-b2: the frames behind the owner's live view of this computer's screen (DesktopControl.liveFrames and the Windows
+   reader). Who may open a view, and what it shows, is src/local-screen.ts (tests/local-screen*.test.mjs); the old
+   first-monitor stream these tests once drove through GET /api/panels/screen was replaced by it. Here: a person's own
+   key is refused without a frame, every frame follows the screen's own rules (the switch, a password window before or
+   after it, nothing kept), and the Windows program is one per view and ends when let go. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch, GatewayAuth } from "../dist/index.js";
+import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { liveScreenRefusal, liveScreenDoorRefusal, nextFrameIn, liveScreenViews } from "../dist/live-screen.js";
 import { DesktopControl } from "../dist/integrations/desktop.js";
 import { desktopScript, LiveScreenProcess } from "../dist/integrations/desktop-script.js";
-import { whileSignInShows } from "../dist/sign-in-showing.js";
 import { saveDesktopSettings } from "../dist/integrations/desktop-config.js";
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46]);
@@ -86,140 +82,6 @@ async function world(t, takeMs = 0) {
   return { app, server, seen, view, post, stop };
 }
 
-test("nothing is read until a view opens; frames stream while it is open, shared by every view, and stop when the last goes", async (t) => {
-  const { seen, view } = await world(t);
-  await pause(300);
-  assert.equal(seen.opened + seen.taken, 0, "no view, no reader and no frame");
-  const one = await view();
-  assert.equal(one.response.status, 200);
-  assert.match(one.response.headers.get("content-type"), /ndjson/);
-  assert.equal(one.response.headers.get("cache-control"), "no-store");
-  await until(() => one.frames().length >= 3);
-  assert.equal(one.frames()[0].frame, `data:image/jpeg;base64,${JPEG.toString("base64")}`);
-  const two = await view();
-  await until(() => two.frames().length >= 2);
-  assert.equal(seen.opened, 1, "two views share one reader");
-  assert.equal(liveScreenViews(), 2);
-  one.close();
-  await until(() => liveScreenViews() === 1);
-  const still = two.frames().length;
-  await until(() => two.frames().length > still);
-  assert.equal(seen.closed, 0, "the other view still has its frames");
-  two.close();
-  await until(() => seen.closed === 1);
-  const taken = seen.taken;
-  await pause(400);
-  assert.equal(seen.taken, taken, "and nothing after the last view went");
-  assert.equal(liveScreenViews(), 0);
-});
-
-test("the pace: about ten frames a second for a large view, five for a small one, and fewer when frames are slow", async (t) => {
-  assert.equal(nextFrameIn(1280, 10), 90);
-  assert.equal(nextFrameIn(480, 10), 190);
-  assert.equal(nextFrameIn(1280, 200), 400, "a slow frame: the reader works a third of the time");
-  assert.equal(nextFrameIn(1280, 1500), 0, "never slower than the frame itself");
-  const { seen, view } = await world(t);
-  const large = await view(undefined, {}, 1280);
-  await pause(1000);
-  const fast = large.frames().length;
-  large.close();
-  await until(() => seen.closed === 1);
-  assert.ok(fast >= 6 && fast <= 12, `a large view: ${fast} frames in a second`);
-  const small = await view(undefined, {}, 400);
-  await pause(1000);
-  const slow = small.frames().length;
-  small.close();
-  assert.ok(slow >= 3 && slow <= 6, `a small view: ${slow} frames in a second`);
-  assert.ok(seen.widths.includes(1280) && seen.widths.includes(400), "each asked for its own width");
-});
-
-test("a short-lived key, a household person, Lockdown and the app lock are refused before anything is read", async (t) => {
-  const { app, seen, view, post } = await world(t);
-  const key = app.sessionTokens.create(app.runtime.owner, { name: "script", scope: "run" }).token;
-  assert.equal((await view(key)).response.status, 401, "a short-lived key");
-  const person = app.store.profiles.create({ name: "Sam", pin: "1234" });
-  app.store.profiles.switch({ profileId: person.id, pin: "1234" });
-  const household = await view();
-  assert.ok([400, 403].includes(household.response.status), `a household person (${household.response.status})`);
-  app.store.profiles.switch({ profileId: null });
-  assert.equal((await post("/api/lockdown", { on: true })).status, 200);
-  const locked = await view();
-  assert.equal(locked.response.status, 403, "Lockdown");
-  assert.match((await locked.response.json()).error, /Lockdown is on/);
-  assert.equal((await post("/api/lockdown", { on: false })).status, 200);
-  assert.equal((await post("/api/lock/pin", { pin: "2468" })).status, 200);
-  assert.equal((await post("/api/lock", {})).status, 200);
-  assert.equal((await view()).response.status, 423, "the app lock");
-  assert.equal((await post("/api/lock/unlock", { pin: "2468" })).status, 200);
-  assert.equal(seen.opened + seen.taken, 0, "none of them was shown, or cost, a frame");
-  const owner = await view();
-  assert.equal(owner.response.status, 200, "the owner, unlocked, is");
-  await until(() => owner.frames().length >= 1);
-  owner.close();
-});
-
-test("Lockdown or the app lock turned on while a view is open ends it at the next frame, and lets the reader go", async (t) => {
-  const { seen, view, post } = await world(t);
-  const open = await view();
-  await until(() => open.frames().length >= 1);
-  assert.equal((await post("/api/lockdown", { on: true })).status, 200);
-  await until(() => open.ended());
-  assert.match(open.lines.at(-1).refusal, /Lockdown is on/);
-  assert.equal(open.lines.at(-1).status, 403);
-  assert.equal(seen.closed, 1);
-  assert.equal((await post("/api/lockdown", { on: false })).status, 200);
-  const again = await view();
-  await until(() => again.frames().length >= 1);
-  assert.equal((await post("/api/lock/pin", { pin: "2468" })).status, 200);
-  assert.equal((await post("/api/lock", {})).status, 200);
-  await until(() => again.ended());
-  assert.equal(again.lines.at(-1).status, 423, "the app lock");
-  assert.equal(seen.closed, 2);
-  const taken = seen.taken;
-  await pause(300);
-  assert.equal(seen.taken, taken);
-});
-
-test("Lockdown, the app lock or the window switched to someone else while a frame is being taken: that frame is dropped", async (t) => {
-  const { app, seen, view, post } = await world(t);
-  const turns = [
-    ["Lockdown", () => post("/api/lockdown", { on: true }), 403, () => post("/api/lockdown", { on: false })],
-    ["the app lock", async () => { await post("/api/lock/pin", { pin: "2468" }); return post("/api/lock", {}); }, 423, () => post("/api/lock/unlock", { pin: "2468" })],
-    ["someone else", async () => { const sam = app.store.profiles.create({ name: "Sam", pin: "1357" }); app.store.profiles.switch({ profileId: sam.id, pin: "1357" }); return { status: 200 }; }, 403, async () => app.store.profiles.switch({ profileId: null })],
-  ];
-  for (const [what, turnOn, status, turnOff] of turns) {
-    seen.slow = null;
-    const open = await view();
-    await until(() => open.frames().length >= 1);
-    seen.slow = 600;
-    await until(() => seen.widths.length > seen.taken);
-    const before = open.frames().length;
-    assert.equal((await turnOn()).status, 200, what);
-    await until(() => open.ended());
-    assert.equal(open.frames().length, before, `${what}: the frame under way is not sent`);
-    assert.equal(open.lines.at(-1).status, status, what);
-    await turnOff();
-  }
-});
-
-test("a paired phone or any caller through a door, and anyone but the owner, is refused", async (t) => {
-  const { app, seen, view } = await world(t);
-  const base = { store: app.store, owner: app.runtime.owner, locked: () => null };
-  assert.equal(liveScreenRefusal({ ...base, profiles: { isOwner: () => true }, viaDoor: true })?.message, liveScreenDoorRefusal);
-  assert.equal(liveScreenRefusal({ ...base, profiles: { isOwner: () => true }, viaDoor: true })?.status, 403);
-  assert.match(liveScreenRefusal({ ...base, profiles: { isOwner: () => false }, viaDoor: false })?.message ?? "", /owner/);
-  assert.equal(liveScreenRefusal({ ...base, profiles: { isOwner: () => true }, viaDoor: false }), null);
-  assert.equal(liveScreenRefusal({ ...base, locked: () => "Branch is locked.", profiles: { isOwner: () => true }, viaDoor: false })?.status, 423);
-  const door = await view(undefined, { "x-branch-tunnel": "1" });
-  assert.equal(door.response.status, 403, "through the tunnel door");
-  assert.equal((await door.response.json()).error, liveScreenDoorRefusal);
-  // A paired phone's own key is a door wherever it arrives from, this computer's own address included.
-  const phone = await view(new GatewayAuth(app.store, app.runtime.owner).remember("Robin's phone").key);
-  assert.equal(phone.response.status, 403, "a paired phone's own key");
-  assert.equal((await phone.response.json()).error, liveScreenDoorRefusal);
-  assert.equal(seen.opened, 0);
-});
-
 test("over HTTP: a person's own key is refused without a frame", async (t) => {
   const { app, seen, view, post } = await world(t);
   assert.equal((await post("/api/people/settings", { mode: "on" })).status, 200);
@@ -228,49 +90,6 @@ test("over HTTP: a person's own key is refused without a frame", async (t) => {
   const person = await view(samsKey);
   assert.ok(person.response.status >= 400 && person.response.status < 500, `a person's own key (${person.response.status})`);
   assert.equal(seen.opened, 0);
-});
-
-test("no frame while Branch handles a sign-in, nor one taken as it began; the frames come back when it ends", async (t) => {
-  const { seen, view } = await world(t, 150);
-  let finish;
-  const holding = whileSignInShows(() => new Promise((done) => { finish = done; }));
-  const during = await view();
-  assert.equal(during.response.status, 409, "while a sign-in is under way");
-  assert.match((await during.response.json()).error, /sign-in/);
-  assert.equal(seen.opened, 0, "nothing was read");
-  finish();
-  await holding;
-  const open = await view();
-  await until(() => open.frames().length >= 1);
-  // A sign-in that begins while a frame is being taken: that frame is dropped, and none is sent until it ends.
-  await until(() => seen.widths.length > seen.taken);
-  let again;
-  const second = whileSignInShows(() => new Promise((done) => { again = done; }));
-  const before = open.frames().length;
-  await until(() => open.lines.some((l) => /sign-in/.test(l.refusal ?? "")));
-  await pause(400);
-  assert.equal(open.frames().length, before, "no frame while it lasts");
-  again();
-  await second;
-  await until(() => open.frames().length > before);
-  open.close();
-});
-
-test("a frame under way is stopped when its view goes, and Branch stopping ends every view", async (t) => {
-  const { seen, view, stop } = await world(t);
-  const open = await view();
-  await until(() => open.frames().length >= 1);
-  seen.slow = 5000;
-  await until(() => seen.widths.length > seen.taken);
-  open.close();
-  await until(() => seen.aborted === 1);
-  assert.equal(seen.closed, 1, "the reader was let go with it");
-  seen.slow = null;
-  const other = await view();
-  await until(() => other.frames().length >= 1);
-  await stop();
-  await until(() => other.ended());
-  assert.equal(seen.closed, 2, "Branch stopping let the reader go");
 });
 
 test("the frame follows the screen's own rules: the switch, a password window before or after it, and nothing kept", async (t) => {

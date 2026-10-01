@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { redactLeaks } from "../leak-guard.js";
+import { blockedMemoryText, memoryWriteRefusal } from "../content-guard.js";
 import type { Store } from "../store.js";
 import { readKnobs } from "../knobs/settings.js"; // whether the note is shown, as the knobs card reads it (ship-on)
 
@@ -112,7 +113,9 @@ export class MemoryBlocks {
     let used = 0;
     for (const block of this.list(who)) {
       if (block.label === aboutYouLabel || !block.value.trim()) continue;
-      const part = `<${block.label}${block.description ? ` — ${block.description}` : ""}; ${block.value.length}/${block.limit} characters>\n${block.value}`;
+      // A block saved before these checks is shown as a placeholder; the Memory view still has its words to remove.
+      const value = blockedMemoryText(block.value) ?? block.value;
+      const part = `<${block.label}${block.description ? ` — ${block.description}` : ""}; ${block.value.length}/${block.limit} characters>\n${value}`;
       if (used + part.length > blockTotalChars) break;
       parts.push(part);
       used += part.length;
@@ -124,6 +127,9 @@ export class MemoryBlocks {
     return !!this.db.prepare("SELECT 1 AS found FROM lm_blocks WHERE owner=? AND agent=? AND label=?").get(who.owner, who.agent, label);
   }
   private checked(text: string, limit: number): string {
+    // A block sits at the start of every conversation, so what it says meets the same checks as a remembered fact.
+    const refused = memoryWriteRefusal(text);
+    if (refused) throw new Error(refused);
     if (text.length > limit)
       throw new Error(`That would make the block ${text.length} characters long, over its budget of ${limit}. Shorten it first.`);
     return text;

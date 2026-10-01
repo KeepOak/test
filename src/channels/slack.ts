@@ -58,11 +58,19 @@ const answerAction = /^branch_answer_\d{1,2}$/;
 /** The Slack thread a reply goes to: the timestamp before any "#" a button press added; anything else is no thread. */
 const threadOf = (id: string | undefined): string | undefined => { const ts = id?.split("#")[0]; return ts && /^\d+\.\d+$/.test(ts) ? ts : undefined; };
 
-/** Turns the markdown the assistant writes into the shape Slack renders. */
+/**
+ * Turns the markdown the assistant writes into the shape Slack renders. Slack reads &, < and > as control characters,
+ * so all three are escaped in every word first and links are built only after: a `<!channel>`, `<!here>` or a
+ * disguised `<https://…|label>` in the words shows as written and pings or links nothing. A person or channel named
+ * by id (`<@U…>`, `<#C…>`) stays a mention, as on Discord, and a line starting "> " stays a quote. Follows OpenClaw's
+ * escapeSlackMrkdwnContent and buildSlackLink (extensions/slack/src/format.ts, https://github.com/openclaw/openclaw, MIT).
+ */
 export function toMrkdwn(text: string): string {
   const fences: string[] = [];
-  let out = text.replace(/```[\s\S]*?```/g, (block) => `\u0000${fences.push(block) - 1}\u0000`);
-  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "<$2|$1>");
+  let out = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  out = out.replace(/&lt;([@#][A-Z0-9]{2,30})&gt;/g, "<$1>").replace(/^&gt;(?= |$)/gm, ">");
+  out = out.replace(/```[\s\S]*?```/g, (block) => `\u0000${fences.push(block) - 1}\u0000`);
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)|]+)\)/g, "<$2|$1>");
   // Italics first: in Slack one asterisk means bold, so *text* has to become _text_ before
   // **text** collapses to *text*, or the new bold would be turned into italics.
   out = out.replace(/(^|[^*])\*(?!\*)([^*\n]+)\*(?!\*)/g, "$1_$2_");

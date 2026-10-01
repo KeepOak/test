@@ -161,7 +161,9 @@ test("sessions, resume, tools, usage and the lists print what the window shows",
 
 test("B5 every command cli.ts runs is a command it accepts, so none is refused before it can run", async () => {
   const { readFile } = await import("node:fs/promises");
-  const source = await readFile(new URL("../src/cli.ts", import.meta.url), "utf8");
+  // The program (src/cli-program.ts) and the entry's own quick answers (src/cli-quick.ts).
+  const source = (await Promise.all(["cli-program.ts", "cli-quick.ts"]
+    .map((name) => readFile(new URL(`../src/${name}`, import.meta.url), "utf8")))).join("\n");
   const dispatched = new Set([...source.matchAll(/command === "([a-z][a-z-]*)"/g)].map((match) => match[1]));
   const known = new Set(cliCommands.map((entry) => entry.name));
   for (const name of dispatched) assert.ok(known.has(name), `${name} is run by cli.ts but missing from cliCommands`);

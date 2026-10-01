@@ -30,6 +30,7 @@ const stubs = {
   "app/flows/chatapps17d.js": "export const nativeFormat = () => \"\"; export const pill17d = () => \"\"; export const stateOf = () => [];",
   "app/settings/chat-formatting.js": "export const formatButtons = () => \"\"; export const initFormatting = () => {}; export const loadFormats = async () => {};",
   "app/settings/chat-reply-style.js": "export const initReplyStyle = () => {}; export const loadReplyStyles = async () => {}; export const replyStyleRows = () => \"\";",
+  "app/settings/chat-routing.js": "export const routingCard = () => \"\"; export const initRouting = () => {};",
   "i18n.js": "export const t = (key) => key;",
 };
 
@@ -40,7 +41,9 @@ async function appsPage(t) {
   for (const [file, code] of Object.entries(stubs)) await writeFile(join(root, file), code);
   const held = [];
   const ca = { S: { view: "inbox" }, E: { profiles: { isOwner: true } }, owner: true, profile: null, locked: false, toasts: [], acts: {}, renders: 0,
-    api: (path, body) => new Promise((resolve, reject) => held.push({ path, method: body === undefined ? "GET" : "POST", body, resolve, reject })) };
+    // The Who answers here card's read (channels/routes) is not what these cases hold open: it answers at once.
+    api: (path, body) => (path === "channels/routes" ? Promise.resolve(null)
+      : new Promise((resolve, reject) => held.push({ path, method: body === undefined ? "GET" : "POST", body, resolve, reject }))) };
   globalThis.__ca = ca;
   globalThis.document = { getElementById: (id) => (id === "app" ? { classList: { contains: (c) => c === "locked-b17" && ca.locked } } : null),
     addEventListener: () => {} };

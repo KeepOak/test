@@ -12,7 +12,7 @@ import { usageLimits } from "./usage-limits-api.js"; // mac7/usage-bar
 import { analyticsLines, usageAnalytics } from "./accounts/usage-analytics.js";
 import { choosePreset, historyLines, presetLines, presetWords } from "./terminal-commands.js";
 import { PLACE_ROWS, connectionRows, skillRows, type Row } from "./terminal-place-data.js";
-import { TERMINAL_ALIASES, TERMINAL_CLI_COMMANDS } from "./terminal-parity.js";
+import { TERMINAL_CLI_COMMANDS } from "./terminal-parity.js";
 import { MODEL_TABS, SETTINGS_PAGES, allHomes, homeOf, parseRoute, placeById, type Route } from "./terminal-places.js";
 import { knowCopysCommit, settingsRows } from "./terminal-settings.js";
 import {
@@ -46,18 +46,9 @@ export const readOnlyTerminalCommands = new Set([
   "skills", "channels", "mcp", "tools", "projects", "usage", "snapshots", "version", "status",
 ]);
 
-/**
- * The command line as Branch reads it: nothing at all opens the view in a terminal (and starts the
- * web app anywhere else, as it always has), and a name brought from Hermes or OpenClaw becomes the
- * Branch command it means.
- */
-export function terminalArgv(args: string[], interactive: boolean): string[] {
-  if (!args.length) return [interactive ? "chat" : "start"];
-  const [first = "", ...rest] = args;
-  if (first === "mcp" && rest[0] === "serve") return ["mcp-serve", ...rest.slice(1)];
-  const alias = TERMINAL_ALIASES[first];
-  return alias ? [...alias, ...rest] : args;
-}
+// The command line as Branch reads it lives beside the aliases it applies, which import nothing, so the `branch`
+// entry can read a command line without loading the engine (src/cli.ts).
+export { terminalArgv } from "./terminal-parity.js";
 export function versionText(): string {
   return `Branch Agent ${String(createRequire(import.meta.url)("../package.json").version)}`;
 }

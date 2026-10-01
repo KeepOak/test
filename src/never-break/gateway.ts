@@ -8,7 +8,7 @@ import { clearRunning, sessionTokenFileName, writeRunning } from "../install/run
 import { answerHeader, answerProof, answerShort, askHeader, atWindowAddress, isSessionKey, markFor, newBoot, ProofDoor, proofPath, sessionKey } from "../engine-proof.js";
 import { contractsMeet, gatewayContract, WorkerReadySchema, type WorkerReady } from "./contract.js";
 import { loadGatewayConfig, promoteGood, restoreGood, sameAsGood, type GatewayConfig } from "./gateway-config.js";
-import { clearCrashes, markExited, markRunning, recordCrash } from "./gateway-state.js";
+import { clearCrashes, markExited, markRunning, recordCrash, recordUncleanStart } from "./gateway-state.js";
 import { clearWatch, readWatch, repairSwap, watchVerdict, type UpdateWatch } from "./canary.js";
 import { runAsNode } from "../child-env.js";
 import { previewRequest } from "./gateway-preview.js";
@@ -124,7 +124,11 @@ export class Gateway {
     if (loaded.problem) this.note(loaded.problem);
     await this.readUpdateWatch();
     const previous = await markRunning(this.options.dataDir);
-    if (previous.uncleanBefore) this.note("Branch did not close properly last time; interrupted work is picked up again.");
+    if (previous.uncleanBefore) {
+      this.note("Branch did not close properly last time; interrupted work is picked up again.");
+      const storm = await recordUncleanStart(this.options.dataDir);
+      if (storm) { this.note(storm); console.error(storm); }
+    }
     this.server = createServer((request, response) => { void this.handle(request, response); });
     this.server.on("upgrade", (request, socket, head) => { void this.upgrade(request, socket, head); });
     await new Promise<void>((resolve, reject) => {

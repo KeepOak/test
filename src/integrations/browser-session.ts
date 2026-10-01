@@ -1,9 +1,10 @@
-import type { Browser, BrowserContext, CDPSession, Download, Page, Route } from 'playwright';
+import type { Browser, BrowserContext, CDPSession, Download, Page, Route, WebSocketRoute } from 'playwright';
 import type { ToolContext } from '../contracts.js';
 /** What Chrome says about a tab (CDP Target.TargetInfo), the parts used here. */
 interface TargetInfo { targetId: string; type: string; url: string; openerId?: string }
 import type { StorageState } from './browser-profiles.js';
 import { PageLog } from './browser-actions.js';
+import { branchWorkerGuard } from './browser-worker-guard.js';
 
 /** A message box the website put up. It is always dismissed; the words are kept so they can be reported. */
 export interface DialogRecord { kind: string; message: string; at: string }
@@ -79,6 +80,14 @@ async function bypassEveryFrame(root: CDPSession): Promise<void> {
   });
   await root.send('Target.setAutoAttach', stopped);
 }
+/** ws: and wss: checked as the http: and https: addresses of the same site and port, which is what the rules list. */
+export function asHttpAddress(url: string): string {
+  const parsed = new URL(url);
+  if (parsed.protocol === 'ws:') parsed.protocol = 'http:';
+  else if (parsed.protocol === 'wss:') parsed.protocol = 'https:';
+  else throw new Error('That is not a WebSocket address');
+  return parsed.href;
+}
 export interface SessionOptions {
   /** Cookies and site storage from a saved sign-in, used for this run's window only. */
   storageState?: StorageState | undefined;
@@ -97,6 +106,12 @@ export interface SessionOptions {
    * the owner's browser, not only to addresses it was asked to open. Returns why, or null.
    */
   guardUrl?: ((url: string) => string | null) | undefined;
+  /**
+   * UP-SCREEN-001: the websites a page's background workers may open WebSockets to, as http(s) origins, read when the
+   * window (or, in the owner's browser, Branch's tab) opens; null when the pin proxy already holds them to the network
+   * rules. Unset means none (browser-worker-guard.ts).
+   */
+  workerSockets?: (() => string[] | null) | undefined;
   /** R17-S19: what a website's message box is answered with; unset dismisses it, as always. */
   dialogAnswer?: (() => 'dismiss' | 'accept') | undefined;
 }
@@ -137,12 +152,15 @@ export class BrowserSession {
       // This catches a pop-up's first request before its page exists. CDP below additionally catches
       // every redirect hop, which Playwright routes do not surface.
       await this.context.route('**/*', route => this.answerRoute(route));
-      await this.context.routeWebSocket('**/*', socket => socket.close());
+      // A page's WebSockets are held to the same rules as its requests (answerSocket), rather than all closed.
+      await this.context.routeWebSocket('**/*', socket => this.answerSocket(socket));
       // A worker shared between pages sends its requests where neither the route nor the pause sees them, and
       // serviceWorkers: 'block' covers only service workers (Mac mini 0361600: it fetched an unlisted website).
       // Nor does 'block' hold on its own: it replaces `register` on the page's one object, and the prototype's own
       // method registers anyway, whose worker then fetched an unlisted website (Mac mini d1cdebc). So `register` is
       // refused on the prototype itself, fixed in place, as in the owner's browser.
+      const workerSockets = this.workerSocketList();
+      if (workerSockets) await this.context.addInitScript(branchWorkerGuard, workerSockets);
       await this.context.addInitScript(() => {
         if (typeof ServiceWorkerContainer !== 'undefined')
           Object.defineProperty(ServiceWorkerContainer.prototype, 'register', {
@@ -338,6 +356,10 @@ export class BrowserSession {
     if (this.borrowed) {
       // Its id is read now, so a tab it opens can be traced to it even after it closes (ourSeen).
       void this.targetOf(page).then(id => { if (id) this.ourSeen.add(id); });
+      // The window's route never sees a WebSocket, so Branch's own tab gets the socket check on the tab itself; the
+      // owner's other tabs are left alone.
+      await page.routeWebSocket('**/*', socket => this.answerSocket(socket));
+      await page.addInitScript(branchWorkerGuard, this.workerSocketList() ?? []);
       // In the owner's own browser a tab this one opens cannot be stopped after the fact: its first
       // request is in flight before any guard can be put on it, and it was reaching websites they
       // never allowed. So it is stopped at the source, on Branch's tab alone: a window this page
@@ -453,6 +475,34 @@ export class BrowserSession {
     } catch {
       await route.abort().catch(() => undefined);
     }
+  }
+  /**
+   * A WebSocket a page opens. Playwright holds it before anything is sent, so its address is checked here exactly as a
+   * request's is: the website list, the owner's extra refusals, and in any-website mode the network rules. One that
+   * passes is connected by the browser itself (`connectToServer`), so in any-website mode it still goes through the pin
+   * proxy's tunnel, which dials only the addresses the rules judged; ws:// is tunnelled there too (Chromium sends every
+   * WebSocket through a proxy with CONNECT, measured), so both schemes stay pinned. One that fails is closed with the
+   * reason, which browser.network reports. The route pattern follows Playwright MCP's allowlist route
+   * (microsoft/playwright, packages/playwright-core/src/tools/backend/context.ts, Apache-2.0), which keeps sockets too.
+   */
+  private async answerSocket(socket: WebSocketRoute): Promise<void> {
+    const url = socket.url();
+    try {
+      const refused = this.options.guardUrl?.(url);
+      if (refused) throw new Error(refused);
+      await this.guardRequest({ url: asHttpAddress(url), resourceType: 'websocket' });
+      socket.connectToServer();
+      this.log.note(url, 'websocket', null);
+    } catch (error) {
+      const reason = `Branch refused this WebSocket: ${error instanceof Error ? error.message : String(error)}`;
+      this.log.note(url, 'websocket', reason);
+      await socket.close({ code: 1008, reason: reason.slice(0, 120) }).catch(() => undefined);
+    }
+  }
+  /** Where a page's background workers may open WebSockets; null when the pin proxy holds every connection already. */
+  private workerSocketList(): string[] | null {
+    const read = this.options.workerSockets;
+    return read ? read() : [];
   }
   /** True for a request made by a frame inside a page rather than by the page itself. */
   private inFrame(request: ReturnType<Route['request']>): boolean {

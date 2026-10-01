@@ -173,6 +173,29 @@ export function chatPermissionsOf(all: readonly string[], extra: readonly string
   const allowed = new Set<string>([...chatSafePermissions, ...extra.filter(grantableToChat)]);
   return all.filter((permission) => allowed.has(permission));
 }
+/**
+ * What a chat with several people in it never has, whatever a line says: what Branch remembers is the owner's, read
+ * or written, and a message there may be anybody's.
+ */
+export const neverInGroups: readonly string[] = ["memory.read", "memory.write"];
+/**
+ * What a chat with several people in it has only when the owner's line names that chat app (not "*") and the
+ * permission itself: the owner's files and documents. A group is off by default even though a direct chat is not.
+ */
+export const groupsOnlyWhenNamed: readonly string[] = ["files.read", "documents.read"];
+/**
+ * The permissions of a group chat's task, taken after the owner's own lines are added so that no line hands back
+ * what a group never has. A direct chat's permissions are returned as they are.
+ */
+export function forChatKind(permissions: string[], settings: ChatPermissionSettings,
+  from?: { channel: string; senderId: string; chatKind?: string | undefined }): string[] {
+  if (!from || from.chatKind === "direct") return permissions;
+  const named = settings.extras
+    ? settings.rules.filter((rule) => rule.channel === from.channel && covers(rule, from.channel, from.senderId)).flatMap((rule) => rule.allow)
+    : [];
+  return permissions.filter((permission) => !neverInGroups.includes(permission)
+    && (!groupsOnlyWhenNamed.includes(permission) || named.includes(permission)));
+}
 
 /** Every permission on the short list only looks at things; asserted here so the list cannot drift. */
 export const chatSafeListIsReadOnly = (): boolean => chatSafePermissions.every(isReadOnlyPermission);

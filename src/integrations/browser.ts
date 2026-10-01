@@ -20,13 +20,14 @@ import {
 import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey, markLine } from './browser-marks.js';
 import { FindSchema, matchingMarks } from './browser-find.js';
 import { ExtractSchemaSchema, extractSchema } from './browser-schema.js';
-import { resolve as healResolve, type HealTarget } from './browser-heal.js';
+import { HealMissError, resolve as healResolve, type HealResult, type HealTarget } from './browser-heal.js';
 import { SiteSkills, applyQuirks, type QuirksApplied } from './browser-sites.js';
 import { consentNotice, rejectConsent } from './browser-consent.js';
 import { attach, attachRefusal, attachedAddressRefusal, readAttachSettings, saveAttachSettings, type AttachedBrowser } from './browser-attach.js';
 import { startRecording } from './browser-trace.js';
 import { registerPageNotes } from './browser-notes-tool.js'; // w911 (A2144)
 import { registerBrowserFlow } from './browser-flow.js'; // FQ-execution.browser
+import { pageChallenge, takeOverWords, waitForOwner, type PageChallenge } from './browser-challenge.js'; // UP-SCREEN-004
 import type { MarkChecks } from './browser-heal.js'; // w911 (A2144)
 import type { Store } from '../store.js';
 import { audit } from '../audit.js';
@@ -122,6 +123,8 @@ interface RunEntry {
    */
   typedHost: string;
   pressed: boolean;
+  /** UP-SCREEN-004: the "are you a person?" check this task met and is waiting for the owner to finish. */
+  challenge?: PageChallenge | null;
   granted?: string | undefined;
   held?: boolean | undefined;
   /** The sites the task's pages were shown on (Downloads may come from known sites only). */
@@ -352,6 +355,10 @@ export class BranchBrowser {
       request => this.guardRequest(request, created), redirectHops);
     session.options.saveDownload = download => this.saveDownload(download, context, created);
     session.options.dialogAnswer = () => this.care(context.owner).dialogs; // R17-S19
+    // UP-SCREEN-001: a worker's sockets reach only the listed websites (and this run's granted page). In any-website mode
+    // the pin proxy holds them to the network rules instead, except in the owner's own browser, where none is in the way.
+    session.options.workerSockets = () => this.anyWebsite ? (session.isBorrowed() ? [] : null)
+      : [...this.origins, ...(created?.granted ? [created.granted] : [])];
     const cancel = () => { void this.closeRun(context).catch(() => undefined); };
     context.signal.addEventListener('abort', cancel, { once: true });
     created = { session, origins: new Set(), actions: 0, host: '', profile: null,
@@ -567,7 +574,12 @@ export class BranchBrowser {
     if (token) this.ownerCommands.get(token)?.effectStarted?.();
   }
   private async operation<T extends object>(context: ToolContext, action: (page: Page, check: () => void) => Promise<T>, graceMs = 0, before?: () => Promise<void>): Promise<T> {
-    return this.writeFor(context, async (write, signal) => {
+    // UP-SCREEN-004: the owner's own input is never held back by a check; every task step is (browser-challenge.ts).
+    const task = !this.isOwnerCommand(context);
+    // Only awaited while a check is pending, so an ordinary step reaches the browser's control in the same turn it was asked.
+    if (task && this.sessions.get(this.key(context))?.challenge) await this.challengeStillShowing(context);
+    let met: PageChallenge | null = null;
+    const result = await this.writeFor(context, async (write, signal) => {
       signal.throwIfAborted();
       const entry = this.entry(context);
       await this.trunkProfile(context, entry);
@@ -577,8 +589,11 @@ export class BranchBrowser {
       try {
       const { result, hidden } = await entry.session.use({ ...context, signal }, page => this.scrubbingErrors(context, page, async page => {
         write?.check(); signal.throwIfAborted();
+        if (task && entry.challenge) throw new Error(takeOverWords(entry.challenge, entry.session.isBorrowed()));
         this.markOwnerEffect(context);
-        return action(page, () => { write?.check(); signal.throwIfAborted(); });
+        const value = await action(page, () => { write?.check(); signal.throwIfAborted(); });
+        if (task) met = await pageChallenge(page);
+        return value;
       }), graceMs);
       const events = entry.session.takeEvents();
       // A message box's words are page text and a download's source is an address: scrubbed the same way.
@@ -588,6 +603,59 @@ export class BranchBrowser {
         ...(downloads.length ? { downloads } : {}) }, hidden);
       } finally { if (context.signal.aborted) await this.closeRun(context); }
     });
+    return met ? this.pauseForOwner(context, met, result) as Promise<T> : result;
+  }
+  /** Whether this step is the owner's own input from Branch's window rather than a task's. */
+  private isOwnerCommand(context: ToolContext): boolean {
+    const token = (context as ToolContext & { [ownerCommandScope]?: object })[ownerCommandScope];
+    return !!token && this.ownerCommands.has(token);
+  }
+  /** Most time a task waits for the owner to finish a check and hand the browser back; a test may shorten it. */
+  challengeWaitMs = 10 * 60_000;
+  /** Tells the owner outside Branch's window (webhooks, chats) that a task needs them; set where the runtime is. */
+  notify: ((kind: 'approval.needed', data: Record<string, unknown>) => void) | undefined;
+  /**
+   * A step that met an "are you a person?" check: the owner is told to take over and finish it, and the task waits here,
+   * outside the page's queue and the browser's control so Take over can go through, until they hand it back with the
+   * check gone. Nothing of the task touches the page meanwhile.
+   */
+  private async pauseForOwner<T extends object>(context: ToolContext, met: PageChallenge, result: T): Promise<object> {
+    const entry = this.entry(context), borrowed = entry.session.isBorrowed();
+    const url = (result as { url?: unknown }).url, where = { ...met, url: typeof url === 'string' ? url : met.site };
+    entry.challenge = where;
+    const words = takeOverWords(where, borrowed), run = typeof this.store?.run === 'function' ? this.store.run(context.runId) : undefined;
+    if (run) {
+      this.store!.event(run.id, 'web.challenge', { url: where.url, site: where.site, what: where.what, route: 'browser', takeOver: words });
+      this.store!.event(run.id, 'attention.needed', { question: words });
+    }
+    this.notify?.('approval.needed', { runId: context.runId, sessionId: run?.sessionId ?? context.runId, question: words });
+    const cleared = await waitForOwner({ runId: context.runId, signal: context.signal, borrowed,
+      control: () => entry.control, page: () => entry.session.watched()?.page }, this.challengeWaitMs);
+    if (cleared) {
+      entry.challenge = null;
+      // The step's own answer was read on the check's page; where the owner left it is what is true now.
+      return { ...result, ...await this.whereNow(context, result), challenge: { site: where.site, what: where.what, cleared: true },
+        note: `The owner finished the check on ${where.site}. Look at the page again before the next step.` };
+    }
+    return { challenged: true, url: where.url, site: where.site, what: where.what, takeOver: words,
+      note: 'Stop working on this page: it is waiting for the owner to finish the check. Never try to get past it yourself.' };
+  }
+  /** The address, and the title when the answer had one, of the page the task is on now, scrubbed as a step's are. */
+  private async whereNow(context: ToolContext, result: object): Promise<{ url?: string; title?: string }> {
+    const page = this.entry(context).session.watched()?.page;
+    if (!page || page.isClosed()) return {};
+    const hidden = await this.pageSecrets(context, page).then(found => found.hidden, () => null);
+    const title = 'title' in result ? await page.title().catch(() => '') : undefined;
+    return { url: scrubAddress(page.url(), hidden),
+      ...(title === undefined ? {} : { title: hidden === null ? '' : scrubText(title, hidden) }) };
+  }
+  /** A step asked for while a check is still showing is refused before it touches the page; one that has gone is let go. */
+  private async challengeStillShowing(context: ToolContext): Promise<void> {
+    const entry = this.sessions.get(this.key(context));
+    if (!entry?.challenge) return;
+    const page = entry.session.watched()?.page;
+    if (!page || !(await pageChallenge(page))) { entry.challenge = null; return; }
+    throw new Error(`${takeOverWords(entry.challenge, entry.session.isBorrowed())} Stop working on this page until then.`);
   }
   /**
    * Runs one step on the page. A page library's message quotes the boxes it found, attributes and all, so a message the
@@ -803,8 +871,31 @@ export class BranchBrowser {
   /** One element by selector, by name or by its number from browser.annotate, healed by name if the page changed. */
   private async found(context: ToolContext, page: Page, target: HealTarget): Promise<Locator> {
     if (target.mark !== undefined && !this.care(context.owner).numberMarks) throw new Error(marksOff);
+    return (await this.healed(context, page, target)).locator;
+  }
+  /**
+   * The one thing a step is about. When it cannot be told apart (nothing matches exactly, or a name matches several
+   * things) nothing is pressed: the page is numbered afresh and the model is handed the numbers to choose from.
+   */
+  private async healed(context: ToolContext, page: Page, target: HealTarget): Promise<HealResult> {
     const entry = this.entry(context);
-    return (await healResolve(page, target, 2000, { keyOf: id => entry.marks.keyOf(id), liveKey: id => liveMarkKey(page, id) })).locator;
+    try {
+      return await healResolve(page, target, 2000, { keyOf: id => entry.marks.keyOf(id), liveKey: id => liveMarkKey(page, id) });
+    } catch (error) {
+      if (!(error instanceof HealMissError)) throw error;
+      const choices = await this.freshChoices(context, page, target.name).catch(() => '');
+      throw new Error(`${error.message}${choices || 'Describe the page again and use the number of the thing you mean.'}`);
+    }
+  }
+  /** The page numbered again without drawing, narrowed to what carries the name when anything does, as one line. */
+  private async freshChoices(context: ToolContext, page: Page, name: string | undefined): Promise<string> {
+    const found = await annotate(page, { draw: false, limit: 60 }, this.entry(context).marks);
+    const { hidden } = await this.pageSecrets(context, page);
+    const marks = found.marks.map(mark => ({ ...mark, name: scrubText(mark.name, hidden) }));
+    const wanted = name?.toLowerCase(), near = wanted ? marks.filter(mark => mark.name.toLowerCase().includes(wanted)) : [];
+    const listed = (near.length ? near : marks).slice(0, 20);
+    if (!listed.length) return '';
+    return `The page now reads: ${listed.map(markLine).join('; ')}. Choose the one you mean and act on it by its number (mark).`;
   }
   async scroll(input: z.infer<typeof ScrollSchema>, context: ToolContext) {
     return this.operation(context, async (page, check) => {
@@ -949,8 +1040,7 @@ export class BranchBrowser {
       return this.operation(context, async page => { await page.keyboard.press(key); return { url: page.url(), action: 'press', key }; });
     }
     return this.operation(context, async (page, check) => {
-      const found = await healResolve(page, input, 2000,
-        { keyOf: id => entry.marks.keyOf(id), liveKey: id => liveMarkKey(page, id) });
+      const found = await this.healed(context, page, input);
       check();
       if (input.action === 'fill') {
         if ((await found.locator.getAttribute('type'))?.trim().toLowerCase() === 'password')
@@ -1815,7 +1905,7 @@ function registerBrowserSecondPass(registry: ToolRegistry, browser: BranchBrowse
     description: 'Pull data off the page in the exact shape you name: a field list, each with where to read it and whether it is words, a number, a yes/no, a date or an address. Anything that does not fit is refused by name rather than guessed at.',
     parameters: ExtractSchemaSchema, execute: (a, c) => browser.extractShaped(a, c) });
   registry.register({ name: 'browser.act', permission: 'browser.interact',
-    description: 'Press, type into or tick something, found by selector, by name, by the words on it, or by its number from browser.annotate. Several ways are tried before it gives up. action "press" presses one key on the page itself, named in value. action "reject-consent" needs no selector and declines non-essential cookies only when one explicit reject/necessary-only choice is recognized; it never accepts tracking. Prefer it for consent notices. This may submit data or perform an external action.',
+    description: 'Press, type into or tick something, found by selector, by its exact name or words, or by its number from browser.annotate. A name that matches several things, or nothing exactly, presses nothing and hands back fresh numbers to choose from. action "press" presses one key on the page itself, named in value. action "reject-consent" needs no selector and declines non-essential cookies only when one explicit reject/necessary-only choice is recognized; it never accepts tracking. Prefer it for consent notices. This may submit data or perform an external action.',
     parameters: z.object({ action: z.enum(['click', 'fill', 'check', 'press', 'reject-consent']),
       selector: z.string().min(1).max(300).optional(), name: z.string().min(1).max(300).optional(),
       mark: z.number().int().min(1).max(500).optional(), value: z.string().max(4000).optional() }).strict(),

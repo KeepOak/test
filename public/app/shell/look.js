@@ -98,11 +98,19 @@ export function withAccent(c, mode) { return L.accent ? { ...c, accent: L.accent
 export function clearVars() { for (const k of VAR_KEYS) document.documentElement.style.removeProperty(k); }
 export function setVars(c, mode) { clearVars(); for (const [k, v] of Object.entries(varsFromEF(c, mode))) document.documentElement.style.setProperty(k, v); }
 export function applyLook() {
-  const id = wornId(), mode = effMode();
-  if (id === BASE && !L.accent && !more()) clearVars(); else setVars(withAccent(lookEF(id, mode), mode), mode);
+  const id = wornId(), mode = effMode(), own = !(id === BASE && !L.accent && !more());
+  if (own) setVars(withAccent(lookEF(id, mode), mode), mode); else clearVars();
   document.documentElement.dataset.palette = id;
   document.documentElement.classList.toggle("contrast17", more()); /* More contrast keeps full-strength lines (app.css) */
+  keepEarly(id, own);
   applyReadingFont(E.state?.preferences, true);
+}
+/* UP-UI-051: what was worn, for /app/look-early.js to put on the next page before its first paint. Slate (nothing set)
+   is kept too, so going back to it never paints the old look first. */
+function keepEarly(id, own) {
+  const early = { theme: document.documentElement.dataset.theme ?? null, palette: id, contrast: more() };
+  if (own) early.vars = Object.fromEntries(["light", "dark"].map((m) => [m, varsFromEF(withAccent(lookEF(id, m), m), m)]));
+  try { localStorage.setItem("branch-look-early", JSON.stringify(early)); } catch { /* storage refused: the next page paints Slate first */ }
 }
 
 export function saveLocal() {

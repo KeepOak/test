@@ -102,6 +102,10 @@ export class PageLog {
     page.on('requestfinished', request => { void request.response().then(answer => record(request, answer?.status() ?? null, null), () => record(request, null, null)); });
     page.on('requestfailed', request => record(request, null, (request.failure()?.errorText ?? 'failed').slice(0, 200)));
   }
+  /** A connection the page asked for that is not a request the page sees finish or fail (a WebSocket Branch refused). */
+  note(url: string, kind: string, failure: string | null): void {
+    push(this.requests, { method: 'GET', url: plainAddress(url), kind, status: null, failure: failure?.slice(0, 200) ?? null, at: new Date().toISOString() });
+  }
 }
 
 export async function scrollPage(page: Page, input: z.infer<typeof ScrollSchema>, found: Locator | null) {

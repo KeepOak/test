@@ -57,7 +57,12 @@ async function socketService(t, onConnect) {
       pending = Buffer.concat([pending, chunk]);
       for (let decoded = readFrame(pending); decoded; decoded = readFrame(pending)) {
         pending = pending.subarray(decoded.consumed);
-        if (decoded.opcode === 0x1) connection.received.push(JSON.parse(decoded.payload.toString("utf8")));
+        if (decoded.opcode === 0x1) {
+          const message = JSON.parse(decoded.payload.toString("utf8"));
+          connection.received.push(message);
+          // As Discord does: every heartbeat is acknowledged, or the client takes the connection for dead.
+          if (message.op === 1) connection.send({ op: 11 });
+        }
         if (decoded.opcode === 0x8) socket.end();
       }
     });

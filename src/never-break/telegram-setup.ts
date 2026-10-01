@@ -3,6 +3,7 @@ import { z } from "zod";
 import { FeatureModeSchema } from "../feature-switches.js";
 import { ChannelPolicySchema, type ChannelRouter } from "../channels/router.js";
 import { TelegramAdapter, telegramBotId } from "../channels/telegram.js";
+import { telegramInbox } from "../channels/telegram-inbox.js";
 import type { Store } from "../store.js";
 import { channelPosition } from "./channel-position.js";
 import { diagnose } from "../diagnostic-log.js";
@@ -106,8 +107,9 @@ async function connectOnce(input: GuidedTelegramInput): Promise<string | null> {
 
 async function attachCard(input: GuidedTelegramInput, token: string): Promise<string | null> {
   const position = channelPosition(input.store, "telegram", input.owner, telegramBotId(token)); // kept per bot
+  const inbox = telegramInbox(input.store, telegramBotId(token), "telegram"); // each update saved before Telegram is told it arrived
   const adapter = new TelegramAdapter({ id: "telegram", token, fetch: input.fetch, keepTrying: true,
-    ...(input.apiBase ? { apiBase: input.apiBase } : {}), ...(position ? { position } : {}) });
+    ...(input.apiBase ? { apiBase: input.apiBase } : {}), ...(position ? { position } : {}), ...(inbox ? { inbox } : {}) });
   attachedByCard.set(input.router, { adapter, token, revision: randomUUID(), ready: false });
   const attaching = input.router.attach(adapter, ChannelPolicySchema.parse({})).then(() => {
     const card = attachedByCard.get(input.router);

@@ -34,8 +34,9 @@ free). A worker whose gateway disappears notices its IPC channel closing and clo
 killed gateway never leaves an orphan holding the lock.
 
 Chat connections and the scheduler clock run in the worker, next to the store they write to. What
-makes them survive a restart is that their position is written down: the Telegram offset is saved
-after each message is handled, and a schedule is claimed in the database before it runs.
+makes them survive a restart is that their position is written down: each Telegram update is saved
+to an inbox in the database before Telegram is told it arrived, and marked done once it is handled, so
+a restart hands over only the unfinished ones; a schedule is claimed in the database before it runs.
 
 ### Desktop gateway draft
 

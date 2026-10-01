@@ -7,6 +7,7 @@ import { applyContentPolicy, detectInjection } from "../content-guard.js";
 import type { NetworkPolicy } from "../network-policy.js";
 import type { TrackerIssue } from "./issue-context.js";
 import { readGitHubChecks, type GitHubChecks } from "./github-checks.js";
+import { readGitHubReviews, type ReviewReadInput } from "./github-reviews.js";
 import { readCiQueue } from "../self-development-ci.js";
 import { ChecksPending, mergeEvidence, mergeOrEnqueue, markReadyForReview, queueStanding, type MergeEvidence, type MergeLine, type MergePin, type MergeResult } from "./github-merge.js";
 
@@ -140,6 +141,12 @@ export class GitHubAccess {
         at: String(comment.created_at ?? ""), body: String(comment.body ?? "").slice(0, 4000),
       })),
     };
+  }
+  /** Review states and inline file feedback, through the same configured authenticated connection. */
+  async pullRequestReviews(input: ReviewReadInput): Promise<Awaited<ReturnType<typeof readGitHubReviews>>> {
+    repositoryPath.parse(input.repo);
+    if (!Number.isSafeInteger(input.number) || input.number < 1) throw new Error("Use the pull request's positive number.");
+    return readGitHubReviews((method, path) => this.request(method, path), input);
   }
   /** Writes a comment on an issue. */
   async commentIssue(input: { repo: string; number: number; body: string }): Promise<{ tracker: "github"; key: string; added: boolean; address: string }> {

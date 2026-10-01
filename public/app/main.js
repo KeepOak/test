@@ -24,6 +24,7 @@ import { splash, splashDone } from "./shell/inperson.js";
 import { initNotices } from "./shell/notices.js";
 import { initLanguage, t } from "../i18n.js";
 import { initLive, restoreOpen } from "./shell/liveupdate.js"; // hot-update: live window updates keep what is open
+import { keepDrafts } from "./core/drafts.js"; // UP-UI-006: unsent words survive a restart
 
 /* A place draws its own <main class="main" id="main">; inside the shell's #main that would be a second main and a second
    #main, so it becomes a <div> with the same classes and children (the styles are by class). */
@@ -224,6 +225,7 @@ async function connect(refusal = "") {
     E.error = error; render(); return;
   }
   if (await watchLock(E.state?.lock)) return;
+  keepDrafts();
   link.onChange = () => { offline(); if (link.up) caughtUp(); };
   let queued = null;
   const askNow = watchPerson();

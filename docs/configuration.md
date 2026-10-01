@@ -897,7 +897,9 @@ splitting to keep escape characters inside the service's message limit.
 Settings › Chat apps reads `intake` from `GET /api/channels`; `POST /api/channels/intake` saves only the named
 fields and is owner-only. `edited` and `albums` default to true: edited messages replace a version still being
 gathered, and a photo album joins one turn. An edit after that turn has started is its own message.
-`splitWaitMs` is 0, 1000 (default), or 3000; messages from the same live chat arriving during that wait join a turn.
+`splitWaitMs` is 0, 1000 (default), or 3000. It is waited only after a message of at least 4,000 characters (the first
+piece of one an app split); the same person's messages arriving during that wait join its turn. A shorter message starts
+its turn at once.
 Fetched messages after a restart stay separate. Albums still wait at least one second when split waiting is off.
 
 `watchdog` defaults to true. A watched connection with no service contact for `stalledAfterSeconds` (30–3600,
@@ -2249,7 +2251,7 @@ back only those, so anything the owner paused by hand stays paused. Links back i
 
 **macOS and Linux.** Restart stops the background engine the way Ctrl+C does, with exit code 75, and
 the sign-in file starts it again: launchd's `KeepAlive` (`SuccessfulExit` false) on a Mac, systemd's
-`Restart=on-failure` on Linux. It is offered only when this copy is the background engine and was
+`Restart=always` on Linux (only a stop on purpose, exit code 78, is not restarted). It is offered only when this copy is the background engine and was
 started by that file (`XPC_SERVICE_NAME` is `com.keepoak.branch-agent`, or systemd set
 `INVOCATION_ID`); a copy started by hand or running in the app window says how to restart it
 instead. On Windows the button explains that Branch is closed from its icon by the clock and opened
@@ -2307,7 +2309,7 @@ The design, the threat list and the test for each threat are in [never-break.md]
 
 **The gateway.** `gateway.json` in the data folder, `GatewayConfigSchema` in `src/never-break/gateway-config.ts`: `mode` (`off`, the default; `when-needed`; `on`), `startSeconds` (90), `holdSeconds` (20), `maxQuickCrashes` (4), `gapSeconds` (300), `watchSeconds` (300) and `workerEnv` (only `BRANCH_*` names, never the data folder). With the mode not off, `branch start` runs the gateway on `BRANCH_PORT`, which runs the engine on a private loopback port and passes requests (and connection upgrades) through, checking the address exactly as the engine does. `GET /gateway/health` is answered by the gateway itself. An engine that stops is started again after 0.5, 1, 2 … 30 seconds; crashes chained less than `gapSeconds` apart, `maxQuickCrashes` times, slow it to once every five minutes and stop interrupted work carrying on by itself. Settings are promoted to `gateway.good.json` after a worker has stayed up; a broken `gateway.json`, or settings the engine fails to start with twice, are replaced by the good copy. `GET|POST /api/never-break { mode }` reads and sets the switch (the window offers one on/off switch that saves `on` or `off`; a file saved as `when-needed` still loads and reads as on there); `POST /api/never-break/proposal/accept|discard` answers a change the assistant suggested with the `gateway.propose` tool (offered only when the switch was on at launch), which is always tried on a throwaway gateway first. A short-lived key can do none of this.
 
-**Window-close preference.** Settings › General “Keep working when the window closes”, Settings › Gateway’s gateway switch and the footer popover save the same `gateway.json.mode`. They call `POST /api/never-break`, not `/api/deployment/daemon`; they do not create or remove a Windows scheduled task. The switch shows the saved choice, while the status and footer use `underGateway` to say whether this engine actually runs behind the gateway. A saved On with `underGateway: false` is shown as waiting for the next Branch launch. Saving Off while the retained gateway is running starts its shutdown after the API response; until that finishes, the status still reports it as running. Start with Windows and the separately managed CLI daemon remain distinct controls. If saving fails, the original choice and failure message remain visible.
+**Window-close preference.** Settings › General “Keep working when the window closes”, Settings › Gateway’s gateway switch and the footer popover save the same `gateway.json.mode`. They call `POST /api/never-break`, not `/api/deployment/daemon`; they do not create or remove a Windows scheduled task (the installed window registers the gateway's task when it starts the gateway, see "The operating system keeps the gateway running"). The switch shows the saved choice, while the status and footer use `underGateway` to say whether this engine actually runs behind the gateway. A saved On with `underGateway: false` is shown as waiting for the next Branch launch. Saving Off while the retained gateway is running starts its shutdown after the API response; until that finishes, the status still reports it as running. Start with Windows and the separately managed CLI daemon remain distinct controls. If saving fails, the original choice and failure message remain visible.
 
 **Desktop awake choice.** `gateway.json.keepAwake` defaults to `false`. The owner can change it under Settings › Gateway or with `POST /api/never-break { "keepAwake": true | false }`. This choice is excluded from the assistant's timing proposals and their rollback. `GET /api/never-break` shows the saved choice in `config.keepAwake`; `keepAwakeRuntime` is a separate trusted desktop broker report (`requested`, `active`, `suspended`, `error`) or `null` when unavailable. A saved `true` is not proof that a desktop blocker is active. The running desktop gateway applies the choice without an engine restart; it may let the screen turn off. Lid closure, battery limits and OS policy may still suspend the computer; normal gateway reconnect handles resume.
 
@@ -2331,7 +2333,7 @@ written stops the update, because an update nobody can undo is not worth making;
 be read is put aside and a new one started, and an undo with nothing recorded refuses rather than
 guesses.
 
-**A Branch working in the background comes back by itself** (`src/install/service-return.ts`). Closing it for the swap is a polite exit, which launchd's `KeepAlive{SuccessfulExit:false}` and systemd's `Restart=on-failure` do not restart, so after `branch update --yes` the service is started again through its own manager (`launchctl kickstart -k`, `systemctl --user restart branch-agent.service`, the scheduled task's `/Run` on Windows), and Branch waits up to a minute for a process other than the one it closed to say it is running. When none does, the version before is put back with `branch rollback --yes` and started as the service, so the owner is never left with no Branch running; `branch rollback --yes` itself brings a service back as the service, never as a window.
+**A Branch working in the background comes back by itself** (`src/install/service-return.ts`). Closing it for the swap is a stop on purpose, which launchd's `KeepAlive{SuccessfulExit:false}` and systemd (exit code 78, `RestartPreventExitStatus=78`) do not restart, so after `branch update --yes` the service is started again through its own manager (`launchctl kickstart -k`, `systemctl --user restart branch-agent.service`, the scheduled task's `/Run` on Windows), and Branch waits up to a minute for a process other than the one it closed to say it is running. When none does, the version before is put back with `branch rollback --yes` and started as the service, so the owner is never left with no Branch running; `branch rollback --yes` itself brings a service back as the service, never as a window.
 
 `branch rollback` says what going back would do; `branch rollback --yes` does it. The decision is
 `assessRollback` in `src/never-break/rollback.ts`, and it **refuses**, in a sentence saying why and
@@ -2378,7 +2380,9 @@ mid-update, mid-format-change and mid-start (`BRANCH_INSTALL_SEEDS=200` for the 
 
 **Telegram from a card.** `customize:channels` has a **Set up Telegram** card (`public/telegram-setup.js`, `src/never-break/telegram-setup.ts`): the BotFather steps in plain words, a password field whose token goes straight into the locker as `TELEGRAM_BOT_TOKEN` in the default project (checked for BotFather's shape, never sent back), the three-way switch (settings key `telegram-setup`, shipped off), and a box for the six-digit code the bot sends a new person, which approves the owner's own account through the ordinary pairing. `GET|POST /api/never-break/telegram { mode?, token? }`. On a real start with the switch not off, Branch connects that bot through the network rules, unless the integrations file already has a Telegram channel. No real token was used to build or test it.
 
-**macOS and Linux.** The gateway is the same program on every system. It starts the engine with the same runtime it runs on (the app's own on an installed copy), with no window on Windows. The sign-in entries (`launchd`, `systemd --user`, the Windows scheduled task) are unchanged: they run `branch start`, which becomes the gateway when the switch is on, so `KeepAlive`/`Restart=on-failure` look after the gateway and the gateway looks after the engine. An engine whose gateway is killed closes itself within seconds, so the database is never left held.
+**macOS and Linux.** The gateway is the same program on every system. It starts the engine with the same runtime it runs on (the app's own on an installed copy), with no window on Windows. The sign-in entries (`launchd`, `systemd --user`) run `branch start`, which becomes the gateway when the switch is on, so `KeepAlive`/`Restart=always` look after the gateway and the gateway looks after the engine; on Windows the scheduled task runs the app's own gateway (`"Branch Agent.exe" --branch-gateway`, see "The operating system keeps the gateway running" below). An engine whose gateway is killed closes itself within seconds, so the database is never left held.
+
+**The operating system keeps the gateway running (UP-PLATFORM-002).** On Windows the installed app registers the scheduled task `Branch Agent daemon` (`src/install/gateway-task.ts`) the first time its window starts the gateway, and `branch daemon install` does the same. The task runs `"Branch Agent.exe" --branch-gateway` directly, with no script host and no console. It belongs to the signed-in account alone (never a group, so no other account's sign-in starts it; when Windows does not say which account is signed in, nothing is registered), uses least privilege, has no time limit and ignores battery power, and Task Scheduler starts it again one minute after it stops with a failure code, up to three times. It has a sign-in trigger only while Start with Windows is on (the switch updates it), and the window starts the gateway through the task (`schtasks /Run`) so that a gateway the window started is also restarted. The task is registered through Task Scheduler's own interface from PowerShell, which prints the failure's HRESULT: when that is E_ACCESSDENIED (0x80070005, "Access is denied", told apart by number on every language of Windows) or the call does not answer, a shortcut in the account's Startup folder (`Branch Agent gateway.lnk`) starts the same program at sign-in instead; nothing restarts it then. After an update or a rollback, a gateway looked after only by that shortcut is started directly. The portable update's swap switches the task off before anything is ended and on again before any version starts, so a gateway ended for the swap is never started again from a half-copied folder, and uninstalling removes the shortcut and `gateway-task.json`. The windowless gateway exits with code 1 when a failure nobody caught leaves it unable to work, instead of hanging behind an invisible dialog. On Linux the unit is `Restart=always` with `StartLimitIntervalSec=600`/`StartLimitBurst=5`; `branch quit`, Ctrl+C and the update's close are stops on purpose that exit 78, which `RestartPreventExitStatus=78` leaves stopped and `SuccessExitStatus=78` counts as a clean end (a unit written by an earlier version keeps `Restart=on-failure` until `branch daemon install` writes it again). On a Mac, launchd's `KeepAlive` (`SuccessfulExit` false) already did this. Everywhere, three starts after an unclean stop within ten minutes are a restart storm, said once per ten minutes in Settings › Gateway (`gateway-restarts.json`, after OpenClaw's `restart-storm.ts`).
 **Tools run by hand or by a workflow (mac5/manual-actions).** A tool run outside a conversation goes through one gate, `src/tool-gate.ts`, called from `Runtime.executeTool`. Pressed by the owner in the app window (`POST /api/action`, the code editor's save, "Try a tool"), it obeys Branch's own files (above), a refusing rule, the role of a profile that is switched on, and the sandbox and OS wall the matching rule and `settings:computer` give a task's call; with Lockdown on, or in a folder marked untrusted while folder trust is on, anything that changes something is refused with a sentence saying why (looking still works). An "ask first" rule does not stop it, because the owner is the one asking ("Try a tool" still puts its question once); a short-lived key is not the owner at the window, so the same gate holds it to the full rules: only what the rules allow outright runs, "ask" is a refusal it cannot confirm, and every refusal names the key (HTTP 401; this is the one gate for both, shared with the key sweep). An address carrying a key or password (the leak guard) is never skipped by hand: "Try a tool" puts the question, `/api/action` refuses it. A saved workflow's tool step, a flow box and a live voice call are held to the full rules like a task (`mode: "policy"`, also what a caller that names no mode gets): "ask" stops them for the owner's yes, kept under the workflow's (or flow box's, or call's) own name. A workflow a task started (`workflows.run`, or `workflows.resume` carrying a saved or graph flow on) is also held to that task's own permissions (mac7/lockdown-fix): every tool step and box is refused before any question if the task could not use the tool itself (`within` in `src/tool-gate.ts`), its prompt steps and the flows inside it get only those permissions, and the limit is kept with the workflow, so the owner's yes later does not widen it. A workflow the owner starts afresh runs as before. Saving a workflow's steps again keeps the limit, a flow the
 `flow.search` tool drafts and tries keeps to the calling task's tools, and a graph flow run's kept limit
 (settings record `flow-run-limit:<runId>`, never reachable from the settings kit) is removed when the run
@@ -5193,6 +5197,73 @@ words rather than from pixels), `desktop.click`, `desktop.type`, `desktop.key`, 
 `desktop.clipboard` — and none of the three counts as merely looking, so under **Ask before
 changes** every single one stops and asks you first. Photographing your screen is treated as a
 change on purpose.
+**The whole pointer (computer-control).** Beside those, `desktop.move` (rest the pointer on something so a
+tooltip or hover menu appears), `desktop.drag` (press, glide and let go inside one window), `desktop.scroll`
+(up, down, left or right, 1 to 10 steps), `desktop.zoom` (a close-up of part of a window, enlarged when
+small) and `desktop.wait` (0.1 to 30 seconds, touching nothing) complete the set, and `desktop.click` takes
+`button` (left, right, middle), `count` (2 is a double-click, 3 a triple-click) and `modifiers` (ctrl,
+shift, alt held during the click); `desktop.key` takes `repeat` (1 to 20). `desktop.read` gives every part a
+`ref` (UI Automation's id for that exact part, searched for inside that window only) and its `box` in window
+pixels, and a picture or reading of a window comes with a `shot`: a point passed with that `shot` is
+refused, and nothing is done, once the window has moved or changed size since (OpenClaw's frame binding).
+A plain left click on a named part still presses it through UI Automation without moving the pointer, and a
+named list or page scrolls through UI Automation's scroll pattern the same way. Every pointer action checks
+that the spot is inside the window and that this window is what is really on top there, so a click never
+lands on something covering it (another program, a password prompt, or Branch's own window); held keys are
+always let go, and the pointer goes back where the owner left it after a click, drag or wheel. The script
+runs per-monitor DPI aware, so window boxes, part boxes and the pointer all count real pixels on a scaled
+display. Branch's own windows are never a target. Each new tool
+goes through the same switch, approvals, Lockdown, Stop notice, action allowance and "You're driving" wait
+as the rest; `desktop.wait` alone uses none of the allowance. These verbs are Windows-only for now; on a Mac
+or Linux they say so. (Code: `src/integrations/desktop.ts`, `src/integrations/desktop-script.ts`.)
+**Anthropic's computer tool, as it is (computer-control).** `desktop.mouse_down` and `desktop.mouse_up` press and
+let go of a mouse button (one held at a time; Stop, the task ending, the owner taking over, Branch stopping or thirty
+seconds let go of it, and a let-go spot that is covered or outside the window lets go where it was pressed instead),
+`desktop.hold_key` holds a chord for 0.1 to 10 seconds and always lets go, even when stopped mid-hold, and
+`desktop.cursor` says where the pointer is (on the screen, and in a window's pixels) without moving it.
+`desktop.computer` takes Anthropic's computer tool actions and fields as they are (`screenshot`, `zoom`,
+`left_click` … `triple_click`, `left_click_drag`, `mouse_move`, `left_mouse_down`/`up`, `scroll`, `type`, `key`,
+`hold_key`, `wait`, `cursor_position`, with `coordinate`, `start_coordinate`, `text`, `scroll_direction`,
+`scroll_amount`, `duration` and `region`), so a Claude model uses it as it was trained to; the one difference is that
+it names a window, and coordinates are in that window's own picture. Each action is the matching `desktop.*` tool, with
+every check it has. **On Linux (X11)** the pointer verbs, `hold_key` and the pointer's place go through `xdotool`,
+pressed only once the window is the active one and the spot is inside it; parts by name or ref, and close-ups, are
+Windows only. **On a Mac** these verbs say they are not available yet.
+**Take a screenshot (computer-control).** The message box's + menu takes a picture of the main display and attaches it
+to the next message (`POST /api/panels/screen/shot`): Branch's own windows are left out where the desktop app can hide
+them, no picture is taken while a window that handles passwords shows, and only the owner's own window may ask.
+**A paired computer's screen, live (computer-control).** When a conversation uses one of the owner's paired computers
+(a `branch node` whose "Take a picture of the screen" the owner switched on), its full-size computer view shows that
+computer's screen, one picture about every two and a half seconds, passed through from its device socket and kept
+nowhere (`GET /api/panels/screen/device`, `src/device-screen.ts`). Only the owner's window, for their own conversation
+that uses that computer, never under Lockdown or the app lock; the pictures come from a budget of their own on the
+device socket, so watching never takes a task's turns.
+**Using a paired computer from the view (computer-control).** When that computer's own "Let you use its screen and
+keyboard from Branch" switch is on (Customize, Channels, Devices; Windows, and Linux on X11 with `xdotool`), the view's
+Take over lets the owner click, right-click, double-click and scroll on the picture, and send text and key chords
+(`POST /api/panels/screen/device/drive` and `/input`). Each press names the picture it was aimed at, which must be the
+last one shown and under 30 seconds old, and a click or scroll uses that picture up, so nothing lands on a screen the
+owner has not seen. While the owner drives, a task cannot act on that computer ("You're driving"; it may still look);
+Hand back, closing the view, Lockdown, the app lock, switching it off, or two quiet minutes end it. There is no task tool
+for it: the device socket refuses it unless it comes from the owner's view. The computer checks its own switch again
+and takes these from a budget of their own (120 a minute). While the owner holds it, that computer shows a notice on top
+of every window, "Being used from Branch by <owner>", with a Stop that works there: Stop ends the hold at once, Branch is
+told, and the view says someone there pressed Stop. The computer takes no input unless its notice is up and on top
+(Windows: a topmost window; Linux: `xmessage` kept above with `wmctrl`, so input on Linux needs `xdotool`, `xmessage`
+and `wmctrl`). Key chords the owner presses are written to that computer's own `branch node` log; typed words are not.
+On Windows a fixed, encoded PowerShell script reads the input from one environment value; on Linux each is one
+`xdotool` command with the text after `--`.
+**The computer view never shows itself (computer-control).** The owner's live view of this computer
+(`/api/panels/screen`, `src/local-screen.ts`) opens on the main display by itself, and offers every display
+and every app window (browser windows are left out). While a view is open the desktop app's main process
+hides each of its own windows from screen capture (`SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`
+through Electron's `setContentProtection`, Windows 10 version 2004 or newer), and every display frame is
+dropped unless each visible Branch window is still hidden before and after it, so the view can no longer
+show itself inside itself. Only the app's main process decides which windows to hide
+(`src/desktop/capture-service.ts`, `src/desktop/capture-link.ts`); outside the desktop app, or on an older
+Windows, no view opens and the reason is shown. A whole display is watched, and Take control pauses every
+task, but the owner drives it with their own mouse and keyboard; clicking and typing through the view is
+for a chosen app window.
 How it works underneath: one Windows PowerShell script, written once into a private temporary
 folder and called with `-File` so nothing is ever pasted into a command line, driving Windows' own
 accessibility layer (UI Automation) and `user32`. Clicking and typing go through the accessibility
