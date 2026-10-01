@@ -1,0 +1,3 @@
+/* Model capabilities and size are metadata, not success states. Use a theme's readable
+   text/ground pair so these small labels stay legible in both lights. */
+.lm-tags12 .tag6{color:var(--ink);background:var(--bg)}
