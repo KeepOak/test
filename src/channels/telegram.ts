@@ -187,11 +187,11 @@ export class TelegramAdapter implements ChannelAdapter {
       .parse(await this.call("createForumTopic", { chat_id: target.chat_id, name }));
     return topicAddress(target.chat_id, result.message_thread_id);
   }
-  async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
+  async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat, gate?: SendGate): Promise<string | undefined> {
     const result = await this.call("sendMessage", {
       ...telegramTarget(chatId), text, ...formatted(format),
       ...(replyToMessageId && /^\d+$/.test(replyToMessageId) ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
-    });
+    }, false, false, gate);
     const parsed = z.object({ message_id: z.number() }).passthrough().safeParse(result);
     return parsed.success ? String(parsed.data.message_id) : undefined;
   }
@@ -199,11 +199,11 @@ export class TelegramAdapter implements ChannelAdapter {
    * Hermes Agent's private-chat send_draft contract (MIT), adapted to Branch's topic handles and plain preview.
    * Reusing the nonzero id animates the preview; it has no message id and never replaces the final sendMessage.
    */
-  async sendDraft(chatId: string, draftId: number, text: string): Promise<void> {
+  async sendDraft(chatId: string, draftId: number, text: string, gate?: SendGate): Promise<void> {
     const target = telegramTarget(chatId);
     if (!Number.isSafeInteger(target.chat_id) || target.chat_id <= 0 || !Number.isSafeInteger(draftId) || draftId <= 0)
       throw new Error("Telegram drafts require a private chat and a positive draft id");
-    const result = await this.call("sendMessageDraft", { ...target, draft_id: draftId, text: text.slice(0, 3500) });
+    const result = await this.call("sendMessageDraft", { ...target, draft_id: draftId, text: text.slice(0, 3500) }, false, false, gate);
     if (result !== true) throw new Error("Telegram refused the draft preview");
   }
   /** Sends a spoken reply as a Telegram voice note. Telegram wants the file as a form upload. */

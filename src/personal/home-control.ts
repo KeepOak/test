@@ -5,6 +5,7 @@ import { callJson } from "../channels/parity-common.js";
 import { RateLimiter } from "../approvals.js";
 import { probeMetadata, type ConnectionHealth } from "./probe.js";
 import { clip, partSettings, requirePersonal, savePartSettings, secretNameSchema } from "./settings.js";
+import { assertHealthCurrent } from "../health-check.js";
 
 /**
  * R17-024: looking at and controlling the owner's Home Assistant through its REST API, with a
@@ -63,10 +64,12 @@ export class HomeControl {
   /** GET /api/ proves authenticated API access only, without reading devices or changing the house.
    * Contract: https://developers.home-assistant.io/docs/api/rest/ (trailing slash is required). */
   async test(): Promise<ConnectionHealth> {
+    assertHealthCurrent();
     requirePersonal(this.store, this.owner, "home-control");
     const settings = this.settings();
     if (!settings.url) throw new Error("Add your Home Assistant address before testing the connection.");
     const token = await this.secret(settings.tokenName);
+    assertHealthCurrent();
     return probeMetadata([{ capability: "Home Assistant API access", url: `${settings.url.replace(/\/+$/, "")}/api/`,
       shape: z.object({ message: z.literal("API running.") }) }], token, this.fetcher);
   }

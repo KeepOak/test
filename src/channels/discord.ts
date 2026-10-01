@@ -304,14 +304,16 @@ export class DiscordAdapter implements ChannelAdapter {
     const marked = format?.spans?.length ? fenced(text, format.spans, { tag: true }) : text;
     return (marked.length <= this.maxTextLength ? marked : text).slice(0, this.maxTextLength);
   }
-  async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
+  async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat, gate?: SendGate): Promise<string | undefined> {
     const wait = this.readyAt - Date.now();
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10000)));
     // flags 4096: SUPPRESS_NOTIFICATIONS, for a progress message; the reply after it is the one that notifies.
     const body = JSON.stringify({ content: this.content(text, format), ...(format?.quiet ? { flags: 4096 } : {}),
       ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, fail_if_not_exists: false } } : {}) });
+    const timeout = AbortSignal.timeout(20000), signal = gate ? AbortSignal.any([timeout, gate.signal]) : timeout;
+    gate?.check();
     const response = await this.fetch(`${this.base}/channels/${encodeURIComponent(chatId)}/messages`, {
-      method: "POST", headers: { ...this.headers(), "content-type": "application/json" }, body, signal: AbortSignal.timeout(20000),
+      method: "POST", headers: { ...this.headers(), "content-type": "application/json" }, body, signal,
     });
     this.noteLimits(response);
     if (response.status === 429) throw new Error("Discord asked us to slow down; the message will be tried again");

@@ -16,6 +16,7 @@ import type { ReplyFlags } from "./reply-flags.js";
 import type { Store } from "./store.js";
 import type { IssueAccess } from "./integrations/issue-tools.js";
 import type { SessionLock } from "./session-lock.js";
+import { HealthCheck, HealthAuthorityError, withHealthCheck } from "./health-check.js";
 
 export interface ConnectorsHost {
   store: Store; version: string; ownMcp: OwnMcpServers; ownClis: OwnClis; replyFlags: ReplyFlags;
@@ -122,9 +123,17 @@ export async function connectorsApi(app: ConnectorsHost, request: IncomingMessag
   const check = /^\/api\/connectors\/accounts\/(github|linear)\/test$/.exec(path);
   if (check && request.method === "POST") {
     app.store.profiles.requireOwner("Checking your connected account");
-    Empty.parse(await readBody(request));
-    if (!app.issues) throw new HttpError(409, "No issue tracker accounts are configured.");
-    return { health: await app.issues.checkAccount(check[1] as "github" | "linear") };
+    const original = app.issues;
+    const authority = new HealthCheck(app.store, app.store.profiles.ownerName, app.sessionLock, request);
+    return withHealthCheck(authority, async () => {
+      authority.bindConnection(() => app.issues === original);
+      Empty.parse(await readBody(request));
+      if (!original) throw new HttpError(409, "No issue tracker accounts are configured.");
+      if (app.issues !== original) throw new HttpError(403, "The connected account changed. Check it again.");
+      const health = await original.checkAccount(check[1] as "github" | "linear");
+      if (app.issues !== original) throw new HttpError(403, "The connected account changed. Check it again.");
+      return { health };
+    }).catch(error => { if (error instanceof HealthAuthorityError) throw new HttpError(error.status, error.message); throw error; });
   }
   if (path === "/api/release-notes" && request.method === "GET") return notesFor(app.version);
   if (path.startsWith("/api/mcp/")) return serversApi(app, request, path);

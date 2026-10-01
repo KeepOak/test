@@ -1,3 +1,4 @@
+import { assertHealthCurrent, currentHealthCheck } from "../health-check.js";
 import { z } from "zod";
 import { applyContentPolicy, detectInjection, type InjectionPolicy } from "../content-guard.js";
 import type { ToolRegistry } from "../registry.js";
@@ -56,11 +57,14 @@ export class IssueAccess {
   }
   /** Explicit account checks prove authentication only, not access to a particular issue or repository. */
   async checkAccount(id: "github" | "linear"): Promise<ConnectionHealth> {
+    assertHealthCurrent();
     const access = this.trackers[id];
     if (!access) throw new Error(`${id} is not set up.`);
+    currentHealthCheck()?.bindConnection(() => this.trackers[id] === access);
     let ok = false, reason: string | null = null;
     try { await access.checkAccount(); ok = true; }
-    catch { reason = "Account access could not be verified. Check the saved credentials and network rules, then try again."; }
+    catch { assertHealthCurrent(); reason = "Account access could not be verified. Check the saved credentials and network rules, then try again."; }
+    assertHealthCurrent();
     return { checkedAt: new Date().toISOString(), ok, checks: [{ capability: `${id} authenticated account access`, ok, reason }] };
   }
   private github(): GitHubAccess {

@@ -1,3 +1,4 @@
+import { assertHealthCurrent, healthSignal } from "../health-check.js";
 import { z } from "zod";
 import { scrubSecrets } from "../locker.js";
 import type { NetworkPolicy } from "../network-policy.js";
@@ -43,12 +44,14 @@ export class LinearAccess {
     const token = await this.token();
     const url = new URL(this.config.apiBase);
     await this.policy.assertAllowed(url, "Linear address");
+    assertHealthCurrent();
     const response = await this.fetchImpl(url, {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(this.config.timeoutMs),
+      method: "POST", redirect: "error", signal: healthSignal(AbortSignal.timeout(this.config.timeoutMs))!,
       headers: { authorization: token, "content-type": "application/json", accept: "application/json", "user-agent": this.userAgent },
       body: JSON.stringify({ query, variables }),
     });
     const text = scrubSecrets((await response.text()).slice(0, this.config.maxBytes), { [this.config.tokenSecret]: token });
+    assertHealthCurrent();
     if (!response.ok) throw new Error(explainLinear(response.status, text));
     const parsed = (text ? JSON.parse(text) : {}) as { data?: Record<string, unknown>; errors?: { message?: string }[] };
     if (parsed.errors?.length) throw new Error(`Linear would not accept that: ${String(parsed.errors[0]?.message ?? "").slice(0, 200)}`);

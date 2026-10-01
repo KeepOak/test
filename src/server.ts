@@ -4566,7 +4566,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         if (handlesPersonalPath(path)) {
           app.store.profiles.requireOwner("Your personal connectors");
           const answer = await personalApi({ personal: app.personal, runtime: app.runtime, method: request.method ?? "GET",
-            readBody: () => readBody(request, 4 * 1024 * 1024) }, path).catch((error: unknown) => {
+            sessionLock: app.sessionLock, request, readBody: () => readBody(request, 4 * 1024 * 1024) }, path).catch((error: unknown) => {
             throw error instanceof PersonalHttpError ? new HttpError(error.status, error.message) : error;
           });
           send(response, 200, answer);

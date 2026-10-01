@@ -2,6 +2,7 @@ import { connect as netConnect, type Socket } from "node:net";
 import { connect as tlsConnect, type TLSSocket } from "node:tls";
 import { randomUUID } from "node:crypto";
 import { mimeParts, textOf } from "../personal/mime.js";
+import { assertHealthCurrent, currentHealthCheck } from "../health-check.js";
 
 /**
  * Just enough IMAP and SMTP, over Node's own TLS, to read new mail and answer it: no library, no
@@ -90,15 +91,23 @@ class LineSocket {
  * that swallows the connection would hold up every later look at the inbox for good.
  */
 async function open(server: MailServer, secure: boolean): Promise<LineSocket> {
+  assertHealthCurrent();
+  const check = currentHealthCheck();
   const socket = secure
     ? tlsConnect({ host: server.host, port: server.port, servername: server.host, rejectUnauthorized: server.rejectUnauthorized ?? true })
     : netConnect({ host: server.host, port: server.port });
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => { socket.destroy(); reject(new Error(`${server.host} did not answer in time`)); }, server.timeoutMs ?? 20000);
-    socket.once(secure ? "secureConnect" : "connect", () => { clearTimeout(timer); resolve(); });
-    socket.once("error", (error: Error) => { clearTimeout(timer); socket.destroy(); reject(error); });
+    const cancel = () => { release(); reject(check!.signal.reason); socket.destroy(); };
+    const timer = setTimeout(() => { release(); reject(new Error(`${server.host} did not answer in time`)); socket.destroy(); }, server.timeoutMs ?? 20000);
+    const release = () => { clearTimeout(timer); check?.signal.removeEventListener("abort", cancel); };
+    check?.signal.addEventListener("abort", cancel, { once: true });
+    socket.once(secure ? "secureConnect" : "connect", () => { release(); resolve(); });
+    socket.once("error", (error: Error) => { release(); socket.destroy(); reject(error); });
+    socket.once("close", () => { release(); reject(new Error("The mail server closed before connecting")); });
+    if (check?.signal.aborted) cancel();
   });
-  return new LineSocket(socket);
+  const opened = new LineSocket(socket);
+  try { assertHealthCurrent(); return opened; } catch (error) { opened.close(); throw error; }
 }
 
 /**
@@ -124,10 +133,14 @@ export class ImapClient {
   private socket: LineSocket | undefined;
   private counter = 0;
   constructor(private readonly server: MailServer) {}
+  /** Cancels only this check-owned conversation, without waiting for a server reply. */
+  abort(): void { this.socket?.close(); this.socket = undefined; }
   private get timeout(): number { return this.server.timeoutMs ?? 20000; }
   async connect(readOnly = false): Promise<void> {
+    assertHealthCurrent();
     this.socket = await open(this.server, this.server.tls !== false);
     await this.socket.until((text) => (text.includes("\r\n") ? text.indexOf("\r\n") + 2 : null), this.timeout);
+    assertHealthCurrent();
     await this.command(`LOGIN ${quote(this.server.user)} ${quote(this.server.password)}`);
     const mailbox = await this.command(readOnly ? "EXAMINE INBOX" : "SELECT INBOX");
     // RFC 9051 §6.3.3: EXAMINE returns metadata and must confirm a read-only mailbox.
@@ -190,10 +203,12 @@ export class ImapClient {
     this.socket = undefined;
   }
   private async command(text: string): Promise<string> {
+    if (text !== "LOGOUT") assertHealthCurrent();
     if (!this.socket) throw new Error("The mail connection is not open");
     const tag = `b${++this.counter}`;
     this.socket.send(`${tag} ${text}`);
     const answer = await this.socket.until((buffer) => taggedEnd(buffer, tag), this.timeout);
+    if (text !== "LOGOUT") assertHealthCurrent();
     const status = new RegExp(`^${tag} (OK|NO|BAD)(.*)$`, "m").exec(answer);
     // The command name is kept out of the error so a password never reaches a log.
     if (!status || status[1] !== "OK") throw new Error(`The mail server refused ${text.split(" ")[0]}:${(status?.[2] ?? "").slice(0, 120)}`);
