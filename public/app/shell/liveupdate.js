@@ -63,6 +63,27 @@ function restoreWorkspaceScroll(positions) {
   }
 }
 
+/* The composer's words and caret, the focused prompt and every scroll position, once the restored page is drawn. */
+function restoreComposer(kept) {
+  const box = $("#prompt");
+  const words = S.drafts[S.chat ?? "new"];
+  if (box && typeof words === "string") {
+    box.value = words;
+    if (kept.caret) {
+      box.setSelectionRange(Number(kept.caret.start) || 0, Number(kept.caret.end) || 0);
+      if (kept.caret.focused) box.focus();
+    }
+  }
+  restoreWorkspaceScroll(kept.positions);
+  const focused = kept.focus && ["prompt", "home19-prompt"].includes(kept.focus.id) ? document.getElementById(kept.focus.id) : null;
+  if (focused) {
+    focused.setSelectionRange(Number(kept.focus.start) || 0, Number(kept.focus.end) || 0);
+    focused.focus({ preventScroll: true });
+  }
+  const scroll = $("#scroll");
+  if (scroll && kept.scroll) scroll.scrollTop = kept.scroll.atEnd ? scroll.scrollHeight : Number(kept.scroll.top) || 0;
+}
+
 /* Listens for live updates from the app (the desktop window only). */
 export function initLive() {
   // A shell update (src/desktop/shell-switch.ts) asks for the same record, to hand to the new version's window.
@@ -153,22 +174,27 @@ const frames = () => document.visibilityState === "hidden" ? Promise.resolve()
    old page come away. `open` opens a conversation (chat/chat.js openConversation). Answers whether anything was kept. */
 export async function restoreOpen(open) {
   const recovery = new URL(location.href).searchParams.get("_branch_live_restore");
-  let kept = null;
-  try { kept = JSON.parse(sessionStorage.getItem(KEY) || "null"); } catch { kept = null; }
+  let raw = null, kept = null;
+  try { raw = sessionStorage.getItem(KEY); kept = JSON.parse(raw || "null"); } catch { kept = null; }
   if (!kept || typeof kept !== "object" || (!recovery && !(Date.now() - Number(kept.at) < 60_000))) {
     // Nothing kept (an ordinary start): the app is told all the same, in case it reloaded this page.
     await frames();
     await bridge()?.windowRestored?.(recovery);
     return false;
   }
-  // A profile change must never bring back the previous person's private workspace or draft.
-  if (typeof kept.principal === "string" && kept.principal !== sessionPrincipal(E.profiles)) {
-    sessionStorage.removeItem(KEY);
+  /* This restoration belongs to the person signed in now and to this one handover's snapshot. A person switch, the app
+     lock or a newer handover's snapshot during any wait below ends it: nothing more is put back, only this snapshot is
+     dropped (never a newer one), and the app is told once. */
+  const who = sessionPrincipal(E.profiles);
+  const current = () => sessionPrincipal(E.profiles) === who && !document.getElementById("app")?.classList.contains("locked-b17")
+    && sessionStorage.getItem(KEY) === raw;
+  const forget = () => {
     if (recovery) { const url = new URL(location.href); url.searchParams.delete("_branch_live_restore"); history.replaceState(null, "", url); }
-    await frames();
-    await bridge()?.windowRestored?.(recovery ?? kept.commit);
-    return false;
-  }
+    if (sessionStorage.getItem(KEY) === raw) sessionStorage.removeItem(KEY);
+  };
+  const drop = async () => { forget(); await frames(); await bridge()?.windowRestored?.(recovery ?? kept.commit); return false; };
+  // A profile change must never bring back the previous person's private workspace or draft.
+  if (typeof kept.principal === "string" && kept.principal !== who) return drop();
   const view = VIEWS.has(kept.view) ? kept.view : S.view;
   if (kept.tabs && typeof kept.tabs === "object" && !Array.isArray(kept.tabs)) {
     for (const key of Object.keys(S.tabs)) {
@@ -178,32 +204,25 @@ export async function restoreOpen(open) {
   if (typeof kept.setPage === "string" && hasPage(kept.setPage)) S.setPage = kept.setPage;
   if (kept.drafts && typeof kept.drafts === "object") Object.assign(S.drafts, kept.drafts);
   if (sessionId(kept.chat)) await open(kept.chat);
-  restoreLayout(kept.layout);
-  // Opening the retained conversation sets the view to chat. The owner's actual place comes back after that read.
-  S.view = view;
-  renderNow();
-  await frames();
-  const box = $("#prompt");
-  const words = S.drafts[S.chat ?? "new"];
-  if (box && typeof words === "string") {
-    box.value = words;
-    if (kept.caret) {
-      box.setSelectionRange(Number(kept.caret.start) || 0, Number(kept.caret.end) || 0);
-      if (kept.caret.focused) box.focus();
-    }
+  if (!current()) return drop();
+  // The owner may have gone elsewhere while the conversation was read: their own move stands, nothing more is laid over it.
+  const here = !sessionId(kept.chat) || (S.chat === kept.chat && S.view === "chat");
+  if (here) {
+    restoreLayout(kept.layout);
+    // Opening the retained conversation sets the view to chat. The owner's actual place comes back after that read.
+    S.view = view;
+    renderNow();
   }
-  restoreWorkspaceScroll(kept.positions);
-  const focused = kept.focus && ["prompt", "home19-prompt"].includes(kept.focus.id) ? document.getElementById(kept.focus.id) : null;
-  if (focused) {
-    focused.setSelectionRange(Number(kept.focus.start) || 0, Number(kept.focus.end) || 0);
-    focused.focus({ preventScroll: true });
-  }
-  const scroll = $("#scroll");
-  if (scroll && kept.scroll) scroll.scrollTop = kept.scroll.atEnd ? scroll.scrollHeight : Number(kept.scroll.top) || 0;
+  const chat = S.chat;
   await frames();
+  if (!current()) return drop();
+  if (here && S.view === view && S.chat === chat) restoreComposer(kept);
+  await frames();
+  if (!current()) return drop();
   const accepted = await bridge()?.windowRestored?.(recovery ?? kept.commit);
+  // Told once: a switch, the lock or a newer handover meanwhile drops only this snapshot, even if the page was refused.
+  if (!current()) { forget(); return false; }
   if (accepted === false) throw new Error("The restored page was not accepted; its draft is kept for recovery.");
-  if (recovery) { const url = new URL(location.href); url.searchParams.delete("_branch_live_restore"); history.replaceState(null, "", url); }
-  sessionStorage.removeItem(KEY);
+  forget();
   return true;
 }
