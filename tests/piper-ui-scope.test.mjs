@@ -48,5 +48,7 @@ for (const operation of ["list", "save"]) for (const failure of [false, true]) f
 test("Piper card keeps the Voice page's section and immediate-choice contract", () => {
   const f = fixture(), html = f.context.piper.piperCard(f.settings);
   assert.doesNotMatch(html, /<h[1-6]/);
+  assert.match(html, /id="piper-card" role="group" aria-labelledby="piper-title"/);
+  assert.match(html, /<p id="piper-title"><b>window.settings.piper.title<\/b><\/p>/);
   assert.match(html, /data-act="piper-save">window.settings.piper.apply/);
 });

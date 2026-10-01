@@ -19,7 +19,7 @@ export function piperCard(settings) {
   ++cardGeneration;
   if (E.profiles?.isOwner !== true || !settings) return "";
   const field = (id, label, value, attrs = "") => `<label class="ctl"><b>${esc(label)}</b><span class="right"><input class="inp" id="${id}" aria-label="${esc(label)}" value="${esc(value)}" ${attrs}></span></label>`;
-  return `<div class="sec" id="piper-card"><p><b>${t("window.settings.piper.title")}</b></p>
+  return `<div id="piper-card" role="group" aria-labelledby="piper-title"><p id="piper-title"><b>${t("window.settings.piper.title")}</b></p>
     <p>${t("window.settings.piper.intro")}</p>
     ${field("piper-executable", t("window.settings.piper.executable"), settings.localVoiceExecutable, `maxlength="400" placeholder="${esc(t("window.settings.piper.executable-placeholder"))}"`)}
     <button class="btn sm" type="button" data-act="piper-browse" data-kind="executable">${t("window.settings.piper.browse-executable")}</button>

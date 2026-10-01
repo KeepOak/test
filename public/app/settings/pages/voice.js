@@ -106,7 +106,7 @@ function speakingBack() {
   const voices = [...V.voices.map((n) => [n, n, reads && s.voiceId === n]), ["off", t("accounts.switch.off"), !!V.settings && !reads]];
   const dict = !!V.dictation && V.dictation.mode !== "off";
   return `<div class="sec"><h2>${t("window.settings.voice.speaking-back")}</h2><div class="ctl"><b>${t("field.voice")}</b><span class="right"><span class="seg" role="group" aria-label="${t("field.voice")}">${voices.map(([v, l, p]) => `<button type="button" aria-pressed="${p}" data-act="v-voice" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${t("window.settings.voice.read-replies-out-loud-in-this")}</small></div>
-    ${ctl("v-dict", t("window.settings.voice.dictation-in-the-message-box"), [t("window.settings.voice.the-microphone-button-turns-speech-into"), V.dictationHow].filter(Boolean).join(" "), dict)}</div>`;
+    ${ctl("v-dict", t("window.settings.voice.dictation-in-the-message-box"), [t("window.settings.voice.the-microphone-button-turns-speech-into"), V.dictationHow].filter(Boolean).join(" "), dict)}${piperCard(V.settings)}</div>`;
 }
 
 function listeningMore() {
@@ -137,7 +137,7 @@ async function saveAloud(v) {
 
 export function draw() {
   const lv = level();
-  return `<h1>${t("field.voice")}</h1><p class="lede">${t("window.settings.voice.talking-to-branch-voice-stays-on")}</p>${talking()}${speakingBack()}${piperCard(V.settings)}${lv >= 1 ? listeningMore() : ""}${voice17(lv)}${lv >= 1 ? calls17d() : ""}`;
+  return `<h1>${t("field.voice")}</h1><p class="lede">${t("window.settings.voice.talking-to-branch-voice-stays-on")}</p>${talking()}${speakingBack()}${lv >= 1 ? listeningMore() : ""}${voice17(lv)}${lv >= 1 ? calls17d() : ""}`;
 }
 
 export function init() {
