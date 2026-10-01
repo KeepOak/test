@@ -20,6 +20,7 @@ import { initMachines } from "./machines.js";
 import { initFileView } from "./fileview.js";
 import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { prepareGatewayRestart, initGatewayRestart } from "./gateway-restart.js";
 
 /* The saved choice and the worker actually running behind a gateway are separate facts. */
 let gw = null;
@@ -80,7 +81,7 @@ async function openGateway(el, force = false) {
     if (!gatewayFresh(context, panel)) return;
     let health = null;
     if (read.underGateway === true) {
-      health = await fetch("/gateway/health", { cache: "no-store" }).then((r) => r.ok ? r.json() : null).catch(() => null);
+      health = await fetch("/gateway/health", { cache: "no-store", signal: AbortSignal.timeout(5000) }).then((r) => r.ok ? r.json() : null).catch(() => null);
       if (!gatewayFresh(context, panel)) return;
     }
     gw = read; gwHealth = health;
@@ -116,7 +117,7 @@ function restartFromGateway() {
   const panel = gatewayPanel();
   if (!gatewayFresh(gwPopContext, panel)) return;
   closePop();
-  run("gw-restart"); // existing Settings action and backend authorization/refusals
+  void prepareGatewayRestart(); // existing engine route, with explicit confirmation and idle-work guard
 }
 
 /* ---------- keyboard shortcuts ---------- */
@@ -249,6 +250,7 @@ function focusPrompt() {
 const live = (act) => has(act) && isLive(act);
 
 export function initExtras() {
+  initGatewayRestart();
   markLive(["gwpop", "sw:gwpop-sw", "gwpop-restart14", "shortcuts", "chatmenu", "export-conv", "key15", "keyreset15"]);
   initMachines();
   initFileView();
