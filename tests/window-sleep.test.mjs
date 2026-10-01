@@ -258,10 +258,11 @@ test("the first press wakes the window and still opens the conversation it press
 test("a Trunk at work never sleeps", async (t) => {
   const { page, errors, trunks, work } = await fixture(t);
   work();
-  await waitFor(page, (id) => document.querySelector(`#side [data-rk="t:${id}"]`)?.dataset.st === "work", trunks.Busy.id);
+  await waitFor(page, (id) => document.querySelector(`#side [data-rk="t:${id}"]`)?.dataset.st === "think", trunks.Busy.id);
+  await settled(page, trunks.Busy, /tide\/think/);
   await page.clock.fastForward(10 * MIN + 5000);
   await settled(page, trunks.Ledger, /ember\/sleep/);
-  assert.match(await loopOf(page, trunks.Busy), /tide\/work/, "its working loop stays");
+  assert.match(await loopOf(page, trunks.Busy), /tide\/think/, "its held model turn stays thinking and awake");
   assert.equal(await onFace(page, trunks.Busy, "rest"), false);
   assert.match(await loopOf(page, trunks.Ledger), /ember\/sleep/, "the others sleep");
   assert.deepEqual(errors, []);

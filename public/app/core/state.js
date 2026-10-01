@@ -33,6 +33,7 @@ export const S = {
 
 export const E = {
   state: null,
+  stateReadAt: 0,
   trunks: [],
   trunkModes: {},
   rooms: [],
@@ -60,6 +61,7 @@ export async function refresh(isCurrent = () => true) {
   if (!current()) return;
   /* One request first: until the engine accepts the window, every refused request counts against sign-in. */
   const state = await api("state");
+  const stateReadAt = Date.now();
   if (!current()) return;
   const [trunks, profiles] = await Promise.all([
     api("trunks").catch(() => null),
@@ -77,6 +79,7 @@ export async function refresh(isCurrent = () => true) {
   if (profiles) E.profiles = profiles;
   if (!current()) return;
   E.state = state;
+  E.stateReadAt = stateReadAt;
   if (trunks) {
     if (!current()) return;
     E.trunks = trunks.trunks ?? (Array.isArray(trunks) ? trunks : []);
