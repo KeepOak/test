@@ -130,3 +130,64 @@ for (const [what, change] of LATE.slice(0, 2)) {
     assert.deepEqual(w.ca.toasts, []);
   });
 }
+
+test("a failed first channel read does not claim that no chat app is connected", async (t) => {
+  const w = await appsPage(t);
+  await w.fail("channels", new Error("Could not read chat apps"));
+  await w.answer("channel-setup", { channels: [] });
+  await w.drain();
+  assert.doesNotMatch(w.page.draw(), /window\.p17d\.no-chat-app/);
+  assert.deepEqual(w.ca.toasts, ["Could not read chat apps"]);
+});
+
+test("a failed refresh preserves the last verified connection instead of claiming none", async (t) => {
+  const w = await appsPage(t);
+  await loaded(w);
+  const reading = w.page.load();
+  await w.fail("channels", new Error("Could not refresh chat apps"));
+  await w.answer("channel-setup", { channels: [] });
+  await reading;
+  assert.match(w.page.draw(), /telegram/);
+  assert.doesNotMatch(w.page.draw(), /window\.p17d\.no-chat-app/);
+  assert.deepEqual(w.ca.toasts, ["Could not refresh chat apps"]);
+});
+
+test("a successful empty channel read still reports that no app is connected", async (t) => {
+  const w = await appsPage(t);
+  await w.answer("channels", { channels: [] });
+  await w.answer("channel-setup", { channels: [] });
+  await w.drain();
+  assert.match(w.page.draw(), /window\.p17d\.no-chat-app/);
+});
+
+test("an older empty read cannot overwrite the new connection returned by a re-entry refresh", async (t) => {
+  const w = await appsPage(t);
+  const oldChannels = w.held.splice(w.held.findIndex((h) => h.path === "channels"), 1)[0];
+  const oldSetup = w.held.splice(w.held.findIndex((h) => h.path === "channel-setup"), 1)[0];
+  const refresh = w.page.load();
+  await w.answer("channels", telegram);
+  await w.answer("channel-setup", { channels: [] });
+  await refresh;
+  oldChannels.resolve({ channels: [] });
+  oldSetup.resolve({ channels: [] });
+  await w.drain();
+  assert.match(w.page.draw(), /telegram/);
+  assert.doesNotMatch(w.page.draw(), /window\.p17d\.no-chat-app/);
+  assert.equal(w.ca.renders, 1, "the superseded read does not redraw");
+});
+
+test("a superseded failed read cannot report an error after a successful refresh", async (t) => {
+  const w = await appsPage(t);
+  const oldChannels = w.held.splice(w.held.findIndex((h) => h.path === "channels"), 1)[0];
+  const oldSetup = w.held.splice(w.held.findIndex((h) => h.path === "channel-setup"), 1)[0];
+  const refresh = w.page.load();
+  await w.answer("channels", telegram);
+  await w.answer("channel-setup", { channels: [] });
+  await refresh;
+  oldChannels.reject(new Error("An old request failed"));
+  oldSetup.resolve({ channels: [] });
+  await w.drain();
+  assert.match(w.page.draw(), /telegram/);
+  assert.deepEqual(w.ca.toasts, []);
+  assert.equal(w.ca.renders, 1);
+});
