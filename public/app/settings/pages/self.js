@@ -18,6 +18,7 @@ import { on } from "../../core/actions.js";
 import { toast, ic, openDlg, closeDlg, dialog } from "../../core/ui.js";
 import { seg15 } from "../rows15.js";
 import { self17 } from "../p17-more.js";
+import { agentComparisonSection, initAgentComparison } from "../agent-comparison.js";
 import { ciQueueSection, initCiQueue } from "../self-development-ci.js";
 import { level as level17 } from "../../core/state.js";
 import { t, language } from "../../../i18n.js";
@@ -81,6 +82,7 @@ async function doctor() {
 }
 
 export function init() {
+  initAgentComparison();
   initCiQueue();
   loadData();
   on("doctor", () => doctor());
@@ -174,6 +176,7 @@ export function draw() {
   let html = `<h1>${t("dashboard.computer.engine")}</h1><p class="lede">${t("window.settings.self.what-branch-may-change-about-itself-2")}</p>`;
   html += statusSection();
   html += policySection();
+  html += agentComparisonSection();
   html += ciQueueSection();
   html += neverDiesSection();
   html += timelineSection();

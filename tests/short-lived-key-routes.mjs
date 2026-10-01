@@ -89,6 +89,9 @@ export const ROUTES = {
   "/api/adapt/switch": "owner POST",
   "/api/action": "task POST",
   "/api/activity": "look",
+  "/api/agent-comparison": "look",
+  "/api/agent-comparison/settings": "owner POST",
+  "/api/agent-comparison/start": "owner POST",
   "/api/alive": "look",
   // p17: what each part of the assistant holds is looking; the whole-agent file is the owner's.
   "/api/agent-export": "owner POST",

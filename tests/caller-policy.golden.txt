@@ -176,6 +176,12 @@ owner GET /api/action | here=ok remote=ok phone=ok legacy=ok person=401/327290 r
 owner POST /api/action | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner GET /api/activity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/activity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/agent-comparison | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/agent-comparison | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/agent-comparison/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/agent-comparison/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/agent-comparison/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/agent-comparison/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/alive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/alive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/agent-export | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2485,6 +2491,12 @@ owner+lockdown GET /api/action | here=ok remote=ok phone=ok legacy=ok person=401
 owner+lockdown POST /api/action | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner+lockdown GET /api/activity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/activity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/agent-comparison | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/agent-comparison | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/agent-comparison/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/agent-comparison/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/agent-comparison/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/agent-comparison/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/alive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/alive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/agent-export | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4794,6 +4806,12 @@ household GET /api/action | here=400/f6e21c remote=400/f6e21c read=400/f6e21c ru
 household POST /api/action | here=ok remote=ok read=401/d45404 run=ok
 household GET /api/activity | here=ok remote=ok read=ok run=ok
 household POST /api/activity | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/agent-comparison | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/agent-comparison | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/agent-comparison/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/agent-comparison/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/agent-comparison/start | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/agent-comparison/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/alive | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/alive | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/agent-export | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7103,6 +7121,12 @@ household+lockdown GET /api/action | here=400/f6e21c remote=400/f6e21c read=400/
 household+lockdown POST /api/action | here=ok remote=ok read=401/d45404 run=ok
 household+lockdown GET /api/activity | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/activity | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/agent-comparison | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/agent-comparison | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/agent-comparison/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/agent-comparison/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/agent-comparison/start | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/agent-comparison/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/alive | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/alive | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/agent-export | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9412,6 +9436,12 @@ applock GET /api/action | here=423/a8f863
 applock POST /api/action | here=423/a8f863
 applock GET /api/activity | here=423/a8f863
 applock POST /api/activity | here=423/a8f863
+applock GET /api/agent-comparison | here=423/a8f863
+applock POST /api/agent-comparison | here=423/a8f863
+applock GET /api/agent-comparison/settings | here=423/a8f863
+applock POST /api/agent-comparison/settings | here=423/a8f863
+applock GET /api/agent-comparison/start | here=423/a8f863
+applock POST /api/agent-comparison/start | here=423/a8f863
 applock GET /api/alive | here=ok
 applock POST /api/alive | here=423/a8f863
 applock GET /api/agent-export | here=423/a8f863
