@@ -38,19 +38,29 @@ export class FileLockerKey implements LockerKeySource {
   }
 }
 
+/** A conditional write found the secret no longer the one it was meant to replace, and wrote nothing. */
+export class LockerConflict extends Error {}
+
 export class Locker {
   constructor(private readonly db: DatabaseSync, private readonly keys: LockerKeySource) {
     db.exec(`CREATE TABLE IF NOT EXISTS locker(owner TEXT NOT NULL, project TEXT NOT NULL, name TEXT NOT NULL,
       iv BLOB NOT NULL, tag BLOB NOT NULL, ciphertext BLOB NOT NULL, created_at TEXT NOT NULL,
       PRIMARY KEY(owner,project,name))`);
   }
-  async set(owner: string, project: string, name: string, value: string): Promise<{ project: string; name: string; createdAt: string }> {
+  /**
+   * Saves a value. With `expect`, the write happens only if `expect` accepts the value held at that moment (null when
+   * none): it is asked after the key is read, in the same step as the write, so nothing can change the secret between
+   * the two; otherwise LockerConflict and nothing is written.
+   */
+  async set(owner: string, project: string, name: string, value: string,
+    expect?: (current: string | null) => boolean): Promise<{ project: string; name: string; createdAt: string }> {
     projectIdSchema.parse(project); secretNameSchema.parse(name); valueSchema.parse(value);
     if (this.names(owner, project).length >= 64 && !this.exists(owner, project, name)) throw new Error("At most 64 secrets per project");
-    const iv = randomBytes(12), cipher = createCipheriv("aes-256-gcm", await this.keys.key(), iv);
+    const key = await this.keys.key(), iv = randomBytes(12), cipher = createCipheriv("aes-256-gcm", key, iv);
     const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]), tag = cipher.getAuthTag();
     const createdAt = new Date().toISOString();
     assertHealthCurrent();
+    if (expect && !expect(this.read(key, owner, project, name))) throw new LockerConflict(`Secret ${name} changed before it could be replaced`);
     this.db.prepare(`INSERT INTO locker VALUES(?,?,?,?,?,?,?) ON CONFLICT(owner,project,name)
       DO UPDATE SET iv=excluded.iv,tag=excluded.tag,ciphertext=excluded.ciphertext,created_at=excluded.created_at`)
       .run(owner, project, name, iv, tag, ciphertext, createdAt);
@@ -78,13 +88,19 @@ export class Locker {
   async resolve(owner: string, project: string, names: string[]): Promise<Record<string, string>> {
     const key = await this.keys.key(), values: Record<string, string> = {};
     for (const name of new Set(names)) {
-      const row = this.db.prepare("SELECT iv,tag,ciphertext FROM locker WHERE owner=? AND project=? AND name=?").get(owner, project, name);
-      if (!row) throw new Error(`Secret ${name} is not available in the active project (${project})`);
-      const decipher = createDecipheriv("aes-256-gcm", key, row.iv as Buffer);
-      decipher.setAuthTag(row.tag as Buffer);
-      values[name] = Buffer.concat([decipher.update(row.ciphertext as Buffer), decipher.final()]).toString("utf8");
+      const value = this.read(key, owner, project, name);
+      if (value === null) throw new Error(`Secret ${name} is not available in the active project (${project})`);
+      values[name] = value;
     }
     return values;
+  }
+  /** One secret's value, read and decrypted in one step with no wait, or null when there is none. */
+  private read(key: Buffer, owner: string, project: string, name: string): string | null {
+    const row = this.db.prepare("SELECT iv,tag,ciphertext FROM locker WHERE owner=? AND project=? AND name=?").get(owner, project, name);
+    if (!row) return null;
+    const decipher = createDecipheriv("aes-256-gcm", key, row.iv as Buffer);
+    decipher.setAuthTag(row.tag as Buffer);
+    return Buffer.concat([decipher.update(row.ciphertext as Buffer), decipher.final()]).toString("utf8");
   }
 }
 

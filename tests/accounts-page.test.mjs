@@ -186,7 +186,17 @@ test("A4 at 390 px the page fits and every account stays in sight", async (t) =>
   await open();
   await openSettingsPage(page, "accounts");
   const plan = accountRow(page, "Work plan");
-  await plan.scrollIntoViewIfNeeded();
+  // Metadata can redraw the page during Playwright's element-stability wait. Resolve and
+  // scroll the current row in one browser turn, then wait for actual visible geometry.
+  await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll(".set-col .prow")].find((node) =>
+      [...node.querySelectorAll("b")].some((label) => label.textContent === "Work plan"));
+    if (!row?.isConnected) return false;
+    row.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+    const rect = row.getBoundingClientRect();
+    return row.isConnected && rect.width > 0 && rect.height > 0 &&
+      rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth;
+  }, null, { timeout: 30000 });
   assert.equal(await plan.isVisible(), true);
   // Redesign: replaced by the new window (no "Kept separate" box in prototype.html's Settings › Accounts).
   const wide = await page.evaluate(() => [document.documentElement, document.querySelector(".set-page")].some((node) => node && node.scrollWidth > node.clientWidth + 1));

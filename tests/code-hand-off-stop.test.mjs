@@ -1,3 +1,4 @@
+import { processRunning } from "./process-running.mjs";
 /**
  * P0 (self-build): a stopped or timed-out hand-off leaves nothing running. npm's Codex launcher starts the real program
  * with its own standard streams and only passes signals on, and on Windows ending Node passes nothing on. Node's own job
@@ -16,7 +17,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { programStart, runProgram } from "../dist/coding/hand-off.js";
 import { codexBinary } from "../dist/asks/codex-app-server.js";
 
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { if (error.code === "ESRCH") return false; throw error; } };
+const alive = (pid) => processRunning(pid, () => { try { process.kill(pid, 0); return true; } catch (error) { if (error.code === "ESRCH") return false; throw error; } });
 async function gone(pid, ms = 5000) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) { if (!alive(pid)) return true; await delay(25); }
