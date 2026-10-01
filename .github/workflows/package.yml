@@ -528,6 +528,15 @@ jobs:
           sha256sum --check "$cli.sha256"
       # Signed by GitHub for this workflow at this tag: package.yml@refs/tags/vX.Y.Z is the only
       # identity the Stable updater accepts for a final release (a rehearsal's is refused, as it should be).
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - name: Inventory the exact release's locked source dependencies
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          node source/scripts/release-sbom.mjs source downloads "$SOURCE_COMMIT"
+          (cd downloads && sha256sum --check Branch-Agent-source-dependencies.cdx.json.sha256)
       - name: Record build provenance for every download
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -539,6 +548,7 @@ jobs:
             downloads/Branch-Agent-*.deb
             downloads/Branch-Agent-*.AppImage
             downloads/branch-agent-*.tgz
+            downloads/Branch-Agent-source-dependencies.cdx.json
       - name: Write the rehearsal's notes
         if: needs.release-gate.outputs.rehearsal == 'true'
         env:

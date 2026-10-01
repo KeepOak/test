@@ -1,6 +1,7 @@
 import { lstat } from "node:fs/promises";
 import type { Store } from "../store.js";
 import { scanClaudeCode } from "./claude-code.js";
+import { scanChatGPT } from "./chatgpt.js";
 import { scanCodex } from "./codex.js";
 import { placesFor, recognise, type ExtraName, type Place, type PlaceInput } from "./detect.js";
 import { scanHermes } from "./hermes.js";
@@ -16,7 +17,7 @@ import {
 export interface ScanInput { tree: SourceTree; extras: Partial<Record<ExtraName, SourceTree>> }
 
 const readers: Record<MoveInSource, (input: ScanInput) => Promise<ScanResult>> = {
-  "claude-code": scanClaudeCode, codex: scanCodex, hermes: scanHermes, openclaw: scanOpenClaw, opencode: scanOpenCode,
+  "claude-code": scanClaudeCode, codex: scanCodex, hermes: scanHermes, openclaw: scanOpenClaw, opencode: scanOpenCode, chatgpt: scanChatGPT,
 };
 
 export const scanSource = (source: MoveInSource, input: ScanInput): Promise<ScanResult> => readers[source](input);
@@ -57,6 +58,7 @@ export function offerSentence(sources: FoundSource[]): string | null {
 
 export interface PreviewItem {
   key: string; title: string; detail: string; origin: string;
+  provenance?: import("./types.js").ChatProvenance;
   blocked: boolean; alreadyMoved: boolean; needsKeys: string[];
 }
 export interface Preview {
@@ -72,6 +74,7 @@ export function previewOf(store: Store, owner: string, source: MoveInSource, fro
     kind, name: kindNames[kind],
     items: result.items.filter((item) => item.kind === kind).map((item) => ({
       key: item.key, title: item.title, detail: item.detail, origin: item.origin,
+      ...(item.provenance ? { provenance: item.provenance } : {}),
       blocked: item.blocked, alreadyMoved: item.key in record, needsKeys: item.needsKeys,
     })),
   })).filter((group) => group.items.length);
