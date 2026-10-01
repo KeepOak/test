@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { scrubSecrets, secretNameSchema, projectIdSchema, type Locker } from "./locker.js";
+import { scrubSecrets, secretNameSchema, projectIdSchema, type Locker, type LockerWrite } from "./locker.js";
 
 /**
  * One service in front of the secrets locker. Tools and settings pass a reference such as
@@ -109,10 +109,14 @@ export class Secrets {
       project TEXT NOT NULL, name TEXT NOT NULL, purpose TEXT NOT NULL, used_at TEXT NOT NULL)`);
   }
 
-  /** Saves a secret for the first time, or replaces one without counting it as a replacement. */
-  async put(owner: string, project: string, name: string, value: string, options: unknown = {}): Promise<SecretEntry> {
+  /**
+   * Saves a secret for the first time, or replaces one without counting it as a replacement. `write` makes it
+   * conditional or labels it (Locker.set: LockerConflict when the value held at the moment of writing is refused).
+   */
+  async put(owner: string, project: string, name: string, value: string, options: unknown = {},
+    write: LockerWrite = {}): Promise<SecretEntry> {
     const { expiresInDays } = SecretOptionsSchema.parse(options ?? {});
-    const saved = await this.locker.set(owner, project, name, value);
+    const saved = await this.locker.set(owner, project, name, value, write);
     this.writeMeta(owner, project, name, null, expiresInDays ? new Date(Date.now() + expiresInDays * dayMs).toISOString() : null);
     return this.entry(owner, project, name, saved.createdAt);
   }
@@ -125,6 +129,20 @@ export class Secrets {
     const saved = await this.locker.set(owner, project, name, value);
     this.writeMeta(owner, project, name, saved.createdAt, keepDays ? new Date(Date.now() + keepDays * dayMs).toISOString() : null);
     return this.entry(owner, project, name, saved.createdAt);
+  }
+  /**
+   * One secret's value with its origin label, read together (Locker.resolveWithOrigin), remembered by the scrubber and
+   * written to the audit as resolve does; null when there is no such secret.
+   */
+  async resolveWithOrigin(owner: string, project: string, name: string,
+    use: { runId?: string | undefined; purpose: string }): Promise<{ value: string; origin: string | null } | null> {
+    this.gate();
+    const held = await this.locker.resolveWithOrigin(owner, project, name);
+    if (!held) return null;
+    this.scrubber.remember(name, held.value);
+    this.db.prepare("INSERT INTO secret_use(owner,run_id,project,name,purpose,used_at) VALUES(?,?,?,?,?,?)")
+      .run(owner, use.runId ?? null, project, name, use.purpose.slice(0, 120), new Date().toISOString());
+    return held;
   }
   remove(owner: string, project: string, name: string): boolean {
     this.db.prepare("DELETE FROM secret_meta WHERE owner=? AND project=? AND name=?").run(owner, project, name);
