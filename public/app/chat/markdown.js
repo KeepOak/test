@@ -4,7 +4,9 @@
 import MarkdownIt from "../vendor/markdown-it-15.0.2/markdown-it.js";
 import { chartCard } from "./chart.js";
 import { diagramCard } from "./diagram.js";
+import { codeBlock } from "./code-block.js";
 import { cachedMarkdown } from "./markdown-cache.js";
+import "./table.js"; // UI-270: enhance safe rendered reply tables, without changing parser/cache output.
 
 /* markdown-it (Vitaly Puzrin/Alex Kocharin, MIT) is vendored with its notices. Parser configuration
    follows OpenClaw's Markdown parser approach (OpenClaw Foundation, MIT), adapted to Branch's cards. */
@@ -20,12 +22,12 @@ parser.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
   tokens[index].attrSet("rel", "noopener noreferrer");
   return linkOpen(tokens, index, options, env, renderer);
 };
-const codeFence = parser.renderer.rules.fence;
-parser.renderer.rules.fence = (tokens, index, options, env, renderer) => {
+parser.renderer.rules.fence = (tokens, index) => {
   const { content, info } = tokens[index], language = info.trim().split(/\s+/)[0].toLowerCase();
   if (language === "mermaid" && content.trim()) return diagramCard(content.trimEnd());
-  return (language === "chart" && chartCard(content)) || codeFence(tokens, index, options, env, renderer);
+  return (language === "chart" && chartCard(content)) || codeBlock(content, language);
 };
+parser.renderer.rules.code_block = (tokens, index) => codeBlock(tokens[index].content);
 
 /* One line of words with only the inline part (bold, italic, code, links), for a line that is not a whole answer. */
 export const inlineText = (words) => parser.renderInline(String(words ?? ""));

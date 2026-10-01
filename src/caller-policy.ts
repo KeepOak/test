@@ -66,6 +66,9 @@ export const personDoors: readonly Door[] = [
   door("POST", "/api/people/conversations"),
   door("GET", `/api/people/conversations/${idPattern}`),
   door("POST", `/api/people/conversations/${idPattern}/message`),
+  door("GET", "/api/people/rooms"),
+  door("GET", `/api/people/rooms/${idPattern}`),
+  door("POST", `/api/people/rooms/${idPattern}/message`),
 ];
 /** Where a set-up key (from the owner's one-time code) reaches: a new PIN or a passkey, then sign in again. */
 export const setupDoors: readonly Door[] = [

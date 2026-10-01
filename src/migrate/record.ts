@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
-import { MoveInSourceSchema, itemKinds, type ItemKind, type MoveInSource } from "./types.js";
+import { ChatProvenanceSchema, MoveInSourceSchema, itemKinds, type ItemKind, type MoveInSource } from "./types.js";
 
 /**
  * The record of what has already moved in, so nothing is brought over twice. There is one saved
@@ -8,6 +8,7 @@ import { MoveInSourceSchema, itemKinds, type ItemKind, type MoveInSource } from 
  * memory it describes: restoring a backup cannot bring the chats back while forgetting they came.
  */
 const EntrySchema = z.object({
+  provenance: ChatProvenanceSchema.optional(),
   kind: z.enum(itemKinds), title: z.string().max(200), target: z.string().max(200), at: z.iso.datetime(),
 }).strict();
 const RecordSchema = z.object({ entries: z.record(z.string().regex(/^[0-9a-f]{32}$/), EntrySchema) }).strict();
@@ -24,12 +25,13 @@ export function movedIn(store: Store, owner: string, source: MoveInSource): Reco
 /** Adds what was just brought over. The record never forgets an entry, so it refuses to grow past its cap. */
 export function rememberMoved(
   store: Store, owner: string, source: MoveInSource,
-  added: { key: string; kind: ItemKind; title: string; target: string }[],
+  added: { key: string; kind: ItemKind; title: string; target: string; provenance?: RecordEntry["provenance"] }[],
 ): void {
   if (!added.length) return;
   const entries = movedIn(store, owner, source), at = new Date().toISOString();
   for (const entry of added)
-    entries[entry.key] = { kind: entry.kind, title: entry.title.slice(0, 200), target: entry.target.slice(0, 200), at };
+    entries[entry.key] = { kind: entry.kind, title: entry.title.slice(0, 200), target: entry.target.slice(0, 200), at,
+      ...(entry.provenance ? { provenance: entry.provenance } : {}) };
   if (Object.keys(entries).length > maximumRecordEntries)
     throw new Error(`Branch keeps a record of at most ${maximumRecordEntries} things brought over from one assistant`);
   store.save("settings", owner, recordId(source), RecordSchema.parse({ entries }));

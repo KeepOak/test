@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { mkdtemp, readdir, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright"; // a real headless Chromium opens these pages (CI installs it for this file)
@@ -86,4 +86,79 @@ test("Ask each time: a no keeps nothing, and a broad allow rule never skips the 
   assert.equal((await f.approve({ sessionId: first.sessionId, decision: "deny", remember: "never", fingerprint: asked.fingerprint, carryOn: true })).status, 200);
   await new Promise((r) => setTimeout(r, 1500));
   assert.deepEqual(await f.downloads(), [], "a no keeps nothing");
+});
+
+/* A held file lasts an hour whether or not another download ever arrives: an hour-old one is refused and removed when
+   the owner answers, the hour runs out by itself, and closing Branch removes every file still waiting. A stand-in for
+   the page's download; no Chromium is needed for these. */
+function sent(name = "report.csv") {
+  return { suggestedFilename: () => name, url: () => "http://127.0.0.1:9/report.csv",
+    createReadStream: async () => (async function* () { yield Buffer.from("item,amount\nRent,1200\n"); })() };
+}
+async function holding(t) {
+  const root = await mkdtemp(join(tmpdir(), "branch-download-expiry-"));
+  const browser = new BranchBrowser({ allowedOrigins: ["http://127.0.0.1:9"] });
+  browser.heldFolder = join(root, "held");
+  browser.files = { checked: async (relative) => join(root, "workspace", relative) };
+  t.after(async () => { await browser.close(); await discardTemp(root); });
+  const context = { owner: "owner", runId: "run-1" };
+  const hold = async () => (await browser["holdDownload"](sent(), context)).held;
+  const waiting = async () => readdir(join(root, "held")).catch(() => []);
+  return { root, browser, context, hold, waiting };
+}
+
+test("Ask each time: a held file older than an hour is refused and removed when the owner answers", async (t) => {
+  const f = await holding(t);
+  const id = await f.hold();
+  assert.deepEqual(await f.waiting(), [id]);
+  f.browser["heldDownloads"].get(id).at -= 3_600_001;
+  assert.equal(f.browser.heldHost(id), "", "an expired file no longer names its site");
+  await assert.rejects(f.browser.keepDownload({ id, keep: true }, f.context), /No file with that id/);
+  assert.deepEqual(await readdir(join(f.root, "workspace", "downloads")).catch(() => []), [], "nothing reached the workspace");
+  assert.deepEqual(await f.waiting(), [], "the expired file was removed");
+});
+
+test("Ask each time: a held file is removed after an hour even when no other download arrives", async (t) => {
+  const f = await holding(t);
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+  const id = await f.hold();
+  t.mock.timers.tick(3_600_001);
+  t.mock.timers.reset();
+  const gone = async () => { for (let i = 0; i < 100; i++) { if (!(await f.waiting()).length) return true; await new Promise((r) => setTimeout(r, 20)); } return false; };
+  assert.ok(await gone(), "the hour ran out and the file was removed");
+  await assert.rejects(f.browser.keepDownload({ id, keep: true }, f.context), /No file with that id/);
+});
+
+test("Ask each time: closing Branch removes every held file, and nothing is held after that", async (t) => {
+  const f = await holding(t);
+  await f.hold(); await f.hold();
+  assert.equal((await f.waiting()).length, 2);
+  await f.browser.close();
+  assert.deepEqual(await f.waiting(), [], "no held file outlives the browser");
+  await assert.rejects(f.hold(), /closed|closing|shut/i, "a download arriving after close is not held");
+  assert.deepEqual(await f.waiting(), []);
+});
+
+test("Ask each time: a held file left behind by an earlier launch is removed once it is an hour old", async (t) => {
+  const f = await holding(t);
+  await mkdir(join(f.root, "held"), { recursive: true });
+  const stale = join(f.root, "held", "00000000-0000-4000-8000-000000000000"), fresh = join(f.root, "held", "11111111-1111-4111-8111-111111111111");
+  await writeFile(stale, "old"); await writeFile(fresh, "new");
+  const past = new Date(Date.now() - 3_600_001); await utimes(stale, past, past);
+  const id = await f.hold();
+  assert.deepEqual((await f.waiting()).sort(), [fresh.slice(-36), id].sort(), "only the hour-old leftover was removed");
+});
+
+test("Ask each time: a leftover younger than an hour at the first hold is removed later, once it reaches the hour", async (t) => {
+  const f = await holding(t);
+  await mkdir(join(f.root, "held"), { recursive: true });
+  const younger = join(f.root, "held", "22222222-2222-4222-8222-222222222222"), fresh = join(f.root, "held", "33333333-3333-4333-8333-333333333333");
+  await writeFile(younger, "old"); await writeFile(fresh, "new");
+  // Just short of an hour when this launch first holds a file; nobody holds anything after that.
+  const almost = new Date(Date.now() - 3_600_000 + 300); await utimes(younger, almost, almost);
+  const id = await f.hold();
+  assert.ok((await f.waiting()).includes(younger.slice(-36)), "not yet an hour old: left for now");
+  const gone = async () => { for (let i = 0; i < 100; i++) { if (!(await f.waiting()).includes(younger.slice(-36))) return true; await new Promise((r) => setTimeout(r, 50)); } return false; };
+  assert.ok(await gone(), "removed once it reached the hour, with no other download arriving");
+  assert.deepEqual((await f.waiting()).sort(), [fresh.slice(-36), id].sort(), "another launch's newer file and this launch's own are kept");
 });

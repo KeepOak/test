@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { projectIdSchema } from "../locker.js";
 import type { Store } from "../store.js";
 import type { Trunk, TrunkRecords } from "./record.js";
 import type { Room, TrunkRooms } from "./rooms.js";
@@ -20,7 +21,7 @@ import type { TrunkThreads } from "./threads.js"; // defaulttrunk
  * only ever narrows what a task may do: a Trunk's shape never adds a tool the owner's set lacks.
  */
 export const ConversationChoiceSchema = z.object({ trunkId: z.string().uuid().nullable() }).strict();
-export const ConversationStartSchema = z.object({ trunkId: z.string().uuid() }).strict();
+export const ConversationStartSchema = z.object({ trunkId: z.string().uuid(), project: projectIdSchema.optional() }).strict();
 export const ConversationRoomSchema = z.object({ trunkId: z.string().uuid() }).strict();
 
 export type ConversationKind = "plain" | "trunk" | "trunk-chat" | "room" | "member";
@@ -181,10 +182,12 @@ export class TrunkConversations {
   }
 
   /** A new conversation with a Trunk, before anything is said in it. */
-  start(input: unknown, open: (title: string) => string): { sessionId: string } {
-    const { trunkId } = ConversationStartSchema.parse(input);
+  start(input: unknown, open: (title: string, project?: string) => string): { sessionId: string } {
+    const { trunkId, project } = ConversationStartSchema.parse(input);
+    if (project && !this.deps.store.projects.list(this.deps.owner).some(candidate => candidate.id === project))
+      throw new Error("That project no longer exists. Start the conversation again.");
     const trunk = this.deps.records.get(trunkId);
-    const sessionId = open(`Talking to ${trunk.name}`);
+    const sessionId = open(`Talking to ${trunk.name}`, project);
     this.choose(sessionId, { trunkId });
     return { sessionId };
   }

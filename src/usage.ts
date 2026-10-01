@@ -49,7 +49,7 @@ interface RunCost {
 
 export interface TimelineEntry {
   timestamp: string;
-  type: "model.started" | "model.completed" | "tool.started" | "tool.completed" | "permission" | "retry" | "stall" | "delegation";
+  type: "model.started" | "model.completed" | "model.account" | "tool.started" | "tool.completed" | "permission" | "retry" | "stall" | "delegation";
   title: string;
   duration: number | undefined;
   result: "success" | "failed" | "timeout" | undefined;
@@ -269,6 +269,13 @@ export class UsageStore {
 
       if (event.kind === "model.started") {
         startTimes.set("model", event.created_at);
+      } else if (event.kind === "model.account") {
+        timeline.push({ timestamp: event.created_at, type: "model.account",
+          title: `Account: ${data.label || data.account || "unknown"} (${data.model || "unknown"})`,
+          duration: undefined, result: "success", inputClipped: undefined, outputClipped: undefined,
+          details: { pool: data.pool, account: data.account ?? null, label: data.label ?? null, model: data.model ?? null,
+            usage: data.usage ?? null, tokenBasis: data.tokenBasis ?? "unreported", accountBinding: data.accountBinding ?? "selected" },
+        });
       } else if (event.kind === "model.completed") {
         const start = startTimes.get("model");
         const duration = start
