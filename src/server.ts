@@ -1,5 +1,8 @@
 import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
 import { retiredPhoneWorker } from "./retired-phone-worker.js";
+
+import { historyIdeas } from "./history-ideas.js";
+import { currentTaskRun } from "./task-scope.js";
 import {
   createServer,
   type IncomingMessage,
@@ -4336,6 +4339,13 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           send(response, 200, screenControl({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
             locked: () => app.sessionLock.refusal("POST", path) }, app.desktop ?? null, path));
         } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
+        return;
+      }
+      if (request.method === "GET" && path === "/api/history-ideas") {
+        if (throughDoor(request) || currentPerson() || currentTaskRun() || startedWithShortLivedKey()
+          || !app.store.profiles.isOwner() || app.sessionLock.locked())
+          throw new HttpError(403, "Ideas requires the owner's unlocked local window.");
+        send(response, 200, historyIdeas(app.store, app.runtime.owner, (text) => app.runtime.hideSecrets(text)));
         return;
       }
       // ---- Wave mac3: the owner's dashboard (src/dashboard-api.ts). What this key may do is worked
