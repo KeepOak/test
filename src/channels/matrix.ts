@@ -491,6 +491,11 @@ export class MatrixAdapter implements ChannelAdapter {
     return { channel: this.id, chatId, chatKind: this.directRoom(roomId) ? "direct" : "group", chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
       text: value, addressed: true, messageId: handle(event.event_id ?? randomUUID(), "msg") };
   }
+  /** #588: a thread's routes fall back to its room's (src/channels/routes.ts); null for a room or a thread not read since connecting. */
+  routeParent(chatId: string): string | null {
+    const roomId = chatId.startsWith("thread:") ? this.rooms.get(chatId) : undefined;
+    return roomId ? handle(roomId, "room") : null;
+  }
   /** A thread is its own router conversation; room-only messages keep their existing address. */
   private chat(roomId: string, content?: Record<string, unknown>): string {
     const relation = z.object({ rel_type: z.literal("m.thread"), event_id: z.string().min(1).max(300) }).passthrough()

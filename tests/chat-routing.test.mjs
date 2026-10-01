@@ -5,6 +5,7 @@ import { parentScope, bindingFor, channelRoutes, ChannelRouteSchema } from "../d
 import { chatThread } from "../dist/channels/threads.js";
 import { startServer } from "../dist/server.js";
 import { SlackAdapter } from "../dist/channels/slack.js";
+import { MatrixAdapter } from "../dist/channels/matrix.js";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 let serial = 0;
@@ -98,6 +99,25 @@ test("a route on a room reaches the threads the chat app says belong to it", asy
   assert.equal(app.channels.chatTrunk("rooms", "thread:a"), ada.id);
   assert.equal(app.channels.chatTrunk("rooms", "thread:b"), bo.id);
   assert.equal(app.channels.chatTrunk("rooms", "other-room"), ada.id);
+});
+// Base gives each Matrix thread a chat id of its own; the adapter names the thread's room, so a room route covers it.
+test("a Matrix thread falls back to its room's route", async t => {
+  const { app, ada, bo, route } = await setup(t);
+  const matrix = new MatrixAdapter({ id: "matrix", homeserver: "https://m.example.org", userId: "@juniper:m.example.org", accessToken: "x" });
+  const read = (content) => matrix.inbound("!room:m", { type: "m.room.message", event_id: `$${Math.random()}`, sender: "@alice:m", content: { msgtype: "m.text", ...content } });
+  const room = read({ body: "hello" }).chatId;
+  const thread = read({ body: "in a thread", "m.relates_to": { rel_type: "m.thread", event_id: "$root" } }).chatId;
+  assert.match(thread, /^thread:/);
+  assert.equal(matrix.routeParent(thread), room);
+  assert.equal(matrix.routeParent(room), null);
+  assert.equal(matrix.routeParent("thread:never-read"), null);
+  const parent = matrix.routeParent(thread);
+  route(room, bo.id, "matrix");
+  assert.equal(bindingFor(app.store, app.runtime.owner, "matrix", thread, "matrix", parent), bo.id);
+  assert.equal(bindingFor(app.store, app.runtime.owner, "matrix", thread, "matrix"), null, "without the room named, only the thread's own route counts");
+  route(thread, "default", "matrix");
+  assert.equal(bindingFor(app.store, app.runtime.owner, "matrix", thread, "matrix", parent), null, "a thread's own default wins");
+  assert.ok(ada);
 });
 test("changing a route starts a fresh thread and retains its earlier conversation", async t => {
   const { app, bo, route, say } = await setup(t);
