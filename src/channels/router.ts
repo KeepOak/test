@@ -10,7 +10,8 @@ import { carryable } from "../carry-on.js"; // QA R1 follow-up
 /** One question a task is waiting on, as the runtime lists them. */
 type WaitingQuestion = ReturnType<Runtime["waitingApprovals"]>[number];
 import type { PolicyRemember } from "../policy.js";
-import { Deliveries } from "./deliveries.js";
+import { Deliveries, type DeliveryAuthority } from "./deliveries.js";
+import { watchHealthChanges } from "../health-changes.js";
 import { OwnMessagesSchema, OwnMessageSchema, type OwnMessageTarget } from "./message-actions.js";
 import { runOrigin, startedWithShortLivedKey } from "../key-context.js";
 import type { ToolContext } from "../contracts.js";
@@ -703,7 +704,7 @@ export class ChannelRouter {
   flush(): Promise<void> {
     return (this.flushing = this.flushing.then(async () => {
       for (const [id, { adapter }] of this.adapters)
-        await this.deliveries.flush(id, (chatId, text, replyTo) => adapter.send(chatId, text, replyTo))
+        await this.deliveries.flush(id, (chatId, text, replyTo, gate) => adapter.send(chatId, text, replyTo, undefined, gate))
           .catch((error: unknown) => diagnose("channels", "warn", `Messages waiting for ${adapter.kind} could not be sent: ${error instanceof Error ? error.message : String(error)}`)); // mac7/diagnostics
     }));
   }
@@ -794,18 +795,22 @@ export class ChannelRouter {
    * so a task finished while the channel was down is delivered once, in order, after reconnect.
    */
   async deliver(channel: string, chatId: string, text: string, key = `delivery:${Date.now()}:${randomInt(1e9)}`, replyTo?: string,
-    allowed?: () => boolean): Promise<{ messageId?: string | undefined; queued: number; sent: boolean }> {
-    // CHAT-190: "home" is the chat the owner chose with /sethome, read now, so moving home moves every result sent there.
-    const home = resolveHome(this.store, this.runtime.owner, channel, chatId);
-    if (!home) throw new Error(noHome);
-    ({ channel, chatId } = home);
-    const target = this.adapters.get(channel);
-    if (!target) throw new Error(`Channel ${channel} is not connected`);
-    const checked = await this.outboundGuard(text);
-    if (checked.blocked) throw new Error(checked.reason ?? "The message was held back before it was sent");
-    // `allowed` is checked again here, after the outgoing check, and goes with the message to its send (Deliveries.flush).
-    if (allowed && !allowed()) throw new Error("The chat may no longer be answered");
-    this.deliveries.enqueue(channel, chatId, checked.text, key, replyTo, target.adapter.maxTextLength, allowed);
+    authority?: DeliveryAuthority): Promise<{ messageId?: string | undefined; queued: number; sent: boolean }> {
+    let queued = false;
+    try {
+      // CHAT-190: "home" is the chat the owner chose with /sethome, read now, so moving home moves every result sent there.
+      const home = resolveHome(this.store, this.runtime.owner, channel, chatId);
+      if (!home) throw new Error(noHome);
+      ({ channel, chatId } = home);
+      const target = this.adapters.get(channel);
+      if (!target) throw new Error(`Channel ${channel} is not connected`);
+      const checked = await this.outboundGuard(text);
+      if (checked.blocked) throw new Error(checked.reason ?? "The message was held back before it was sent");
+      // An `authority` is checked again after the outgoing check, then goes with the message to the adapter's last step.
+      if (authority && !authority.allowed()) throw new Error("The chat may no longer be answered");
+      this.deliveries.enqueue(channel, chatId, checked.text, key, replyTo, target.adapter.maxTextLength, authority);
+      queued = true; // the queue owns the authority from here
+    } finally { if (!queued) authority?.release(); }
     await this.flush();
     const now = this.deliveries.list().filter((d) => d.key === key);
     const first = now.find((d) => d.seq === 0);
@@ -1249,18 +1254,37 @@ export class ChannelRouter {
     const remaining = { ...original, text: picked.remainder };
     // The owner may pause this chat app while a shortcut's answer is on its way: nothing more goes out then.
     const paused = () => !!(platformGate(this.store, this.runtime.owner, message) ?? homeGate(this.store, this.runtime.owner, message));
-    const allowed = (name: string) => !paused() && !this.appLocked() && this.senderAllowed(message.channel, message.senderId)
-      && !!this.commandIn({ ...message, text: `/${name}` });
+    const attached = this.adapters.get(message.channel);
+    const allowed = (name: string) => this.adapters.get(message.channel) === attached && !paused() && !this.appLocked()
+      && this.senderAllowed(message.channel, message.senderId) && !!this.commandIn({ ...message, text: `/${name}` });
     for (const name of picked.names) {
       if (!allowed(name)) return "ignored";
-      // The same check holds the answer at the queue and at the send, so a pause while it is on its way keeps it back.
-      if (await this.command(message, { name, argument: "" }, `inline-${name}`, () => allowed(name)) === "ignored") return "ignored";
+      // Each answer goes out under an authority taken now; the channel in its key keeps two apps' answers apart.
+      const authority = this.answerAuthority(message.channel, () => allowed(name));
+      if (await this.command(message, { name, argument: "" }, `inline-${name}:${message.channel}`, authority) === "ignored") return "ignored";
     }
     if (!remaining.text.trim()) return "replied";
     if (paused() || this.appLocked() || !this.senderAllowed(message.channel, message.senderId)) return "ignored";
     // A remainder such as "yes", "/stop" or a saved alias is task prose, never another control path.
     const current = this.turns.get(chatKey(message));
     return current ? this.joinTurn(current, remaining) : this.startTurn([remaining]);
+  }
+  /**
+   * CHAT-210: the authority one shortcut answer goes out under. Any revocation after it is taken is final, even one undone
+   * before the next look: settings changes (pause, the sender list, pairing, the chat switches) are checked as they are
+   * written, and the App lock, Lockdown, a profile switch or a disconnect abort it through stopMessageSends. It is per
+   * answer, so one chat app's pause never refuses another's.
+   */
+  private answerAuthority(channel: string, current: () => boolean): DeliveryAuthority {
+    const sending = new AbortController();
+    this.messageSends.set(sending, channel);
+    const revoke = () => { if (!sending.signal.aborted && !current()) sending.abort(new Error("The chat may no longer be answered")); };
+    const unwatch = this.store.sqlite
+      ? watchHealthChanges(this.store.sqlite, (change) => { if (change.kind === "setting" && change.owner === this.runtime.owner) revoke(); })
+      : () => undefined;
+    const allowed = () => { revoke(); return !sending.signal.aborted; };
+    return { allowed, gate: { signal: sending.signal, check: () => { if (!allowed()) throw sending.signal.reason; } },
+      release: () => { unwatch(); this.messageSends.delete(sending); } };
   }
   /**
    * The answer to /start: who is answering, where, and how to talk to it, in one short message. Hermes Agent takes
@@ -1484,7 +1508,7 @@ export class ChannelRouter {
     await say(adapter?.sendButtons ? now.words : `${now.words} Send /update install to install it now.`);
     return "replied";
   }
-  private async command(message: InboundMessage, command: ChatCommand, deliveryKind = "command", allowed?: () => boolean): Promise<Outcome> {
+  private async command(message: InboundMessage, command: ChatCommand, deliveryKind = "command", authority?: DeliveryAuthority): Promise<Outcome> {
     const { channel, chatId } = message;
     if (command.name === "update") return this.updateCommand(message, command.argument);
     // A chat's steps level lasts beyond the conversation and can show more (files, commands), so, as /session and
@@ -1551,12 +1575,12 @@ export class ChannelRouter {
     });
     let reply: string;
     try { reply = asks ? await this.withSlot(work) : await work(); }
+    catch (error) { authority?.release(); throw error; }
     finally { if (named) this.trunkCommands.delete(chatKey(message)); }
-    // An answer the check held back was not given, so it is not reported as one.
-    let refused = false;
-    const gate = allowed && (() => { if (allowed()) return true; refused = true; return false; });
-    await this.deliver(channel, chatId, reply, `${deliveryKind}:${chatId}:${message.messageId}`, this.quoteFor(message), gate).catch(() => undefined);
-    return refused ? "ignored" : "replied";
+    const delivered = await this.deliver(channel, chatId, reply, `${deliveryKind}:${chatId}:${message.messageId}`, this.quoteFor(message), authority)
+      .then(() => true, () => false);
+    // An answer its authority held back was not given, so it is not reported as one.
+    return delivered || !authority || authority.allowed() ? "replied" : "ignored";
   }
   /** What the owner-DM commands can reach: the whole app's command host, set by createBranch. Without it they are not read. */
   ownerDmHost: (() => CommandHost) | null = null;

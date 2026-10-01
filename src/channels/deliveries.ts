@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Store } from "../store.js";
 import type { WebhookNotifier } from "../webhooks.js";
 import type { FeatureSwitch } from "./chat-live-settings.js";
+import type { SendGate } from "./router.js";
 
 /**
  * The delivery ledger: every outbound channel message is written down before it is sent, split
@@ -32,9 +33,15 @@ export const DeliverySchema = z.object({
   gated: z.boolean().optional(),
 }).strict();
 export type Delivery = z.infer<typeof DeliverySchema> & { id: string; createdAt: string; updatedAt: string };
-export type Sender = (chatId: string, text: string, replyTo?: string) => Promise<string | undefined>;
+export type Sender = (chatId: string, text: string, replyTo?: string, gate?: SendGate) => Promise<string | undefined>;
+/**
+ * CHAT-210: what a gated message (an inline shortcut's answer) is sent under. `allowed` is false for good once revoked;
+ * `gate` goes to the adapter, which checks it at its last step; `release` ends the watch once the message is settled.
+ */
+export interface DeliveryAuthority { allowed(): boolean; gate: SendGate; release(): void }
 
 export const chunkLimit = 3500;
+const gateKey = (channel: string, key: string) => `${channel}\u0000${key}`;
 export const maxAttempts = 5;
 const keepSentDays = 7;
 
@@ -130,8 +137,8 @@ export function backoffMs(attempts: number): number {
 
 export class Deliveries {
   private next: number | undefined;
-  /** The live check for each gated message, by key. Kept in memory only, so a gated row never outlives the process. */
-  private readonly gates = new Map<string, () => boolean>();
+  /** Each gated message's authority, by chat app and key. Memory only, so a gated row is never sent after a restart. */
+  private readonly gates = new Map<string, DeliveryAuthority>();
   /** Announces a given-up chunk to outbound webhooks; a no-op until `createBranch` connects them. */
   notifyEvent: WebhookNotifier = () => undefined;
   /**
@@ -147,18 +154,24 @@ export class Deliveries {
     return this.next++;
   }
   /** Records the chunks of one message; a key seen before is not queued again. */
-  enqueue(channel: string, chatId: string, text: string, key: string, replyTo?: string, limit?: number, allowed?: () => boolean): Delivery[] {
-    if (allowed) this.gates.set(key, allowed);
+  enqueue(channel: string, chatId: string, text: string, key: string, replyTo?: string, limit?: number, authority?: DeliveryAuthority): Delivery[] {
     const chunks = chunkText(text, Math.min(limit ?? chunkLimit, chunkLimit), this.splitting());
     const rows: Delivery[] = [];
     const held = this.holdUntil(this.now());
+    let created = false;
     for (const [seq, chunk] of chunks.entries()) {
       const id = `${key}#${seq}`;
       const existing = this.get(id);
       if (existing) { rows.push(existing); continue; }
       const data = DeliverySchema.parse({ key, channel, chatId, seq, order: this.nextOrder(), text: chunk, replyTo: seq === 0 ? replyTo ?? null : null,
-        status: "pending", attempts: 0, nextAt: held ?? this.now().toISOString(), ...(allowed ? { gated: true } : {}) });
+        status: "pending", attempts: 0, nextAt: held ?? this.now().toISOString(), ...(authority ? { gated: true } : {}) });
       rows.push(this.save(id, data));
+      created = true;
+    }
+    // A message already queued keeps the authority it was queued under: a repeat never re-authorizes it.
+    if (authority) {
+      if (created && !this.gates.has(gateKey(channel, key))) this.gates.set(gateKey(channel, key), authority);
+      else authority.release();
     }
     return rows;
   }
@@ -176,24 +189,27 @@ export class Deliveries {
       rows.sort((a, b) => a.order - b.order);
       if (rows[0]!.nextAt > due) continue;
       for (const row of rows) {
-        // Checked right before sending: an answer whoever asked may no longer have is held back, not sent late.
-        if (row.gated && !this.gates.get(row.key)?.()) {
-          this.save(row.id, { ...this.data(row), status: "dead", lastError: "Held back: the chat may no longer be answered" });
-          continue;
-        }
-        const outcome = await this.attempt(row, send);
+        // Checked right before sending, and handed to the adapter for its own last step: a revoked answer is never sent late.
+        const authority = row.gated ? this.gates.get(gateKey(row.channel, row.key)) : undefined;
+        if (row.gated && !authority?.allowed()) { this.withhold(row); continue; }
+        const outcome = await this.attempt(row, send, authority?.gate);
+        if (outcome !== "sent" && authority && !authority.allowed()) { this.withhold(row); continue; }
         totals[outcome]++;
         if (outcome !== "sent") break;
       }
     }
     this.prune();
-    const waiting = new Set(this.list().filter((d) => d.status === "pending").map((d) => d.key));
-    for (const key of [...this.gates.keys()]) if (!waiting.has(key)) this.gates.delete(key);
+    const waiting = new Set(this.list().filter((d) => d.status === "pending").map((d) => gateKey(d.channel, d.key)));
+    for (const [key, authority] of this.gates) if (!waiting.has(key)) { authority.release(); this.gates.delete(key); }
     return totals;
   }
-  private async attempt(row: Delivery, send: Sender): Promise<"sent" | "failed" | "dead"> {
+  /** A gated message whose authority is gone stays unsent, as a dead letter with the reason and no failure webhook. */
+  private withhold(row: Delivery): void {
+    this.save(row.id, { ...this.data(this.get(row.id) ?? row), status: "dead", lastError: "Held back: the chat may no longer be answered" });
+  }
+  private async attempt(row: Delivery, send: Sender, gate?: SendGate): Promise<"sent" | "failed" | "dead"> {
     try {
-      const messageId = await send(row.chatId, row.text, row.replyTo ?? undefined);
+      const messageId = await send(row.chatId, row.text, row.replyTo ?? undefined, gate);
       this.save(row.id, { ...this.data(row), status: "sent", messageId: messageId ?? null, sentAt: this.now().toISOString(), lastError: null });
       return "sent";
     } catch (error) {
