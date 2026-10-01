@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
@@ -40,20 +40,32 @@ export class FileLockerKey implements LockerKeySource {
 
 /** A conditional write found the secret no longer the one it was meant to replace, and wrote nothing. */
 export class LockerConflict extends Error {}
+/**
+ * A conditional or labelled write. `expect` is asked about the value held at the moment of writing (null when none);
+ * `origin` is a short label kept beside the value (in its own table, so the value itself keeps its old form).
+ */
+export interface LockerWrite { expect?: ((current: string | null) => boolean) | undefined; origin?: string | undefined }
+/* Which stored value an origin label was written with: a value written later without one (an older Branch after a
+   rollback, say) no longer matches, and its label is not read. */
+const sealOf = (row: Record<string, unknown>): string => createHash("sha256")
+  .update(Buffer.concat([row.iv as Buffer, row.tag as Buffer, row.ciphertext as Buffer])).digest("hex");
 
 export class Locker {
   constructor(private readonly db: DatabaseSync, private readonly keys: LockerKeySource) {
     db.exec(`CREATE TABLE IF NOT EXISTS locker(owner TEXT NOT NULL, project TEXT NOT NULL, name TEXT NOT NULL,
       iv BLOB NOT NULL, tag BLOB NOT NULL, ciphertext BLOB NOT NULL, created_at TEXT NOT NULL,
-      PRIMARY KEY(owner,project,name))`);
+      PRIMARY KEY(owner,project,name));
+      CREATE TABLE IF NOT EXISTS locker_origin(owner TEXT NOT NULL, project TEXT NOT NULL, name TEXT NOT NULL,
+      origin TEXT NOT NULL, sealed TEXT NOT NULL, PRIMARY KEY(owner,project,name))`);
   }
   /**
    * Saves a value. With `expect`, the write happens only if `expect` accepts the value held at that moment (null when
    * none): it is asked after the key is read, in the same step as the write, so nothing can change the secret between
-   * the two; otherwise LockerConflict and nothing is written.
+   * the two; otherwise LockerConflict and nothing is written. `origin` is kept beside the value in that same step; a
+   * write without one leaves the value with none.
    */
   async set(owner: string, project: string, name: string, value: string,
-    expect?: (current: string | null) => boolean): Promise<{ project: string; name: string; createdAt: string }> {
+    { expect, origin }: LockerWrite = {}): Promise<{ project: string; name: string; createdAt: string }> {
     projectIdSchema.parse(project); secretNameSchema.parse(name); valueSchema.parse(value);
     if (this.names(owner, project).length >= 64 && !this.exists(owner, project, name)) throw new Error("At most 64 secrets per project");
     const key = await this.keys.key(), iv = randomBytes(12), cipher = createCipheriv("aes-256-gcm", key, iv);
@@ -64,6 +76,9 @@ export class Locker {
     this.db.prepare(`INSERT INTO locker VALUES(?,?,?,?,?,?,?) ON CONFLICT(owner,project,name)
       DO UPDATE SET iv=excluded.iv,tag=excluded.tag,ciphertext=excluded.ciphertext,created_at=excluded.created_at`)
       .run(owner, project, name, iv, tag, ciphertext, createdAt);
+    if (origin === undefined) this.db.prepare("DELETE FROM locker_origin WHERE owner=? AND project=? AND name=?").run(owner, project, name);
+    else this.db.prepare(`INSERT INTO locker_origin VALUES(?,?,?,?,?) ON CONFLICT(owner,project,name)
+      DO UPDATE SET origin=excluded.origin,sealed=excluded.sealed`).run(owner, project, name, origin, sealOf({ iv, tag, ciphertext }));
     healthChanged(this.db, { kind: "credential", owner, project, id: name });
     return { project, name, createdAt };
   }
@@ -74,12 +89,20 @@ export class Locker {
   exists(owner: string, project: string, name: string): boolean {
     return !!this.db.prepare("SELECT 1 AS found FROM locker WHERE owner=? AND project=? AND name=?").get(owner, project, name);
   }
+  /** The origin label written with the value held now, or null when it has none (or it was written without one since). */
+  origin(owner: string, project: string, name: string): string | null {
+    const row = this.db.prepare("SELECT iv,tag,ciphertext FROM locker WHERE owner=? AND project=? AND name=?").get(owner, project, name);
+    const label = this.db.prepare("SELECT origin,sealed FROM locker_origin WHERE owner=? AND project=? AND name=?").get(owner, project, name);
+    return row && label && label.sealed === sealOf(row) ? String(label.origin) : null;
+  }
   remove(owner: string, project: string, name: string): boolean {
+    this.db.prepare("DELETE FROM locker_origin WHERE owner=? AND project=? AND name=?").run(owner, project, name);
     const removed = this.db.prepare("DELETE FROM locker WHERE owner=? AND project=? AND name=?").run(owner, project, name).changes > 0;
     if (removed) healthChanged(this.db, { kind: "credential", owner, project, id: name });
     return removed;
   }
   removeProject(owner: string, project: string): number {
+    this.db.prepare("DELETE FROM locker_origin WHERE owner=? AND project=?").run(owner, project);
     const removed = Number(this.db.prepare("DELETE FROM locker WHERE owner=? AND project=?").run(owner, project).changes);
     if (removed) healthChanged(this.db, { kind: "credential", owner, project, id: "*" });
     return removed;

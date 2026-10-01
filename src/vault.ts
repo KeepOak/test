@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { scrubSecrets, secretNameSchema, projectIdSchema, type Locker } from "./locker.js";
+import { scrubSecrets, secretNameSchema, projectIdSchema, type Locker, type LockerWrite } from "./locker.js";
 
 /**
  * One service in front of the secrets locker. Tools and settings pass a reference such as
@@ -110,13 +110,13 @@ export class Secrets {
   }
 
   /**
-   * Saves a secret for the first time, or replaces one without counting it as a replacement. With `expect`, only while
-   * the value held at the moment of writing is one it accepts (Locker.set; LockerConflict otherwise).
+   * Saves a secret for the first time, or replaces one without counting it as a replacement. `write` makes it
+   * conditional or labels it (Locker.set: LockerConflict when the value held at the moment of writing is refused).
    */
   async put(owner: string, project: string, name: string, value: string, options: unknown = {},
-    expect?: (current: string | null) => boolean): Promise<SecretEntry> {
+    write: LockerWrite = {}): Promise<SecretEntry> {
     const { expiresInDays } = SecretOptionsSchema.parse(options ?? {});
-    const saved = await this.locker.set(owner, project, name, value, expect);
+    const saved = await this.locker.set(owner, project, name, value, write);
     this.writeMeta(owner, project, name, null, expiresInDays ? new Date(Date.now() + expiresInDays * dayMs).toISOString() : null);
     return this.entry(owner, project, name, saved.createdAt);
   }
@@ -129,6 +129,10 @@ export class Secrets {
     const saved = await this.locker.set(owner, project, name, value);
     this.writeMeta(owner, project, name, saved.createdAt, keepDays ? new Date(Date.now() + keepDays * dayMs).toISOString() : null);
     return this.entry(owner, project, name, saved.createdAt);
+  }
+  /** The origin label kept with a secret's current value (Locker.origin), or null. */
+  origin(owner: string, project: string, name: string): string | null {
+    return this.locker.origin(owner, project, name);
   }
   remove(owner: string, project: string, name: string): boolean {
     this.db.prepare("DELETE FROM secret_meta WHERE owner=? AND project=? AND name=?").run(owner, project, name);
