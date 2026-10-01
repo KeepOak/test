@@ -9020,6 +9020,8 @@
   "window.rooms.drop.with": "Abrir una sala con {name}",
   "window.rooms.talk.everyone": "Todos responden",
   "window.rooms.talk.only": "Solo {name}",
+  "window.schedule-gateway.unknown": "No se pudo confirmar la supervisión de la puerta de enlace para estas tareas programadas.",
+  "window.schedule-gateway.unwatched": "Las tareas programadas dependen de que este motor siga funcionando. Este motor no se ejecuta a través de la puerta de enlace.",
   "window.sessions.showOlder": "Mostrar conversaciones anteriores",
   "window.settings.accounts.accounts-signed-in": "cuentas con sesión iniciada",
   "window.settings.accounts.add-an-account": "Añadir una cuenta",
