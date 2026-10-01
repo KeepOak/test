@@ -4,7 +4,7 @@
    engine's delight switches (shell/scene.js). The painted scene, its season and where the pet walks are this window's.
    Your own background's file stays in this window's storage (shell/ownbg.js); the engine keeps how it fits. */
 
-import { E, S, refresh, ownName as chatName } from "../../core/state.js";
+import { E, S, refresh, ownName as chatName, ownerHere, activeId } from "../../core/state.js";
 import { esc, renderNow } from "../../core/dom.js";
 import { on } from "../../core/actions.js";
 import { ic, toast, openDlg, closeDlg } from "../../core/ui.js";
@@ -96,7 +96,8 @@ function petSection() {
   const cards = all.map(([v, l]) => petCard(v, l, kind)).join("");
   const where = pets?.on ? segAct(t("window.settings.appearance.where-it-walks"), t("window.settings.appearance.it-keeps-out-of-the-way"), [["side", t("window.settings.appearance.the-list")], ["status", t("window.settings.appearance.status-bar")], ["dock", t("window.settings.appearance.by-the-message-box")]], W.petWhere, "petwhere15") : "";
   const name = pets ? `<div class="ctl"><b>${t("accounts.field.name")}</b><span class="right"><input class="inp" id="pet-name" value="${esc(pets.name ?? "")}" aria-label="${t("window.settings.appearance.pet-name")}" maxlength="20" data-sw="set" data-css="width:140px"></span><small>${t("window.settings.appearance.pat-it-for-a-tip")}</small></div>` : "";
-  return `<div class="sec"><h2>${t("window.settings.appearance.the-pet")}</h2><div class="pets12">${cards}</div>${row}${where}${name}</div>`;
+  const style = ownerHere() ? segAct(t("window.settings.appearance.style-title"), t("window.settings.appearance.style-note"), [["pixel", t("window.settings.appearance.style-pixel")], ["3d", t("window.settings.appearance.style-3d")]], D.settings?.look?.style ?? "pixel", "visual-style") : "";
+  return `<div class="sec"><h2>${t("window.settings.appearance.the-pet")}</h2>${style}<div class="pets12">${cards}</div>${row}${where}${name}</div>`;
 }
 
 /* Each switch names a part of the window the engine keeps in preferences.hidden. */
@@ -191,6 +192,12 @@ export function init() {
   });
   on("bg-peek", () => document.getElementById("app").classList.add("peek"));
   on("petset", async (el) => { await pickPet(el.dataset.v); renderNow(); });
+  on("visual-style", async el => {
+    if (!ownerHere() || !S.signedIn || document.getElementById("app")?.classList.contains("locked-b17") || !["pixel", "3d"].includes(el.dataset.v)) return;
+    const who = activeId();
+    await saveDelight({ look: { style: el.dataset.v } });
+    if (who === activeId() && ownerHere() && !document.getElementById("app")?.classList.contains("locked-b17")) renderNow();
+  });
   on("petwhere15", (el) => { W.petWhere = el.dataset.v; saveWindow(); renderNow(); });
   on("ag-size", (el) => { saveUi({ size: el.dataset.v }); renderNow(); });
   document.addEventListener("change", (e) => {
@@ -238,6 +245,7 @@ export const live = {
   "size": true,
   "bgset": true,
   "petset": true,
+  "visual-style": true,
   "scene-set": true,
   "season": true,
   "bg-peek": true,

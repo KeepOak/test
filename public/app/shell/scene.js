@@ -6,12 +6,13 @@
    counts them when achievements are on). */
 
 import { $, esc, render } from "../core/dom.js";
-import { E, S, ownerHere, ownName } from "../core/state.js";
+import { E, S, ownerHere, ownName, activeId } from "../core/state.js";
 import { api } from "../core/api.js";
 import { toast } from "../core/ui.js";
 import { effMode } from "./look.js";
 import { OWN, loadOwn } from "./ownbg.js";
 import { media17 } from "../core/art17.js";
+import { voxelPet, drawVoxel, setVisualStyle } from "../core/voxel-models.js";
 import { PETS, petOf, petLabel, petKindName, pixelCanvas, paintPixels, stepWhile } from "../core/pets.js";
 import { t } from "../../i18n.js";
 import { windowRest, onRest } from "../core/sleep.js";
@@ -63,6 +64,7 @@ export async function loadDelight() {
   seenState = E.state;
   loadWindow();
   try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; D.rank = d.rank ?? null; } catch (error) { toast(error.message); }
+  setVisualStyle(D.settings?.look?.style);
   try { await loadOwn(); } catch (error) { toast(error.message); }
 }
 /* Read again after each refresh (the engine's events refresh the window), so a switch changed elsewhere, such as in
@@ -77,11 +79,18 @@ export function followDelight() {
 async function rereadDelight() {
   const before = JSON.stringify(D.settings);
   try { const d = await api("delight"); D.settings = d.settings ?? null; D.earned = d.earned ?? null; D.rank = d.rank ?? null; } catch (error) { toast(error.message); }
+  setVisualStyle(D.settings?.look?.style);
   if (JSON.stringify(D.settings) !== before) render();
 }
 /* Changes only the parts named; the engine merges each part into what it has. */
 export async function saveDelight(part) {
-  try { D.settings = (await api("delight/settings", part)).settings; } catch (error) { toast(error.message); }
+  const who = activeId(), owner = ownerHere();
+  try {
+    const got = await api("delight/settings", part);
+    if (who !== activeId() || owner !== ownerHere() || !S.signedIn || $("#app")?.classList.contains("locked-b17")) return;
+    D.settings = got.settings;
+  } catch (error) { toast(error.message); }
+  setVisualStyle(D.settings?.look?.style);
 }
 
 /* A painted scene picked (Settings › Appearance, setup's Make it yours): this window keeps which one, and the engine's
@@ -109,7 +118,7 @@ export function sceneCards(act, isOn, mark = (v) => (NEW_SCENES17.has(v) ? " new
 export const petNow = () => (D.settings?.pets?.on ? petOf(D.settings.pets.kind)?.kind ?? "none" : "none");
 export function petCard(v, l, kind, act = "petset") {
   const p = petOf(v);
-  const face = !p ? `<span class="pet-px12">—</span>` : p.pixel ? pixelCanvas(p.kind, 'class="pet-pxc12" aria-hidden="true"')
+  const face = !p ? `<span class="pet-px12">—</span>` : p.pixel ? (D.settings?.look?.style === "3d" ? voxelPet(p.kind, 'class="pet-pxc12" aria-hidden="true"') : pixelCanvas(p.kind, 'class="pet-pxc12" aria-hidden="true"'))
     : `<img src="${p.still}" alt="" loading="lazy" draggable="false" data-hov="${p.walk}">`;
   return `<button type="button" class="pet-c12${p?.isNew ? " new17e" : ""}" data-act="${act}" data-v="${esc(v)}" aria-pressed="${kind === v}">${face}<b>${esc(l)}</b></button>`;
 }
@@ -161,7 +170,13 @@ export function drawBackground() {
   if (key === layerKey) return;
   layerKey = key;
   stopDrawn();
-  if (drawn) { layer.innerHTML = ""; drawDrawn(layer, bgChoice(), { season: seasonNow(), dark: effMode() === "dark", still: calm() }); layer.insertAdjacentHTML("beforeend", '<div class="bg-scrim"></div>'); return; }
+  if (drawn) {
+    layer.innerHTML = "";
+    const canvas = bgChoice() === "oak3d" ? Object.assign(document.createElement("canvas"), { width:512, height:512, className:"voxel-oak" }) : null;
+    if (canvas) layer.append(canvas);
+    if (!canvas || !drawVoxel(canvas, "oak")) { canvas?.remove(); drawDrawn(layer, bgChoice(), { season: seasonNow(), dark: effMode() === "dark", still: calm() }); }
+    layer.insertAdjacentHTML("beforeend", '<div class="bg-scrim"></div>'); return;
+  }
   if (own) { layer.innerHTML = '<div class="bg-scrim"></div>'; drawOwn(layer, fit); return; }
   layer.innerHTML = `<div class="paint11 ${calm() ? "" : "drift11"}"></div><div class="bg-scrim"></div>`;
   layer.firstElementChild.style.backgroundImage = `url("${paintFile()}")`;
@@ -205,7 +220,7 @@ export function petHTML(where) {
   const tips = hintDue({ ...facts(), lastHint: 0 }); // "Click for a tip" only while this rank still gets them
   const label = esc(t(tips ? "window.shell.scene.name-the-kind-click-for-a" : "window.shell.scene.name-the-kind", { name: p.name, kind: petKindName(p.kind).toLowerCase() }));
   const button = `role="button" tabindex="0" aria-label="${label}" data-act="pat"`;
-  const body = pet.pixel ? pixelCanvas(pet.kind, `id="pet-cv" ${button}`)
+  const body = pet.pixel ? (D.settings?.look?.style === "3d" ? voxelPet(pet.kind, `id="pet-cv" ${button}`) : pixelCanvas(pet.kind, `id="pet-cv" ${button}`))
     : `<span class="pet17" ${button}>${media17(pet.still, pet.walk, "pet-vid11 pet12")}</span>`;
   /* Where it has walked to, which way it faces and what it is doing are put on the drawn box by placePet() and
      applyMood(), not written into the markup, so a step does not make the sidebar's markup differ (it is drawn again only
