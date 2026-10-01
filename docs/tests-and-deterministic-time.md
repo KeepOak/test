@@ -46,7 +46,7 @@ reused, and the push run still ends green, so promote and the Beta updater (`new
 for a release tag or by hand (`package.yml`, `mobile.yml`), and release publication still requires the exact
 commit's `Checks` success.
 
-At most `prSlots` (4) pull-request runs (`tests/test-impact.json`) hold runners at once, oldest first
+At most `prSlots` (3) pull-request runs (`tests/test-impact.json`) hold runners at once, oldest first
 (`scripts/ci-queue.mjs`). Every unfinished pull-request run holds a slot: an admitted run whose shares all wait for
 runners reports `queued`, not `in_progress`, and counting only `in_progress` runs let about 29 runs in at once on
 2026-09-29. A run asking for a slot counts only the unfinished runs that started before it, so runs that plan at the
@@ -58,15 +58,18 @@ Pushes are never held. Only a rerun the queue itself started goes straight to it
 (the Rerun button, or rerunning failed jobs) waits in line like any run. Label a pull request `ci-priority` to put
 it at the front of the line. Do not rerun a cancelled run by hand: the queue does it.
 
-How 4 slots and 4 shares were sized (2026-10-01): this is modeled admitted work against a cap of 180 concurrent jobs.
-That 180 is the owner's reading of the organization's enterprise settings page. It was not measured by us, and our
-token cannot read that setting. A pull-request run with 4 Linux shares is about 10 Checks jobs (plan, local voice,
-4 Linux, 2 Windows, 1 macOS, verify-suite), and CodeQL default setup adds 6 more for the same pull request, one of them
-a macOS Swift job: about 16 jobs, 2 of them macOS. The merge queue builds at most 5 groups at once
-(`max_entries_to_build` in the ruleset), about 20 jobs and 2 macOS each. So 4 pull-request runs × 16 = 64 jobs
-(8 macOS) plus 5 groups × 20 = 100 (10 macOS) is about 164 admitted jobs. CodeQL for pull requests still waiting for a
-slot, pushes, the nightly run and unrelated workflows are not counted, so the difference is no guaranteed reserve; jobs
-past the limit wait in GitHub's queue rather than fail. Revisit these numbers if the owner reports a higher cap.
+How 3 slots and 4 shares were sized (2026-10-01): this is modeled admitted work against a cap of 180 concurrent jobs.
+That 180 is the owner's reading of the organization's enterprise settings page; it was not measured by us, and our
+token cannot read that setting. The model counts every admitted pull request at the full matrix, whatever its plan: a
+pull request labelled `ci-full` or into a base other than `redesign/window` runs all 8 Linux shares, because
+`prLinuxShards` caps only a light plan. A full pull-request run is about 14 Checks jobs (plan, local voice, 8 Linux,
+2 Windows, 1 macOS, verify-suite), and CodeQL default setup adds 6 more for the same pull request, one of them a macOS
+Swift job: about 20 jobs, 2 of them macOS. A merge-queue group is the same 14 Checks jobs (with the stale-group check in
+place of plan) and the same 6 CodeQL jobs, and the merge queue builds at most 5 groups at once (`max_entries_to_build`
+in the ruleset). So 3 pull-request runs × 20 = 60 jobs (6 macOS) plus 5 groups × 20 = 100 (10 macOS) is about 160
+admitted jobs. That is close to the cap with no reserve: CodeQL for pull requests still waiting for a slot, pushes, the
+nightly run and unrelated workflows are not counted and can push the total over 180, in which case the jobs past the
+limit wait in GitHub's queue rather than fail. Revisit these numbers when the owner confirms a higher limit.
 
 Shared hosted-runner queue time is not controlled by repository code. Never run fork pull-request code on a personal
 NAS or runner with vault, LAN, or signing-secret access.
