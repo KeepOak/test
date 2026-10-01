@@ -28,6 +28,7 @@ import { reason } from "../core/why.js";
 import { pill17, btn17 } from "./parts17.js";
 import { onDemo17, demoPlace17, demoDlg17 } from "./demo17.js";
 import { t, language } from "../../i18n.js";
+import { openPriceWatches, initPriceWatches } from "../flows/price-watch.js";
 
 const A = { orders: [], loops: [], paused: null, pauseKnown: false, pauseError: "" };
 
@@ -134,10 +135,8 @@ function registerDemos() {
     demoDlg17("ledger", { title: t("window.places.automations17.ready-to-run-alone"), lead: t("window.places.automations17.the-ledger-lists-every-choice-an"), rows: entries.map((e) => [e.title, e.detail, ["idle", e.status]]) });
   } });
   onDemo17("holidays", { open: () => openHolidays(), go: () => addDayOff() });
-  onDemo17("watches", { open: async () => {
-    const { monitors } = await api("monitors");
-    demoDlg17("watches", { title: t("window.places.automations17.watches"), lead: t("window.places.automations17.what-your-trunks-are-watching"), go: t("window.places.automations17.add-a-watch"), rows: monitors.map((m) => [m.label || m.target, m.target, ["ok", t("window.places.automations17.watching")]]) });
-  } });
+  initPriceWatches();
+  onDemo17("watches", { open: () => openPriceWatches() });
   onDemo17("leads", { open: async () => {
     const { top } = await api("asks/leads");
     shown.leads = top;

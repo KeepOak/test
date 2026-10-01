@@ -230,33 +230,40 @@ export function loudness(sound: Uint8Array): number {
 }
 
 /**
- * How quiet this room is when nobody is speaking, learned from the first second of it and then left
- * alone. Speech is what is clearly above that floor; anything else is the room, and the room does
- * not keep a microphone open.
+ * Four-state hysteresis ported from Pipecat vad_analyzer.py at 20999cd7b816
+ * (Copyright 2024-2026 Daily, BSD-2-Clause; THIRD_PARTY_NOTICES.md). The existing
+ * energy detector remains local; only quiet frames adapt its floor, so speech on
+ * the first frame is never learned as ambient noise. No neural VAD is downloaded.
  */
 export class RoomFloor {
-  private readonly heard: number[] = [];
-  private floor: number | null = null;
-  /** How many pieces make up the first second listened to before anything counts as speech. */
-  static readonly learningFrames = 50;
-  /** How far above the quiet room a piece must be to be speech, and the least it must ever be. */
+  private floor = 0.004;
+  private state: "quiet" | "starting" | "speaking" | "stopping" = "quiet";
+  private count = 0;
   static readonly overFloor = 2.5;
   static readonly leastLoud = 0.01;
+  static readonly startFrames = 10;
+  static readonly stopFrames = 10;
 
-  /** True when this piece carries speech. While the floor is still being learned, nothing does. */
+  /** 200ms start and stop hysteresis, in the recorder's 20ms frames. */
   speech(sound: Uint8Array): boolean {
     const level = loudness(sound);
-    if (this.floor === null) {
-      this.heard.push(level);
-      if (this.heard.length < RoomFloor.learningFrames) return false;
-      const quiet = [...this.heard].sort((one, two) => one - two);
-      this.floor = quiet[Math.floor(quiet.length / 2)] ?? 0;
-      this.heard.length = 0;
+    const loud = level > Math.max(this.floor * RoomFloor.overFloor, RoomFloor.leastLoud);
+    if (loud) {
+      if (this.state === "quiet") { this.state = "starting"; this.count = 1; }
+      else if (this.state === "starting") this.count += 1;
+      else if (this.state === "stopping") { this.state = "speaking"; this.count = 0; }
+    } else {
+      if (this.state === "quiet") this.floor = this.floor * 0.98 + level * 0.02;
+      else if (this.state === "starting") { this.state = "quiet"; this.count = 0; }
+      else if (this.state === "speaking") { this.state = "stopping"; this.count = 1; }
+      else this.count += 1;
     }
-    return level > Math.max(this.floor * RoomFloor.overFloor, RoomFloor.leastLoud);
+    if (this.state === "starting" && this.count >= RoomFloor.startFrames) { this.state = "speaking"; this.count = 0; }
+    if (this.state === "stopping" && this.count >= RoomFloor.stopFrames) { this.state = "quiet"; this.count = 0; }
+    return this.state === "speaking" || this.state === "stopping";
   }
   /** Forgotten when the microphone is let go of, so the next room is learned afresh. */
-  forget(): void { this.heard.length = 0; this.floor = null; }
+  forget(): void { this.floor = 0.004; this.state = "quiet"; this.count = 0; }
 }
 
 /* ---------- the words that come back ---------- */
