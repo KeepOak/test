@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ChannelAdapter, ChannelHealth, InboundMessage } from "./router.js";
+import type { ChannelAdapter, ChannelHealth, InboundMessage, SendGate } from "./router.js";
 import { connectWebSocket, reconnectDelay, type WebSocketConnect, type WebSocketConnection } from "./ws-client.js";
 import { callJson, defineService, secretName } from "./parity-common.js";
 
@@ -162,6 +162,17 @@ export class RevoltChannel implements ChannelAdapter {
     return parsed.success ? parsed.data._id : undefined;
   }
   private headers(): Record<string, string> { return { "x-bot-token": this.options.token }; }
+  async react(chatId: string, messageId: string, emoji: string, previous?: string, gate?: SendGate): Promise<void> {
+    const path = `${this.api}/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/reactions/`;
+    // Each call is checked again first and carries the gate's signal: authority can end between taking off and putting on.
+    const step = (method: "DELETE" | "PUT", value: string) => {
+      gate?.check();
+      return callJson(this.fetch, "Revolt", `${path}${encodeURIComponent(value)}`, { method, headers: this.headers(),
+        ...(gate ? { signal: AbortSignal.any([AbortSignal.timeout(30000), gate.signal]) } : {}) });
+    };
+    if (previous && previous !== emoji) await step("DELETE", previous);
+    await step("PUT", emoji);
+  }
   private tokenRefused(): string {
     return `Revolt refused the bot token. Save a new one as ${this.options.tokenName ?? "REVOLT_BOT_TOKEN"}`;
   }

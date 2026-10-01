@@ -236,9 +236,9 @@ against its adapter, then renders one fixed task for every app.
 | VK (`vk`) | — | plain words | 3500 | — | yes | — | — | One summary line above the reply (plain words) |
 | QQ bot (`qq-bot`) | — | plain words | 3500 | — | yes | — | — | One summary line above the reply (plain words) |
 | Guilded (`guilded`) | — | plain words | 3500 | — | yes | — | — | One summary line above the reply (plain words) |
-| Revolt (`revolt`) | — | plain words | 2000 | — | yes | — | — | One summary line above the reply (plain words) |
+| Revolt (`revolt`) | — | plain words | 2000 | yes | yes | — | — | One summary line above the reply (plain words) |
 | Mumble (`mumble`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
-| KOOK (`kook`) | — | plain words | 4000 | — | yes | — | — | One summary line above the reply (plain words) |
+| KOOK (`kook`) | — | plain words | 4000 | yes | yes | — | — | One summary line above the reply (plain words) |
 | iMessage through BlueBubbles (`bluebubbles`) | — | plain words | 3000 | — | — | off: no edits, so no progress | final answer only | One summary line above the reply (plain words) |
 | WhatsApp (personal number) (`whatsapp-web`) | — | plain words | 4000 | — | yes | new through the Baileys bridge | final answer only | One summary line above the reply (plain words) |
 | WeChat Official Account (`wechat-mp`) | — | plain words | 600 | — | — | off: no edits, so no progress | — | One summary line above the reply (plain words) |

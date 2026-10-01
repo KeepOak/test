@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ChannelAdapter, ChannelHealth, InboundMessage } from "./router.js";
+import type { ChannelAdapter, ChannelHealth, InboundMessage, SendGate } from "./router.js";
 import { connectWebSocket, reconnectDelay, type WebSocketConnect, type WebSocketConnection } from "./ws-client.js";
 import { callJson, defineService, secretName } from "./parity-common.js";
 import { CatchUpWindow, MarkKeeper, type ChannelMark } from "./catch-up.js";
@@ -228,6 +228,26 @@ export class KookChannel implements ChannelAdapter {
     const data = await this.call(path, { method: "POST", json });
     const parsed = z.object({ msg_id: z.string() }).passthrough().safeParse(data);
     return parsed.success ? parsed.data.msg_id : undefined;
+  }
+  async react(chatId: string, messageId: string, emoji: string, previous?: string, gate?: SendGate): Promise<void> {
+    const match = /^([uc]):([\w-]{1,40})$/.exec(chatId);
+    if (!match || !/^[\w-]{1,80}$/.test(messageId)) throw new Error("Invalid KOOK reaction destination.");
+    const convert = (value: string) => {
+      // KOOK's built-in emoji IDs are single code points; use a wrench for the tool-work status.
+      if (value === "\u{1F468}\u200D\u{1F4BB}") return "[#128295;]";
+      const points = Array.from(value).filter((point) => point.codePointAt(0) !== 0xfe0f);
+      if (points.length !== 1) throw new Error("KOOK status reactions require a single Unicode emoji.");
+      return `[#${points[0]!.codePointAt(0)};]`;
+    };
+    const path = match[1] === "u" ? "/direct-message" : "/message";
+    // Each call is checked again first and carries the gate's signal: authority can end between taking off and putting on.
+    const step = (route: string, value: string) => {
+      gate?.check();
+      return this.call(`${path}/${route}`, { method: "POST", json: { msg_id: messageId, emoji: convert(value) },
+        ...(gate ? { signal: AbortSignal.any([AbortSignal.timeout(30000), gate.signal]) } : {}) });
+    };
+    if (previous && previous !== emoji) await step("delete-reaction", previous);
+    await step("add-reaction", emoji);
   }
 }
 
