@@ -26,12 +26,13 @@ export function flagBadge(sessionId, m) {
   return f ? `<div class="flb17c">${ic("flag", "s")}<span>${t("window.chat.flag.flagged", { reasons: esc(words(f.reasons)) })}</span><button type="button" data-act="flrm17c" data-v="${esc(f.id)}">${t("accounts.action.remove")}</button></div>` : "";
 }
 
-export async function loadFlags() {
+export async function loadFlags(current = () => true) {
   /* Q261: the flags are one list for every conversation, the owner's included, so a household person reads none
      (flagging is the owner's too). E.profiles is read with E.state. */
   if (E.profiles?.isOwner === false) return;
   let list;
-  try { list = (await api("reply-flags")).flags ?? []; } catch (error) { toast(error.message); return; }
+  try { list = (await api("reply-flags")).flags ?? []; } catch (error) { if (current()) toast(error.message); return; }
+  if (!current()) return;
   const changed = JSON.stringify(list) !== JSON.stringify(F.list);
   F.list = list;
   if (changed) render();
