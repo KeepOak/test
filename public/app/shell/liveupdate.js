@@ -204,7 +204,9 @@ export async function restoreOpen(open) {
     }
     if (typeof kept.setPage === "string" && hasPage(kept.setPage)) S.setPage = kept.setPage;
     if (kept.drafts && typeof kept.drafts === "object") Object.assign(S.drafts, kept.drafts);
-    if (sessionId(kept.chat)) await open(kept.chat);
+    // The opening itself is bound to this restoration: its read publishes nothing once the person, the lock or the
+    // handover changed (chat/chat.js openConversation's authority).
+    if (sessionId(kept.chat)) await open(kept.chat, current);
     if (!current()) return drop();
     // The owner may have gone elsewhere while the conversation was read: their own move stands, nothing more is laid over it.
     const here = !sessionId(kept.chat) || (S.chat === kept.chat && S.view === "chat");
