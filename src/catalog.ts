@@ -31,7 +31,8 @@ const groupPrefixes: readonly (readonly [string, readonly string[]])[] = [
   // R17-F (integration review): memory blocks, finding facts by label, the learning timeline, meaning
   // search, lessons and outside memory services get a box of their own, before "memory" so these
   // names win. In "memory" they pushed the opened-boxes answer past its budget (tests/catalog-diet).
-  ["memory-extra", ["memory.block_", "memory.find", "memory.label", "memory.outside_", "history.meaning", "learning.journey", "lessons."]],
+  // TRUNK-106: the fact-to-picture tools joined them for the same reason.
+  ["memory-extra", ["memory.block_", "memory.find", "memory.label", "memory.outside_", "memory.attach_image", "memory.image", "memory.detach_image", "history.meaning", "learning.journey", "lessons."]],
   // A finished task's own record is history, so "runs." belongs with the rest of what happened.
   // "learning." is the learning core's one read-only question about what worked before (src/fly-core).
   ["memory", ["memory.", "knowledge.", "history.", "sessions.", "scratch.", "templates.", "notes.", "labels.", "projects.", "runs.", "learning.",

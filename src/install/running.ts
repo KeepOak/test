@@ -1,3 +1,4 @@
+import { processAlive } from "./process-alive.js";
 import { randomBytes } from "node:crypto";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -88,7 +89,9 @@ async function savedToken(dataDir: string): Promise<string | null> {
   } catch { return null; }
 }
 const stillAlive = (pid: number): boolean => {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try { process.kill(pid, 0); } catch { return false; }
+  // Keep this attachment probe's existing permission-error behavior; classify only a proved Linux PID.
+  return process.platform !== "linux" || processAlive(pid);
 };
 
 /**

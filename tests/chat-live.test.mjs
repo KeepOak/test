@@ -323,9 +323,13 @@ test("/stop ends the running task, and /status says what is going on", async (t)
   await app.channels.handle(message("/status"));
   assert.match(chat.sent().at(-1), /^Working for \d+ s, 0 steps so far \(0 done\)\.\nThinking about it\.$/);
   await app.channels.handle(message("/stop"));
-  assert.match(chat.sent().at(-1), /^Stopping\./);
+  const stopping = chat.sent().at(-1);
+  assert.equal(stopping, "Stopping. Anything already changed stays changed; the app shows what was done.");
+  const sentAtStop = chat.sent().length;
   assert.equal(await outcome, "failed");
-  assert.equal(chat.sent().at(-1), "Stopped.");
+  assert.equal(chat.sent().at(-1), stopping, "cancellation does not send another reply after its gate is revoked");
+  assert.equal(chat.sent().length, sentAtStop, "the stopped task cannot emit a duplicate completion or failure reply");
+  assert.equal(app.store.runs(app.runtime.owner).find((run) => run.prompt === "count the stars")?.status, "cancelled");
   assert.equal(chat.calls.filter((c) => c.op === "react").at(-1).emoji, statusEmoji.error);
   assert.equal(model.requests.length, 1, "the words /stop and /status never reached the model");
 });

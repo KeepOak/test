@@ -6,6 +6,8 @@ export interface PublicationIntent {
   branch: string; base: string; sha: string; walked: string; contractHash: string;
   files: string[]; runId?: string | undefined; adapter: "saved" | "computer";
   opening: { repo: string; title: string; body: string; base: string; head: string; draft: true; changes?: string[]; issue?: string };
+  /** An Inbox click approves only this request, contract revision and committed tree. */
+  review?: { requestId: string; revision: number; sourceSha: string; tree: string };
 }
 export interface PublicationEntry extends PublicationIntent {
   id: string; state: "waiting" | "sending" | "published" | "blocked" | "cancelled";

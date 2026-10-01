@@ -265,3 +265,25 @@ test("SCREEN-019: words being composed with an input method survive the view bei
   await page.locator("#stage7 .ob7-tabs").filter({ hasText: "Renamed while composing" }).waitFor({ timeout: 30000 });
   assert.deepEqual(w.errors, []);
 });
+test("SCREEN-019: the page tabs say which one is open and take arrow keys, and a redraw keeps the keyboard on the same tab", async (t) => {
+  const w = await fixture(t, { name: "scripted", async complete() { return { content: "Unused", toolCalls: [] }; } });
+  const { page } = w;
+  await page.locator('.head [data-act="stage"][data-v="browser"]').first().click();
+  const bar = page.locator("#stage7 #st-addr");
+  await bar.fill(`${w.origin}/`);
+  await bar.press("Enter");
+  await framed(page);
+  await page.locator('#stage7 [data-act="owner-browser-new-tab"]:not([disabled])').click();
+  await w.until(async () => (await page.locator("#stage7 .ob7-tab:not([disabled])").count()) === 2, "a second tab");
+  await w.until(async () => (await page.locator('#stage7 .ob7-tab[aria-pressed="true"]').count()) === 1, "one tab marked as open");
+  const focusedIndex = () => page.evaluate(() => document.activeElement?.matches?.("#stage7 .ob7-tab") ? document.activeElement.dataset.index : null);
+  await page.locator('#stage7 .ob7-tab[data-index="0"]').focus();
+  await page.keyboard.press("ArrowRight");
+  assert.equal(await focusedIndex(), "1", "ArrowRight moves to the next tab");
+  await page.keyboard.press("Home");
+  assert.equal(await focusedIndex(), "0", "Home moves to the first tab");
+  await w.enginePage(0).evaluate(() => { document.title = "Renamed with the keyboard on its tab"; });
+  await page.locator("#stage7 .ob7-tabs").filter({ hasText: "Renamed with the keyboard on its tab" }).waitFor({ timeout: 30000 });
+  await w.until(async () => (await focusedIndex()) === "0", "the keyboard to stay on the same tab after the redraw");
+  assert.deepEqual(w.errors, []);
+});

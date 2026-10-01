@@ -592,7 +592,7 @@ async function linuxWall(plan: WallPlan, start: SandboxStart): Promise<{ start: 
     .filter((path) => widenable(path, { workspace: plan.workspace, hidden: [...plan.hidden, ...plan.readOnly] }));
   const args = bwrapArgs({ workspace: plan.workspace, network: plan.network, doorDir: door ? staging : undefined,
     extraWrites, unreadable: plan.hidden, readOnly: plan.readOnly, temp: plan.temp, uid: process.getuid?.(),
-    seccompFd: 9, kindOf, covered: plan.covered, canonical: canonicalPath }, command);
+    seccompFd: 9, kindOf, covered: plan.covered, held: plan.held, canonical: canonicalPath }, command);
   const wrapped = withSeccomp(found.path, filter, args);
   // The door bridge is this program running a script, so it has to run as Node (see runAsNode).
   const env = { ...start.env, ...keyEnv(plan.keys), ...(door ? { ...proxyEnvironment({ httpPort: insideDoorPorts.http, socksPort: insideDoorPorts.socks }, door.secret), ...runAsNode(process.execPath) } : {}) };

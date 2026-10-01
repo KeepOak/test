@@ -170,6 +170,14 @@ test("a plain PDF gives its words with a page marker", () => {
   assert.equal(read.pages, 1);
 });
 
+test("UP-RESEARCH-055: a simple font's named encoding and Differences turn bytes back into the right letters", () => {
+  const plain = pdf({ content: "BT /F1 12 Tf 72 720 Td (AB\\200) Tj ET" }).toString("latin1");
+  const encoded = plain.replace("/BaseFont /Helvetica >>",
+    "/BaseFont /Helvetica /Encoding << /BaseEncoding /WinAnsiEncoding /Differences [ 65 /eacute /germandbls ] >> >>");
+  const read = pdfText(Buffer.from(encoded, "latin1"));
+  assert.equal(read.pages[0].text, "éß€", "Differences replace A and B; WinAnsi's 0x80 is the euro sign");
+});
+
 test("a compressed PDF stream is unpacked", () => {
   const read = pdfText(pdf({ compress: true, content: "BT /F1 12 Tf 72 700 Td (Squeezed words) Tj ET" }));
   assert.equal(read.pages.length, 1);

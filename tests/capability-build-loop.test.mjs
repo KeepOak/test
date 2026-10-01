@@ -36,10 +36,16 @@ test("a local owner task files a review request but cannot approve it; keys and 
 
 test("missing-setting discovery offers an explicit handoff without planning a change or interpreting negation as consent", async t => {
   const { app } = await fixture(t);
-  const missing = clarifyRequest(app.store, app.runtime.owner, { request: "quantum report style", value: "on" });
+  const missing = clarifyRequest(app.store, app.runtime.owner, { request: "quantum report style", value: "on" }, app.registry);
   assert.equal(missing.planned, false);
   assert.equal(missing.missingCapability.tool, "seasons.request_setting");
-  const negated = clarifyRequest(app.store, app.runtime.owner, { request: "do not add quantum report style" });
+  assert.equal(missing.missingCapability.value, "on");
+  const off = clarifyRequest(app.store, app.runtime.owner, { request: "quantum report style", value: false }, app.registry);
+  assert.equal(off.missingCapability.value, false, "a supplied false value travels with the handoff");
+  const noTool = { inventory: () => app.registry.inventory().filter((tool) => tool.name !== "seasons.request_setting") };
+  assert.equal(clarifyRequest(app.store, app.runtime.owner, { request: "quantum report style", value: "on" }, noTool).missingCapability, undefined,
+    "no handoff is offered when its tool is not available");
+  const negated = clarifyRequest(app.store, app.runtime.owner, { request: "do not add quantum report style" }, app.registry);
   assert.equal(negated.missingCapability, undefined);
 });
 

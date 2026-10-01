@@ -52,7 +52,9 @@ const chunks = async function* (count) {
 
 test("W1 it ships off, and while it is off nothing listens at all", async (t) => {
   const { store, owner } = await fixture(t);
-  assert.deepEqual(wakeWordSettings(store, owner), { mode: "off", word: "", sureness: 80, windowSeconds: 2 });
+  assert.deepEqual(wakeWordSettings(store, owner), {
+    mode: "off", word: "", sureness: 80, keywordModel: "", keywordFile: "", confirmationFrames: 3, windowSeconds: 2,
+  });
   const { runner, calls } = fakeRunner(["branch"]);
   const heard = await listenForWake({ store, owner, runner, platform: "win32" }, chunks(3));
   assert.equal(heard.heard, false);

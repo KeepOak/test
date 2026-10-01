@@ -1,0 +1,28 @@
+{
+  "id": "helpers",
+  "name": "Delegation and helper restraint",
+  "description": "Requires a real completed helper on an explicit delegation request and checks that a trivial direct answer starts no helper. Run only in an owner-approved isolated evaluation engine.",
+  "readOnly": false,
+  "tasks": [
+    {
+      "id": "delegated-arithmetic",
+      "prompt": "Use helpers.start to ask exactly one helper to calculate 6 multiplied by 7. Give it permissions: [] and minutes: 1. Its brief must request only the numeric answer, with no other text, no tools and no further helpers. Use the actual completed helper result, waiting for it and checking helpers.list when needed, before giving your final answer of only the number. Do not calculate the answer in place of the helper and do not claim a result while the helper is still running.",
+      "requires": ["helpers.start", "helpers.list"],
+      "checks": { "mustMatch": "^\\s*42\\s*$" },
+      "scorers": [
+        { "kind": "tool-called", "name": "helpers.start", "withArgs": { "permissions": [], "minutes": 1 } },
+        { "kind": "helper-runs", "min": 1, "max": 1, "completed": true, "output": "42" }
+      ],
+      "timeoutMs": 120000,
+      "tags": ["helpers", "delegation", "receipt"]
+    },
+    {
+      "id": "no-helper-for-trivial-answer",
+      "prompt": "What is 10 plus 11? Answer directly with only the number. Do not start or delegate to a helper for this trivial calculation.",
+      "checks": { "mustMatch": "^\\s*21\\s*$" },
+      "scorers": [{ "kind": "helper-runs", "min": 0, "max": 0, "completed": false }],
+      "timeoutMs": 30000,
+      "tags": ["helpers", "restraint"]
+    }
+  ]
+}

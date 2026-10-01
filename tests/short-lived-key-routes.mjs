@@ -16,6 +16,7 @@
  * ":id" stands for any task, conversation or item id.
  */
 export const ROUTES = {
+  "/api/monitors/:id/prices": "owner GET", // owner price history; Trunk tool reads stay creator-bound
   "/api/taste": "prefix",
   "/api/panels/browser/demonstration": "owner POST",
   "/api/panels/browser/network": "owner POST",
@@ -119,7 +120,7 @@ export const ROUTES = {
   "/api/decisions/urgency": "owner POST",
   "/api/approvals/categories": "owner POST",
   "/api/artifacts": "look",
-  "/api/artifacts/file": "look",
+  "/api/artifacts/file": "secret-read",
   "/api/artifacts/read": "look", // dogfood-ux-2: one kept file's words, as /api/artifacts/file shows a picture
   "/api/artifacts/page": "task POST",
   "/api/artifacts/save": "task POST",
@@ -241,6 +242,7 @@ export const ROUTES = {
   // are the owner's alone, and every change is the owner's.
   "/api/delight": "look",
   "/api/delight/achievements": "secret-read",
+  "/api/weekly-recap": "owner GET,POST", // private counts and the owner's explicit manual-time estimate
   "/api/delight/noticed": "owner POST",
   "/api/delight/settings": "owner POST",
   "/api/delight/told": "owner POST",
@@ -309,6 +311,11 @@ export const ROUTES = {
   "/api/flows/check": "other POST",
   "/api/flows/runs/:id": "look",
   "/api/folder-trust": "owner POST",
+  "/api/github-device": "owner POST", // SELF-021: the owner's GitHub device connection (client ID, and what is connected)
+  "/api/github-device/begin": "owner POST", // SELF-021: starts GitHub's device sign-in
+  "/api/github-device/cancel": "owner POST",
+  "/api/github-device/disconnect": "owner POST", // SELF-021: the token taken out of the locker
+  "/api/github-device/poll": "owner POST", // SELF-021: finishes the sign-in and keeps the token in the locker
   "/api/gitlab": "owner POST", // RES-719: the GitLab switch
   "/api/gitlab/connect": "owner POST", // RES-719: a token checked with GitLab, then kept in the locker
   "/api/gitlab/disconnect": "owner POST", // RES-719: the token taken out of the locker
@@ -545,19 +552,24 @@ export const ROUTES = {
   "/api/personal/google/events": "other POST",
   "/api/personal/home": "secret-read",
   "/api/personal/home/states": "other POST",
+  "/api/personal/home/test": "owner POST", // RES-408: one read of Home Assistant's GET /api/
   "/api/personal/mail": "secret-read",
   "/api/personal/mail/search": "other POST",
+  "/api/personal/mail/test": "owner POST", // RES-408: one read-only EXAMINE of the inbox
   "/api/personal/microsoft/events": "other POST",
   "/api/personal/signin/": "prefix",
   "/api/personal/signin/google": "secret-read",
   "/api/personal/signin/google/start": "owner POST",
   "/api/personal/signin/google/secret": "owner POST",
+  "/api/personal/signin/google/test": "owner POST",
   "/api/personal/signin/microsoft": "secret-read",
   "/api/personal/signin/microsoft/start": "owner POST",
   "/api/personal/signin/microsoft/secret": "owner POST",
+  "/api/personal/signin/microsoft/test": "owner POST",
   "/api/personal/signin/spotify": "secret-read",
   "/api/personal/signin/spotify/start": "owner POST",
   "/api/personal/signin/spotify/secret": "owner POST",
+  "/api/personal/signin/spotify/test": "owner POST",
   "/api/personal/spotify/now": "other POST",
   "/api/personal/switch": "owner POST",
   "/api/personal/tunnel": "secret-read",
@@ -626,6 +638,7 @@ export const ROUTES = {
   "/api/flows-boards/flows": "look",
   "/api/flows-boards/flows/:id/fork": "owner POST",
   "/api/flows-boards/flows/:id/steps": "look",
+  "/api/flows-boards/flows/[^/]+/steps": "look", // server snapshot scrub matcher; same owner-bound read
   "/api/flows-boards/installs": "look",
   "/api/flows-boards/installs/:id/approve": "owner POST",
   "/api/flows-boards/installs/:id/decline": "owner POST",
@@ -905,6 +918,9 @@ export const ROUTES = {
   "/api/people/me/pin": "other POST",
   "/api/people/me/sign-out": "other POST",
   "/api/people/oidc/callback": "pre-auth GET",
+  "/api/people/rooms": "look",
+  "/api/people/rooms/:id": "look",
+  "/api/people/rooms/:id/message": "other POST",
   "/api/people/settings": "secret-read",
   "/api/people/shares": "owner POST",
   "/api/people/shares/export": "secret-read",
@@ -1014,6 +1030,7 @@ export const ROUTES = {
   "/api/remove-branch": "owner POST",
   "/api/remove-branch/plan": "owner POST",
   "/api/recordings": "owner POST",
+  "/api/recordings/restart": "owner POST", // RES-512: a new task from a checked event log, after the owner's yes
   "/api/recipes/:id/steps": "owner POST", // finish-soon-a: a saved recipe's steps moved or taken out, a new version to verify
   "/api/reflection": "look",
   "/api/reflection/batches/:id/accept": "other POST",
@@ -1034,6 +1051,10 @@ export const ROUTES = {
   "/api/registry/updates": "look",
   // eng-connectors: What's new for the installed version.
   "/api/release-notes": "look",
+  // RES-408: which issue-tracker accounts are set up, and one authenticated read to check each; the owner's alone.
+  "/api/connectors/accounts": "look",
+  "/api/connectors/accounts/github/test": "owner POST",
+  "/api/connectors/accounts/linear/test": "owner POST",
   // eng-connectors: flagged replies; keeping, removing and exporting (a POST, so a key never reads it out) are the owner's.
   "/api/reply-flags": "owner POST",
   "/api/reply-flags/": "prefix",
@@ -1077,6 +1098,7 @@ export const ROUTES = {
   "/api/runs/:id/plan": "task POST",
   "/api/runs/:id/receipts": "look",
   "/api/runs/:id/recording": "look",
+  "/api/runs/:id/recording/events": "look", // RES-512: the same task's retained events as JSONL, scrubbed as the recording is
   "/api/runs/:id/result": "look", // Q52: what a finished task made and how it was checked, like its receipts (classified in Q64)
   // mac7/smoke-fixes (B4): one task's steps, for `branch trace`. "look" on purpose, not an
   // oversight — it carries none of the task's words, and `inspect` beside it already shows a
@@ -1103,6 +1125,7 @@ export const ROUTES = {
   "/api/schedules": "other POST",
   "/api/schedules/": "prefix",
   "/api/schedules/:id": "look",
+  "/api/schedules/:id/dashboard": "secret-read", // RES-189: the owner's retained dashboard; no short-lived key reads it
   "/api/schedules/:id/gate": "owner POST",
   "/api/schedules/:id/remove": "other POST",
   "/api/schedules/:id/trigger": "task POST",
@@ -1115,6 +1138,7 @@ export const ROUTES = {
   "/api/codex-models": "owner POST", // QA 2026-09-28: which model Codex answers with
   "/api/codex-models/check": "owner POST", // runs one tiny request per model Codex takes
   "/api/helper-defaults": "owner POST", // models-ui: each specialist's own model and account
+  "/api/mcp/servers/sample/test": "owner POST",
   "/api/secrets": "owner POST",
   "/api/secrets/audit": "look",
   "/api/secrets/default": "look",
@@ -1136,7 +1160,10 @@ export const ROUTES = {
   "/api/self-development/requests/:id/approve": "owner POST",
   "/api/self-development/requests/:id/decline": "owner POST",
   "/api/self-development/requests/:id/diff": "secret-read", // the change to Branch's own source, for the owner to read before a yes
+  "/api/self-development/requests/:id/draft": "secret-read", // the committed draft, for the owner to review before publishing
+  "/api/self-development/requests/:id/publish": "owner POST",
   "/api/sessions": "look",
+  "/api/sessions/:id/context-audit": "owner POST",
   "/api/sessions/": "prefix",
   "/api/sessions/:id": "look",
   "/api/sessions/:id/branch": "other POST", // pass 17: a named path of the conversation, copied like duplicate
@@ -1180,6 +1207,8 @@ export const ROUTES = {
   "/api/skill-installs": "look",
   "/api/skill-installs/": "prefix",
   "/api/skill-installs/export": "look",
+  "/api/skill-installs/github": "owner POST", // looks at a GitHub skill and holds a preview; the owner's alone
+  "/api/skill-installs/github/install": "owner POST",
   "/api/skill-installs/inspect": "owner POST",
   "/api/skill-installs/install": "owner POST",
   "/api/skill-installs/remove": "owner POST",
@@ -1296,6 +1325,7 @@ export const ROUTES = {
   "/api/panels/browser/action": "owner POST",
   "/api/panels/browser/disconnect": "owner POST",
   "/api/panels/browser/stop": "owner POST",
+  "/api/self-development/ci": "owner POST",
   "/api/usage/glance": "look",
   "/api/usage/by-trunk": "look", // models-ui: who spent what, read as the usage glance is
   "/api/usage/glance/settings": "secret-read",
@@ -1308,12 +1338,14 @@ export const ROUTES = {
   "/api/voice/command": "task POST",
   "/api/voice/engines": "owner POST",
   "/api/voice/live": "owner POST", // phase2/rooms: its tools run as the owner
+  "/api/voice/piper/files": "owner POST", // UP-RESEARCH-063: names in one folder the owner picks, for the Piper picker
   "/api/voice/plan": "look",
   "/api/voice/settings": "owner POST",
   "/api/voice/speak": "task POST",
   "/api/voice/transcribe": "task POST",
   "/api/voice/voices": "look",
   "/api/web-pages": "owner POST", // w911 (A0743, A1452) hook: the switch for reading and crawling web pages
+  "/api/web-search": "owner POST", // wire-greyed: where web searches go (Settings › Advanced › Web search)
   // mac7/wake-pins: the word that starts a turn. Reading says what this computer could do; changing is the owner's.
   "/api/voice/wake": "secret-read",
   // mac7/live-voice: speaking and seeing the words. Reading says which speech program is here and

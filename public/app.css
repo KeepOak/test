@@ -171,6 +171,8 @@ kbd{font:500 10.5px var(--mono);color:var(--ink-3);border:1px solid var(--line-2
 .app.locked .lock-banner{display:flex}
 .lock-banner button{margin-left:auto;border:1px solid rgba(255,255,255,.6);border-radius:999px;padding:3px 10px;color:#fff}
 .scroll{flex:1;overflow-y:auto;min-height:0}
+.jump-follow{display:flex;justify-content:center;flex-shrink:0;padding:4px 10px}
+.jump-follow[hidden]{display:none}
 .thread{max-width:720px;margin:0 auto;padding:26px 24px 20px;display:flex;flex-direction:column;gap:14px}
 .stamp{align-self:center;font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .roomline{align-self:center;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3)}
@@ -329,6 +331,12 @@ details[open]>summary .chev{transform:rotate(90deg)}
 .art details summary{font-size:12.5px;color:var(--ink-3);cursor:pointer;list-style:none;display:inline-flex;gap:6px;align-items:center}
 .art details summary::-webkit-details-marker{display:none}
 .art pre{margin:8px 0 0;font:12px/1.5 var(--mono);background:var(--fill);border-radius:10px;padding:10px 12px;overflow-x:auto;color:var(--ink-2)}
+.code-window14{margin:12px 0;max-width:100%;min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--fill)}
+.code-window14-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 10px;border-bottom:1px solid var(--line)}
+.code-window14-head>span{min-width:0;overflow-wrap:anywhere;font:12px/1.4 var(--mono);color:var(--ink-3)}
+.code-window14-head>button{flex-shrink:0}
+.code-window14 pre{margin:0;padding:12px;overflow:auto;font:12px/1.6 var(--mono);color:var(--ink-2)}
+.code-window14 pre code{font:inherit;white-space:pre}
 
 /* composer */
 .dock{flex:none;padding:6px 24px 16px;position:relative}
@@ -479,11 +487,13 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--fill);color:var
 .pop .gateway-activity14 li{display:grid;gap:3px;padding:6px 0;font-size:12.5px;overflow-wrap:anywhere}
 .pop .gateway-activity14 time{font-size:11px;color:var(--ink-3)}
 .mi{display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border-radius:9px;text-align:left;font-size:13.5px}
+.mi[hidden]{display:none}
 .mi:hover,.mi:focus-visible{background:var(--fill)}
 .mi .ico{color:var(--ink-3);display:grid}
 .mi .r{margin-left:auto;color:var(--ink-3);font-size:12px;display:flex;align-items:center;gap:6px}
 .mi.danger{color:var(--bad)}
 .mi[aria-checked="true"] .tick{visibility:visible}
+.pop [data-act="mention-pick"][aria-selected="true"],.pop [data-act="slash-pick"][aria-selected="true"]{background:var(--fill-2)}
 .mi .tick{visibility:hidden;color:var(--ink)}
 .mi .mi-t{display:block}
 .mi .mi-s{display:block;font-size:12px;color:var(--ink-3)}
@@ -2032,7 +2042,7 @@ video.pose11{background:transparent}
 .spin12{width:22px;height:22px;border-radius:50%;border:2.5px solid var(--fill-2);border-top-color:var(--accent);animation:spin 1s linear infinite;grid-row:span 2}
 .lm-grid12{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
 .lm12{border:1px solid var(--line);border-radius:16px;padding:14px;background:var(--raise);display:grid;gap:8px;align-content:start}
-.lm12.fit-no{opacity:.7}
+/* Keep unfit model details readable; the warning pill and disabled Install convey the limit. */
 .lm-h12{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.lm-h12 b{font-size:15px}.lm-h12 .pill{margin-left:auto}
 .lm12 p{margin:0;font-size:13px;color:var(--ink-2)}
 .lm-tags12{display:flex;gap:4px;flex-wrap:wrap}
@@ -4536,6 +4546,11 @@ audio.docread18m{width:100%}
 #conversation:has(+.tl-after19){padding-bottom:0}
 .tl-after19{padding-top:16px}
 
+.browser-proof7 { margin:8px 0; display:grid; gap:6px; max-width:640px; }
+.browser-proof7 figcaption { font-weight:600; }
+.browser-proof7 img { display:block; width:100%; max-height:360px; object-fit:contain; border-radius:8px; }
+.browser-proof7 small { color:var(--mute17c); }
+
 /* Completed downloads in the owner's browser, retained only for this session. */
 .ob7-downloads{flex:none;padding:8px 16px;border-bottom:1px solid #e6e9ec;background:#f7f9fb;color:#1b1f23;text-align:left}
 .ob7-downloads summary{cursor:pointer;font-size:13px}
@@ -4543,3 +4558,16 @@ audio.docread18m{width:100%}
 .ob7-downloads li{display:flex;flex-direction:column;gap:3px;padding:6px 0;overflow-wrap:anywhere}
 .ob7-downloads li b{font-size:13px;font-weight:500}
 .ob7-downloads li small{font-size:12px;color:#566}
+
+/* Owner browser page controls. */
+.owner-browser7 .ob7-extras,.owner-browser7 .ob7-find{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:6px 12px;border-bottom:1px solid #e6e9ec;background:#fff;color:#3b4650}
+.owner-browser7 .ob7-find input{flex:1;min-width:150px;padding:6px 8px;border:1px solid #c9d2da;border-radius:6px;color:inherit;background:#fff}
+.owner-browser7 .ob7-find small{min-width:120px;color:inherit}
+
+/* Plan-step pictures are visibly separate from the live browser. */
+#stage7 .st7-replay-note{position:absolute;bottom:12px;left:12px;padding:6px 10px;border-radius:6px;background:var(--bg);color:var(--ink);box-shadow:0 2px 8px #0002}
+
+.browser-proof7 { margin:8px 0; display:grid; gap:6px; max-width:640px; }
+.browser-proof7 figcaption { font-weight:600; }
+.browser-proof7 img { display:block; width:100%; max-height:360px; object-fit:contain; border-radius:8px; }
+.browser-proof7 small { color:var(--mute17c); }

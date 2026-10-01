@@ -1,4 +1,4 @@
-import { homedir, tmpdir } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { posix } from "node:path";
 import type { WallNetwork } from "./sandbox.js";
 import { protectedWorkspaceNames, secretHomePlaces } from "./sandbox-seatbelt.js";
@@ -33,7 +33,12 @@ export interface BwrapInput {
   doorDir?: string | undefined;
   extraWrites?: readonly string[];
   unreadable?: readonly string[];
+  /** Override the home for portable profiles and tests; also the account home unless supplied below. */
   home?: string;
+  /** The OS-account home, independent of HOME; null means it could not be determined. */
+  systemHome?: string | null;
+  /** A held command hides both homes even when an overridden HOME does not exist yet. */
+  held?: boolean;
   temp?: string;
   dataDir?: string | undefined;
   /** Places a program may read but never change (Branch's own program and updater). */
@@ -53,21 +58,65 @@ export interface BwrapInput {
   canonical?: (path: string) => string;
 }
 
+const within = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder.replace(/\/+$/, "")}/`);
+
+/** The system account's home, never replaced by HOME. Failure never falls back to a narrower wall. */
+export function accountHome(lookup: () => string | null = () => userInfo().homedir): string {
+  let home: string | null;
+  try { home = lookup(); } catch { home = null; }
+  if (!home || !posix.isAbsolute(home) || home.includes("\0") || posix.normalize(home) === "/")
+    throw new Error("The wall could not determine this account's home folder safely, so the program did not run.");
+  return home;
+}
+
+/** HOME may be overridden; that must not expose the account's saved sign-ins or control sockets. */
+function homeFolders(input: BwrapInput): string[] {
+  const home = input.home ?? homedir();
+  // Non-Linux callers only build argument fixtures; no bubblewrap process can run there.
+  if (process.platform !== "linux" && input.home === undefined && input.systemHome === undefined) return [home];
+  const system = input.systemHome !== undefined ? accountHome(() => input.systemHome!) : input.home ?? accountHome();
+  return [...new Set([home, system])];
+}
+
+/** Held commands cover both homes, and never restore a parent that would expose either again. */
+function coveredFolders(input: BwrapInput, homes: readonly string[], secrets: readonly string[], canonical: (path: string) => string): string[] {
+  const covered = new Set(input.covered ?? []);
+  if (input.held) for (const home of homes) covered.add(canonical(home));
+  const restored = [{ path: input.workspace, door: false }, ...(input.doorDir ? [{ path: input.doorDir, door: true }] : []),
+    ...[...(input.extraWrites ?? []), ...(input.readOnly ?? [])].map((path) => ({ path, door: false }))];
+  const overlaps = (a: string, b: string): boolean => within(canonical(a), canonical(b)) || within(canonical(b), canonical(a));
+  const privatePlaces = [...secrets, ...socketPlaces(input.uid)].filter((path) => [...covered].some((folder) => within(canonical(path), canonical(folder))));
+  const runtime = input.uid === undefined ? null : `/run/user/${input.uid}`;
+  // Only Branch's fresh door directory under its private scratch can reopen part of the runtime
+  // socket root. A workspace, tool, whole runtime folder, or explicitly hidden place never can.
+  const ownDoor = (path: string, hidden: string): boolean => runtime !== null && canonical(hidden) === canonical(runtime)
+    && canonical(path) !== canonical(runtime) && within(canonical(path), canonical(runtime))
+    && canonical(path) !== canonical(input.temp ?? tmpdir()) && within(canonical(path), canonical(input.temp ?? tmpdir()))
+    && !secrets.some((secret) => overlaps(path, secret));
+  if (restored.some(({ path, door }) => (input.held && homes.some((home) => within(canonical(home), canonical(path))))
+    || privatePlaces.some((secret) => overlaps(path, secret) && !(door && ownDoor(path, secret)))))
+    throw new Error("A folder restored for this command would expose a protected home or secret folder, so the program did not run.");
+  return [...covered];
+}
+
 /** The arguments for `bwrap`, ending with `--` and the program. */
 export function bwrapArgs(input: BwrapInput, command: { executable: string; args: readonly string[] }): string[] {
-  const home = input.home ?? homedir(), temp = input.temp ?? tmpdir();
+  const homes = homeFolders(input), temp = input.temp ?? tmpdir();
+  const canonical = input.canonical ?? ((path: string) => path);
+  const secrets = [...homes.flatMap((home) => secretHomePlaces.map((place) => join(home, place))), ...(input.unreadable ?? []),
+    ...(input.dataDir ? [input.dataDir] : [])];
+  const hidden = [...secrets, ...socketPlaces(input.uid)];
   const args = ["--die-with-parent", "--new-session", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts"];
   // With no network, or only Branch's door, the program gets a network of its own with nothing in it.
   if (input.network !== "open") args.push("--unshare-net");
   args.push("--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc");
   // A private, empty temporary folder: the real one holds other programs' sockets (the ssh agent,
   // the screen, other runs' doors), and a socket file can be used even on a read-only disk.
-  // Covered folders first, so a private temporary folder that sits inside one (a TMPDIR under /run
-  // or the home) is made after the cover, and still shows.
-  const covered = input.covered ?? [];
-  for (const path of covered) args.push("--tmpfs", path);
-  const temps = [...new Set(["/tmp", temp])];
-  for (const path of temps) args.push("--tmpfs", path);
+  // Mount every empty parent before its children: TMPDIR can be inside a covered home, or the
+  // home itself can be under /tmp. Mounting a parent later would erase an earlier child mount.
+  const covered = coveredFolders(input, homes, secrets, canonical);
+  const empty = [...new Set(["/tmp", temp, ...covered])].sort((a, b) => a.length - b.length);
+  for (const path of empty) args.push("--tmpfs", path);
   args.push("--bind", input.workspace, input.workspace);
   if (input.doorDir) args.push("--bind", input.doorDir, input.doorDir);
   for (const path of input.extraWrites ?? []) args.push("--bind-try", path, path);
@@ -75,13 +124,12 @@ export function bwrapArgs(input: BwrapInput, command: { executable: string; args
     args.push("--ro-bind-try", path, path);
   // Only the folder itself turns read-only; the workspace bound inside it stays writable.
   for (const path of covered) args.push("--remount-ro", path);
-  const hidden = [...secretHomePlaces.map((place) => join(home, place)), ...(input.unreadable ?? []),
-    ...(input.dataDir ? [input.dataDir] : []), ...socketPlaces(input.uid)];
   // An empty read-only folder over each folder, an empty file over each file; a missing one needs
   // nothing hidden (and bwrap could not make a place to hide it on a read-only disk anyway).
-  const kindOf = input.kindOf ?? (() => "dir" as const), canonical = input.canonical ?? ((path: string) => path);
+  const kindOf = input.kindOf ?? (() => "dir" as const);
   const files = new Set<string>();
   for (const path of hidden) {
+    if (covered.some((folder) => within(canonical(path), canonical(folder)))) continue;
     const kind = kindOf(path);
     if (kind === "dir") args.push("--tmpfs", path, "--remount-ro", path);
     // A file reached through a link (`/var/run` is `/run`, or a socket that is itself a link) is covered where it really is.

@@ -96,6 +96,8 @@ test("after an interruption, an unknown-outcome write is not repeated until the 
   const { writeFile: write } = await import("node:fs/promises");
   await write(join(app.runtime.workspace, "note.txt"), "before");
   const first = app.store.createRun("local", "write my note");
+  app.store.event(first.id, "run.started", { source: "owner", permissions: [app.registry.permissionOf("files.write"), app.registry.permissionOf("files.read")],
+    deadlineMs: 30_000, depth: 0, delegates: false, dryRun: false, ownCopy: false });
   app.store.message(first.sessionId, { role: "user", content: "write my note" });
   app.store.message(first.sessionId, { role: "assistant", content: "", toolCalls: [{ id: "t1", name: "files.write", arguments: JSON.stringify({ path: "note.txt", content: "again" }) }] });
   app.store.finish(first.id, "interrupted", "Process stopped before completion; side effects were not replayed");

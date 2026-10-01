@@ -88,15 +88,24 @@ export const waitingWords = (position, queued, slots) =>
   `Waiting for a CI slot, position ${position} of ${queued}: at most ${slots} pull-request runs hold runners at once. `
   + "This run was cancelled to wait, not failed; the queue starts it again when a slot frees. Pushing again starts a new run.";
 
-function github(token, repo) {
+/** GitHub's own passing errors: a 502 on the cancel once left a run that was to wait failed, never started again. */
+const passing = new Set([500, 502, 503, 504]);
+/** Only calls that are the same done twice are tried again: reads, cancelling a run, and adding or removing a label.
+ *  A rerun is not: a first attempt GitHub took before answering 502 would be started a second time. */
+const repeatable = (method, path) => method === "GET" || /\/cancel$/.test(path) || /\/labels(\/|$)/.test(path);
+
+export function github(token, repo, { get = fetch, pause = (ms) => new Promise((done) => setTimeout(done, ms)) } = {}) {
   return async (method, path, body) => {
-    const response = await fetch(`https://api.github.com/repos/${repo}/${path}`, {
-      method,
-      headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-    if (!response.ok && response.status !== 404) throw new Error(`${method} ${path}: ${response.status} ${await response.text()}`);
-    return response.status === 204 || response.status === 202 ? null : response.json().catch(() => null);
+    for (let tries = 1; ; tries += 1) {
+      const response = await get(`https://api.github.com/repos/${repo}/${path}`, {
+        method,
+        headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      if (passing.has(response.status) && tries < 3 && repeatable(method, path)) { await pause(tries * 2000); continue; }
+      if (!response.ok && response.status !== 404) throw new Error(`${method} ${path}: ${response.status} ${await response.text()}`);
+      return response.status === 204 || response.status === 202 ? null : response.json().catch(() => null);
+    }
   };
 }
 
@@ -142,9 +151,25 @@ function argument(name) {
   return process.argv.slice(3).find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3);
 }
 
+/** The queue's own rule was missing or broken: unlike GitHub being unreachable, this admits nothing and restarts nothing. */
+export class PolicyError extends Error {}
+
+/** The most pull-request runs the queue supports holding runners at once; a larger prSlots is refused, not obeyed. */
+export const MAX_SLOTS = 50;
+
+/** prSlots from the base's tests/test-impact.json: a whole number from 1 to MAX_SLOTS, or a PolicyError. */
+export function readPolicy(read = () => readFileSync(join(root, "tests", "test-impact.json"), "utf8")) {
+  let config;
+  try { config = JSON.parse(read()); } catch (error) { throw new PolicyError(`tests/test-impact.json could not be read: ${error.message}`); }
+  const slots = config !== null && typeof config === "object" && !Array.isArray(config) ? config.prSlots : undefined;
+  if (!Number.isSafeInteger(slots) || slots < 1 || slots > MAX_SLOTS)
+    throw new PolicyError(`tests/test-impact.json needs prSlots as a whole number from 1 to ${MAX_SLOTS}`);
+  return slots;
+}
+
 async function main() {
   const command = process.argv[2];
-  const slots = JSON.parse(readFileSync(join(root, "tests", "test-impact.json"), "utf8")).prSlots;
+  const slots = readPolicy();
   const api = github(process.env.GH_TOKEN, process.env.GITHUB_REPOSITORY);
   const selfId = Number(argument("run"));
   const { runs, pulls } = await state(api);
@@ -178,6 +203,12 @@ async function main() {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
+    // A broken rule fails closed: no admission, no restarts, and the run says why.
+    if (error instanceof PolicyError) {
+      console.log(`::error title=CI queue rule missing or broken::${error.message}. No run is admitted or restarted.`);
+      process.exitCode = 1;
+      return;
+    }
     // A queue that cannot be read never holds a run back (a decision to hold is written before any write is tried).
     console.log(`::warning title=CI queue unavailable::${error.message}`);
   });

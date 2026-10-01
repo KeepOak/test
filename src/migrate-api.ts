@@ -80,7 +80,8 @@ const ImportSchema = z.object({ items: z.array(z.string().regex(/^[0-9a-f]{32}$/
 /** The trees to read and which assistant they belong to, for what the owner asked for. */
 async function opened(body: z.infer<typeof SourceRequestSchema>, options: PlaceInput): Promise<{ source: MoveInSource; input: ScanInput }> {
   if (!body.path && !body.archive) {
-    const place = placesFor(options).find((entry) => entry.source === body.source)!;
+    const place = placesFor(options).find((entry) => entry.source === body.source);
+    if (!place) throw new MoveInApiError(400, "Choose your ChatGPT export folder or zip file to preview it");
     return { source: place.source, input: placeInput(place) };
   }
   if (body.path && !isAbsolute(body.path)) throw new MoveInApiError(400, "Give the whole path to the folder or file, starting from the top of the disk");
@@ -100,12 +101,18 @@ async function opened(body: z.infer<typeof SourceRequestSchema>, options: PlaceI
 }
 
 async function withScan<T>(body: unknown, options: PlaceInput,
-  use: (source: MoveInSource, from: string, scan: Awaited<ReturnType<typeof scanSource>>) => Promise<T>): Promise<T> {
-  const request = SourceRequestSchema.parse(body);
+  use: (source: MoveInSource, from: string, scan: Awaited<ReturnType<typeof scanSource>>) => Promise<T>,
+  assertAuthority: () => void): Promise<T> {
+  assertAuthority();
+  const request = SourceRequestSchema.parse(structuredClone(body));
   const { source, input } = await opened(request, options);
+  assertAuthority();
   const scan = await scanSource(source, input);
-  try { return await use(source, input.tree.label, scan); }
+  let result: T;
+  try { assertAuthority(); result = await use(source, input.tree.label, scan); }
   finally { await scan.close?.(); }
+  assertAuthority();
+  return result;
 }
 
 export async function moveInApi(
@@ -116,45 +123,63 @@ export async function moveInApi(
   const owner = app.runtime.owner, get = request.method === "GET", post = request.method === "POST";
   try { app.store.profiles.requireOwner("Bringing things over from another assistant"); }
   catch (error) { throw new MoveInApiError(403, errorText(error)); }
-  if (path === "/api/move-in/switch") {
-    if (post) {
-      const input = await readBody(request);
-      recordedWrite(app.store, owner, byCard("move-in-switch"), ["move-in-switch"], () => saveMoveInMode(app.store, owner, input));
+  options = { ...options, env: { ...options.env } };
+  const scope = app.store.profiles.scope();
+  let revoked = false;
+  const revoke = () => { revoked = true; };
+  const stopProfile = app.store.profiles.onSwitched(revoke);
+  const stopLock = app.sessionLock.onLocked(revoke);
+  const assertAuthority = () => {
+    if (app.sessionLock.locked()) revoked = true;
+    if (revoked || app.runtime.owner !== owner || app.store.profiles.scope() !== scope || !app.store.profiles.isOwner())
+      throw new MoveInApiError(403, "The person using Branch or the app lock changed. Ask to bring things over again.");
+  };
+  try {
+    assertAuthority();
+    if (path === "/api/move-in/switch") {
+      if (post) {
+        const input = await readBody(request);
+        assertAuthority();
+        recordedWrite(app.store, owner, byCard("move-in-switch"), ["move-in-switch"], () => saveMoveInMode(app.store, owner, input));
+      }
+      else if (!get) throw new MoveInApiError(405, "Use GET or POST");
+      return { mode: moveInMode(app.store, owner) };
     }
-    else if (!get) throw new MoveInApiError(405, "Use GET or POST");
-    return { mode: moveInMode(app.store, owner) };
-  }
-  const mode = moveInMode(app.store, owner);
-  if (get && path === "/api/move-in") {
-    // Off looks at nothing; "when needed" looks only when the owner asks; on looks whenever the card is shown.
-    const asked = new URL(request.url ?? "/", "http://branch.invalid").searchParams.get("look") === "1";
-    if (mode === "off" || (mode === "when-needed" && !asked)) return { mode, sources: [], offer: null };
-    const sources = await foundSources(app.store, owner, options);
-    return { mode, sources, offer: mode === "on" ? offerSentence(sources) : null };
-  }
-  if (get && path === "/api/move-in/brought")
-    return { servers: broughtServers(app.store, owner), settings: broughtSettings(app.store, owner),
-      counts: Object.fromEntries(MoveInSourceSchema.options.map((source) => [source, Object.keys(movedIn(app.store, owner, source)).length])) };
-  const limit = Math.ceil(maximumUploadBytes / 3) * 4 + 1024 * 1024;
-  if (post && (path === "/api/move-in/preview" || path === "/api/move-in/import")) {
-    try { requireMoveInAllowed(mode); } catch (error) { throw new MoveInApiError(403, errorText(error)); }
-  }
-  if (post && path === "/api/move-in/preview")
-    return withScan(await readBody(request, limit), options,
-      async (source, from, scan) => previewOf(app.store, owner, source, from, scan));
-  if (post && path === "/api/move-in/import") {
-    const body = await readBody(request, limit) as Record<string, unknown> | null;
-    const { items } = ImportSchema.parse({ items: body?.items });
-    const { items: _items, ...where } = body ?? {};
-    const project = app.store.projects.active(owner).id;
-    const held = new Set(app.store.locker.names(owner, project).map((entry) => entry.name));
-    return withScan(where, options, async (source, from, scan) => {
-      const receipt = await bringOver(app.store, owner, source, scan, items, held, options.contextFiles);
-      audit(app.store, owner, { action: "data.imported", actor: "owner", source: "owner",
-        subject: `${sourceNames[source]}: ${receipt.brought.length} brought over, ${receipt.skipped.length} left behind`.slice(0, 200),
-        reason: `Brought over from ${from}`.slice(0, 500), outcome: receipt.brought.length ? "completed" : "nothing brought" });
-      return { source, name: sourceNames[source], from, ...receipt };
-    });
-  }
-  throw new MoveInApiError(404, "Endpoint not found");
+    const mode = moveInMode(app.store, owner);
+    if (get && path === "/api/move-in") {
+      // Off looks at nothing; "when needed" looks only when the owner asks; on looks whenever the card is shown.
+      const asked = new URL(request.url ?? "/", "http://branch.invalid").searchParams.get("look") === "1";
+      if (mode === "off" || (mode === "when-needed" && !asked)) return { mode, sources: [], offer: null };
+      const sources = await foundSources(app.store, owner, options);
+      assertAuthority();
+      return { mode, sources, offer: mode === "on" ? offerSentence(sources) : null };
+    }
+    if (get && path === "/api/move-in/brought")
+      return { servers: broughtServers(app.store, owner), settings: broughtSettings(app.store, owner),
+        counts: Object.fromEntries(MoveInSourceSchema.options.map((source) => [source, Object.keys(movedIn(app.store, owner, source)).length])) };
+    const limit = Math.ceil(maximumUploadBytes / 3) * 4 + 1024 * 1024;
+    if (post && (path === "/api/move-in/preview" || path === "/api/move-in/import")) {
+      try { requireMoveInAllowed(mode); } catch (error) { throw new MoveInApiError(403, errorText(error)); }
+    }
+    if (post && path === "/api/move-in/preview")
+      return await withScan(await readBody(request, limit), options,
+        async (source, from, scan) => previewOf(app.store, owner, source, from, scan), assertAuthority);
+    if (post && path === "/api/move-in/import") {
+      const body = await readBody(request, limit) as Record<string, unknown> | null;
+      assertAuthority();
+      const { items } = ImportSchema.parse({ items: body?.items });
+      const { items: _items, ...where } = body ?? {};
+      const project = app.store.projects.active(owner).id;
+      const held = new Set(app.store.locker.names(owner, project).map((entry) => entry.name));
+      return await withScan(where, options, async (source, from, scan) => {
+        const receipt = await bringOver(app.store, owner, source, scan, items, held, options.contextFiles, assertAuthority);
+        assertAuthority();
+        audit(app.store, owner, { action: "data.imported", actor: "owner", source: "owner",
+          subject: `${sourceNames[source]}: ${receipt.brought.length} brought over, ${receipt.skipped.length} left behind`.slice(0, 200),
+          reason: `Brought over from ${from}`.slice(0, 500), outcome: receipt.brought.length ? "completed" : "nothing brought" });
+        return { source, name: sourceNames[source], from, ...receipt };
+      }, assertAuthority);
+    }
+    throw new MoveInApiError(404, "Endpoint not found");
+  } finally { stopProfile(); stopLock(); }
 }

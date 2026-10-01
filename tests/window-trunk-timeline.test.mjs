@@ -200,6 +200,34 @@ test("a scroll that lands on a box off the page does not move a reader who scrol
   assert.deepEqual(errors, []);
 });
 
+/* CI flake of the test above (PRs #1231 and #1241, 987 !== 300): where the reader is was known only from the scroll
+   event, which the browser sends on the next frame. A drawing of the conversation before that frame (a read landing, the
+   window's own redraw) put the box back where the last event had heard them, at the end, and the scroll was lost. Here
+   the reader scrolls and the conversation is drawn again in one step, which is that drawing every time. */
+test("a drawing before the next frame keeps where the reader just scrolled to", async (t) => {
+  const { app, root } = await fixture(t, [long]);
+  saveOnboarding(app.store, app.runtime.owner, { done: true });
+  const home = app.trunks.ensureDefault();
+  await app.trunks.introduced();
+  await app.runtime.run({ prompt: "one long talk", trunkId: home.id });
+  const { page, errors } = await open(t, app, root, { width: 1100, height: 640 });
+  await page.locator(`#side .row[data-line="${home.id}"]`).click();
+  await page.locator("#scroll .u", { hasText: "one long talk" }).waitFor();
+  const kept = await page.evaluate(async () => {
+    const { renderNow } = await import("/app/core/dom.js"), { S } = await import("/app/core/state.js");
+    const { conversationWho } = await import("/app/chat/chat.js");
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    const box = document.querySelector("#scroll"), end = box.scrollHeight - box.clientHeight;
+    box.scrollTop = 300; // the reader scrolls back; the browser tells the page on the next frame
+    S.drafts[conversationWho().sessionId] = "words kept in the box"; renderNow(); // and the conversation is drawn before it
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    return { end, now: document.querySelector("#scroll").scrollTop };
+  });
+  assert.ok(kept.end > 300, "the conversation is long enough to scroll back in");
+  assert.equal(kept.now, 300, "the reader stays where they scrolled to");
+  assert.deepEqual(errors, []);
+});
+
 test("older conversations are read only when scrolled to", async (t) => {
   const { app, root } = await fixture(t, [long]);
   saveOnboarding(app.store, app.runtime.owner, { done: true });
