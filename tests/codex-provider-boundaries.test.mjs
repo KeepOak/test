@@ -182,7 +182,7 @@ test("exec-only completion and model probe both carry the fixed sandbox and appr
 test("exec alias is normalized and unsupported or conflicting model invocations cannot launch", async () => {
   assert.deepEqual(codexArgs(["e", "--json", "-"], "fixture"), codexArgs(["exec", "--json", "-"], "fixture"));
   for (const args of [["e", "--yolo", "-"], ["e", "--json", "--dangerously-bypass-approvals-and-sandbox", "-"],
-    ["e", "-c", 'approval_policy="on-request"', "-"], ["resume", "last"], ["--json", "-"]]) {
+    ["e", "-c", 'approval_policy="on-request"', "-"], ["resume", "last"], ["--json", "-"], ["--", "exec", "--json", "-"], ["--", "e", "--json", "-"]]) {
     let starts = 0;
     const provider = new CliAgentProvider({ ...row(), args }, {}, async () => { starts++; assert.fail("no child may start"); });
     await assert.rejects(provider.complete(request()), /requires.*read-only access and no approvals/);

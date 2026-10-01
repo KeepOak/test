@@ -144,7 +144,7 @@ function checkCodexPolicy(args: readonly string[]): void {
 export function codexArgs(args: readonly string[], model: string, workDir: string | null = null): string[] {
   const at = args.findIndex((arg) => arg === "exec" || arg === "e");
   checkCodexPolicy(args);
-  if (at < 0) throw new Error("Codex used as a model requires an exec invocation with read-only access and no approvals.");
+  if (at < 0 || args.slice(0, at).includes("--")) throw new Error("Codex used as a model requires an exec invocation with read-only access and no approvals.");
   // QA 2026-09-28: Codex answering as a model works in Branch's own empty folder, which Branch made and nothing else
   // uses, so the git-repository trust check is skipped for that one folder only; any other folder keeps it.
   const where = workDir ? ["-C", workDir, "--skip-git-repo-check"] : [];
