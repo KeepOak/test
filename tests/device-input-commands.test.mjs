@@ -57,6 +57,14 @@ test("the arguments are checked before either computer acts, and only the owner'
   assert.ok((await node("linux").available()).includes("input"), "offered on Linux where xdotool is found");
 });
 
+test("Linux on Wayland does not offer its screen and keyboard, so Take over is never offered for input it refuses", async () => {
+  const node = (env) => new NodeActions({ os: "linux", env, identityDir: "/nowhere", find: async () => true });
+  const wayland = await node({ WAYLAND_DISPLAY: "wayland-0" }).available();
+  assert.ok(!wayland.includes("input"), "not offered on Wayland, even with xdotool, xmessage and wmctrl found");
+  assert.ok(wayland.includes("screen"), "the rest is still offered there");
+  assert.ok((await node({}).available()).includes("input"), "still offered on X11");
+});
+
 test("Windows: the fixed script compiles and reads the screen, with an input it does nothing with", { skip: process.platform !== "win32" }, async () => {
   const command = windowsInputCommand({ action: "none", button: "left", count: 1 }, []);
   const out = await spawnRunner(command, { timeoutMs: 60_000, maxBytes: 4096 });

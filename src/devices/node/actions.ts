@@ -112,6 +112,8 @@ export class NodeActions {
   async available(): Promise<Capability[]> {
     const found: Capability[] = [];
     for (const capability of offeredOn(this.deps.os)) {
+      // Wayland does not let another program move the pointer (see `input` below), so it is not offered there.
+      if (capability === 'input' && this.deps.os === 'linux' && onWayland(this.env)) continue;
       const wanted = needs[this.deps.os][capability] ?? [];
       let ok = true;
       for (const need of wanted) {
