@@ -63,6 +63,18 @@ test("an invitation asked for by the owner is refused when the window switches p
     (error) => error.status === 403 && /owner/.test(error.message));
   assert.deepEqual([consumed, invited], [0, 0], "nothing consumed, no invitation made");
   app.store.profiles.switch({ profileId: null });
+  await assert.rejects(ask(async () => {
+    app.store.profiles.switch({ profileId: person.id, pin: "1234" });
+    app.store.profiles.switch({ profileId: null });
+    return body;
+  }), (error) => error.status === 403, "a switch away and back during the wait still refuses");
+  const lockers = new Set();
+  await assert.rejects(devicesApi({ devices: app.devices, store: app.store, owner: app.runtime.owner, method: "POST", baseUrl: "http://127.0.0.1:1",
+    viaDoor: false, keyHere: true, chatPairing, onLocked: (listener) => { lockers.add(listener); return () => lockers.delete(listener); },
+    readBody: async () => { for (const listener of lockers) listener(); return body; } }, "/api/devices/invite"),
+  (error) => error.status === 403, "an App lock during the wait refuses, even if unlocked again before the body arrives");
+  assert.equal(lockers.size, 0, "the lock listener is let go");
+  assert.deepEqual([consumed, invited], [0, 0]);
   const offer = await ask(async () => body);
   assert.ok(offer.code && offer.link, "the owner, still at the window, gets the invitation");
   assert.deepEqual([consumed, invited], [1, 1]);
@@ -73,11 +85,9 @@ test("a pairing request answered after the window locked opens no consent dialog
   const f = await newWindow(t);
   const proposal = (id) => ({ id, channel: "telegram", chatId: "c1", senderId: "owner-1", senderName: "Owner", messageId: id,
     kind: "phone", label: "", expiresAt: new Date(Date.now() + 120_000).toISOString() });
-  let hold = false, release, held, answer = proposal("1".repeat(32));
-  const gate = new Promise((resolve) => { release = resolve; });
-  const reached = new Promise((resolve) => { held = resolve; });
+  let holdNext = null, answer = proposal("1".repeat(32));
   await f.page.route("**/api/devices/chat-pairing", async (route) => {
-    if (hold) { hold = false; held(); await gate; }
+    if (holdNext) { const { gate, held } = holdNext; holdNext = null; held(); await gate; }
     await route.fulfill({ json: { proposals: [answer] } });
   });
   const ask = () => f.page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
@@ -86,15 +96,25 @@ test("a pairing request answered after the window locked opens no consent dialog
   await consent.waitFor({ timeout: 20000 }); // the stand-in request reaches the window when nothing has changed
   await f.page.locator('.dlg [data-act="chat-pair-dismiss"]').click();
   await consent.waitFor({ state: "detached" });
-  answer = proposal("2".repeat(32));
-  hold = true;
-  const read = f.page.waitForResponse((response) => new URL(response.url()).pathname === "/api/devices/chat-pairing");
-  await ask();
-  await reached;
-  await f.page.evaluate(() => document.getElementById("app").classList.add("locked-b17"));
-  release();
-  await read;
-  await f.page.waitForTimeout(1000);
+  const lockedDuring = async (id, during) => {
+    answer = proposal(id);
+    let release, held;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const reached = new Promise((resolve) => { held = resolve; });
+    holdNext = { gate, held };
+    const read = f.page.waitForResponse((response) => new URL(response.url()).pathname === "/api/devices/chat-pairing");
+    await ask();
+    await reached;
+    await f.page.evaluate(during);
+    release();
+    await read;
+    await f.page.waitForTimeout(1000);
+  };
+  // Locked and unlocked again while the list was read: the authority captured before the read is revoked for good.
+  await lockedDuring("2".repeat(32), () => { const app = document.getElementById("app"); app.classList.add("locked-b17"); app.classList.remove("locked-b17"); });
+  assert.equal(await consent.count(), 0, "a lock roundtrip during the read still refuses consent");
+  // Locked and still locked when the answer comes.
+  await lockedDuring("3".repeat(32), () => document.getElementById("app").classList.add("locked-b17"));
   assert.equal(await consent.count(), 0, "no consent on a locked window");
   assert.deepEqual(f.errors, []);
 });
