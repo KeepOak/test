@@ -67,7 +67,22 @@ test("the usage popover's foot says This month: $… beside Open Usage, and neve
   await openList();
   const month = foot.locator("span", { hasText: "This month:" });
   assert.match(await month.innerText(), /^This month: \$\d+\.\d\d$/);
-  const [sum, button] = await Promise.all([month.boundingBox(), foot.getByRole("button", { name: "Open Usage", exact: true }).boundingBox()]);
+  await foot.getByRole("button", { name: "Open Usage", exact: true }).waitFor({ state: "visible" });
+  // Opening also reads plan limits and redraws the popover asynchronously. Measure both visible controls in one
+  // frame: two protocol boundingBox calls can otherwise observe a detached footer midway through that redraw.
+  const geometry = await page.waitForFunction(() => {
+    const footer = document.querySelector(".lim-foot");
+    const month = [...(footer?.querySelectorAll("span") ?? [])].find(node => /^This month:/.test(node.textContent ?? ""));
+    const button = footer?.querySelector('[data-act="setgo"][data-v="usage"]');
+    if (!month?.isConnected || !button?.isConnected || button.textContent?.trim() !== "Open Usage"
+      || !month.getClientRects().length || !button.getClientRects().length) return false;
+    const sum = month.getBoundingClientRect(), open = button.getBoundingClientRect();
+    if (!sum.width || !sum.height || !open.width || !open.height) return false;
+    return { sum: { x: sum.x, y: sum.y, width: sum.width, height: sum.height },
+      button: { x: open.x, y: open.y, width: open.width, height: open.height } };
+  });
+  const { sum, button } = await geometry.jsonValue();
+  await geometry.dispose();
   assert.ok(sum.x < button.x && Math.abs((sum.y + sum.height / 2) - (button.y + button.height / 2)) < 4, "one line: the sum left, Open Usage right");
   assert.deepEqual(errors, []);
 });

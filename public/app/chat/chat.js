@@ -30,7 +30,9 @@ import { sendInBackground, roomAway } from "./bgsend.js"; // RES-702: Ctrl+Enter
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { rosterButton, initBeside } from "./beside.js";
 import { panesWrap, panesOn, paneOpen, followPane, paneTo, paneWords, paneTarget, paneBusy, paneRoom, sendToPane, makeMain, initPanes } from "./panes.js"; // RES-703: one composer, many panes
-import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
+import { msgActs, viaChannel, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
+import { initScrollFollow, jumpRow, selectionHeld } from "./scroll-follow.js";
+import { initApprovalKeys } from "./approval-keys.js";
 import { initFlag, flagBadge } from "./flag.js";
 import { rememberCards, initRemember } from "./remember.js";
 import { goalStrip, loadGoal, initGoal } from "./goal.js";
@@ -135,7 +137,7 @@ const ownWords = (words) => String(words ?? "").replace(/^\[Trunk @[a-z0-9-]{1,6
    came with them (src/runtime.ts attachmentsNote); the file's own row is drawn under the bubble, so the bubble leaves the
    note out rather than saying it twice. A message with no file rows keeps every word. */
 const withoutFileNote = (m, words) => (m.attachments?.length ? words.replace(/\s*\[attached files?: [^\]\n]*\]\s*$/, "") : words);
-function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(withoutFileNote(m, ownWords(m.content)))}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
+function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${viaChannel(m)}${esc(withoutFileNote(m, ownWords(m.content)))}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
 /* A reply is signed as the prototype's are: the face of whoever wrote it when the speaker changes (a Trunk's, or Branch's),
    and in a room the Trunk's name above it. */
 function bot(m, first, who, info) {
@@ -170,7 +172,7 @@ function askCard(q) {
   const locked = document.getElementById("app")?.classList.contains("locked"); // Lockdown keeps no standing yes either
   const standing = !q.noStanding && !q.noAlways && !q.onceOnly && q.source === "owner" && !E.profiles?.active?.id && !locked;
   const always = standing ? `<button class="btn" type="button" data-act="ask-always" ${id}>${t("window.chat.ask.always")}</button>` : "";
-  return `<div class="b"><div class="gut"></div><div><div class="card ask" id="live-ask"><div class="card-h"><span class="q">${esc(q.question || q.label)}</span><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div>
+  return `<div class="b"><div class="gut"></div><div><div class="card ask" id="live-ask" data-approval-card tabindex="0" role="group" aria-label="${esc(t("dashboard.needs.title"))}" aria-keyshortcuts="Enter Escape"><div class="card-h"><span class="q">${esc(q.question || q.label)}</span><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div>
     ${(q.question && q.label) || q.bytes || q.jobs?.length ? `<dl class="kv">${q.question && q.label ? `<dd class="mailbody">${esc(q.label)}</dd>` : ""}${requestBody(q)}</dl>` : ""}
     <div class="acts"><button class="btn pri" type="button" data-act="ask" data-v="allow" ${id}>${esc(verb)}</button>${always}<button class="btn ghost" type="button" data-act="ask" data-v="deny" ${id}>${t("window.chat.ask.dont-allow")}</button></div></div></div></div>`;
 }
@@ -296,7 +298,7 @@ function replyRow(T, m, i, info, index, marks) {
   const body = choice ? choiceCard(choice, next?.role === "user" ? next.content : null, m.messageId ?? i, face) : replyBubble(T, m, info, index.get(m));
   if (choice) { T.lastRole = "choice"; T.lastWho = null; }
   const run = ends && T.run && !LIVE.includes(T.run.status) ? T.run : null;
-  T.out.push(marks.before(m) + stampBefore(m, T.prev) + body + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + afterEnd(run, T.worked, face) + marks.after(m));
+  T.out.push(marks.before(m) + stampBefore(m, T.prev) + body + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + afterEnd(run, T.worked, face, C.messages) + marks.after(m));
 }
 
 /* The empty conversation, 1:1 with the prototype's emptyChat() (with pass 11's waving Branch in place of the mark): the
@@ -343,6 +345,9 @@ export const addDockItem = (draw) => { OUT.dock.push(draw); };
 const PREFIX = [];
 export const addSendPrefix = (take) => { PREFIX.push(take); };
 const hooked = (list) => list.map((draw) => { try { return draw(C.sessionId) || ""; } catch (error) { toast(error.message); return ""; } }).join("");
+/** Bind a pending new-conversation choice to this composer, project and timeline selection. */
+export const newConversationProject = () => ownerHere() ? C.project ?? "default" : null;
+export const newConversationBinding = () => JSON.stringify([C.seat, C.project, lineTrunk()?.id ?? null]);
 /** pane-stage-006 (B2): who this conversation is (its Trunk, its room, its name), for the stage's name and dock. */
 export const conversationWho = () => ({ sessionId: C.sessionId, trunk: speaker() ?? null, room: E.rooms.find((r) => r.sessionId === C.sessionId) ?? null, title: title() });
 /** shell-002 (B6): "waiting" while a request of the conversation waits for the owner (GET /api/policy), "working" while
@@ -365,26 +370,45 @@ export const sendingHere = () => C.sending && !!C.sessionId && C.sessionId === S
    browser's keys scrolled was the one taken away. Focused, it is found again by its id (core/dom.js keepFocus). */
 export function draw() {
   LINE.now = null;
+  readPlace();
   /* pass 18a/18b: a helper's conversation (its own record) or a room member's (its thread), view only, with one way back
      in the composer's place */
-  if (viewingHelper()) return `${panesWrap(`<div class="scroll" id="scroll" tabindex="-1"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${helperDock()}`;
+  if (viewingHelper()) return `${panesWrap(`<div class="scroll" id="scroll" tabindex="-1"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${jumpRow()}${helperDock()}`;
   /* trunk-one-row: a Trunk's conversation is drawn inside the Trunk's one timeline (chat/trunkline.js): its older
      conversations above it, under their own lines, and any written in since below it. #conversation stays the one the
      message box sends to; its own line names when it began, so its first message carries no stamp of its own. */
   const line = LINE.now = isEmpty() || whoHere()?.kind === "room" ? null : lineHTML(C.sessionId, C.messages, current());
   const above = line ? `<div class="thread tl-past19">${line.before}${line.sep}</div>` : "", below = line?.after ? `<div class="thread tl-past19 tl-after19" id="tl-now">${line.after}</div>` : "";
-  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${panesWrap(`<div class="scroll" id="scroll" tabindex="-1">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `${above}<div class="thread" id="conversation">${thread()}${pauseNote(C.sessionId)}</div>${below}`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
+  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${panesWrap(`<div class="scroll" id="scroll" tabindex="-1">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `${above}<div class="thread" id="conversation">${thread()}${pauseNote(C.sessionId)}</div>${below}`}</div>`)}${jumpRow()}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
 /* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
    are written into the drawn thread and must start from a fresh one each time. */
 export const inParts = () => !FIND.on;
 const heard = new WeakSet();
+/* Where the reader is in the conversation's box: at its end, or how far from its top. */
+function place(box) {
+  C.readTop = box.scrollTop;
+  C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+}
+/* Read off the box on screen before it is drawn over. Its scroll event comes only on the next frame, and a drawing before
+   then (a read landing, the window's own redraw) put the reader back where the last event had heard them, at the end,
+   losing the scroll they had just made (CI, window-trunk-timeline, 987 !== 300). */
+function readPlace() {
+  const box = $("#scroll");
+  if (box?.isConnected && box.clientHeight > 0 && C.readSid === C.sessionId) place(box);
+}
+/* A message sent takes the reader to the end: the box on screen too, since the drawing that shows it reads it there. */
+function toEnd() {
+  C.atBottom = true;
+  const box = $("#scroll");
+  if (box) box.scrollTop = box.scrollHeight;
+}
 export function after(main) {
   /* Newest at the bottom stays in view only while the reader is at the bottom; someone reading back keeps their place. */
   const box = $("#scroll", main);
   if (box) {
     const same = C.readSid === C.sessionId;
-    box.scrollTop = !same || C.atBottom !== false ? box.scrollHeight : C.readTop ?? box.scrollHeight;
+    if (!same || !selectionHeld(box)) box.scrollTop = !same || C.atBottom !== false ? box.scrollHeight : C.readTop ?? box.scrollHeight;
     /* trunk-one-row: a conversation opened with newer ones below it in the timeline opens at its own end. */
     const now = !same && $("#tl-now", box);
     if (now) box.scrollTop += now.getBoundingClientRect().top - box.getBoundingClientRect().bottom + 24;
@@ -392,7 +416,7 @@ export function after(main) {
     // A scroll box kept from the last draw already has its listener. A box drawn over before the next frame is still sent
     // the scroll queued on it, and off the page it reads 0 for everything, which looked like a reader at the end: only
     // the box on screen says where the reader is.
-    if (!heard.has(box)) box.addEventListener("scroll", () => { if (!box.isConnected) return; C.readTop = box.scrollTop; C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }, { passive: true });
+    if (!heard.has(box)) box.addEventListener("scroll", () => { if (box.isConnected) place(box); }, { passive: true });
     heard.add(box);
     stillOutOfSight(box);
     lineAfter(box);
@@ -425,8 +449,11 @@ async function rereadRoom() {
 }
 
 /* Opening a conversation closes the phone's list over it, as the prototype's openChat does. */
-export async function openConversation(id) {
+export async function openConversation(id, authority = () => true) {
+  if (!authority()) return false;
   C.seat += 1;
+  const seat = C.seat;
+  const current = () => authority() && C.seat === seat && C.sessionId === id && S.chat === id && S.view === "chat";
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
   openLine();
@@ -437,10 +464,17 @@ export async function openConversation(id) {
   C.mark = openMark(id);
   renderNow();
   C.project = null;
-  try { const got = await api("sessions/" + id); C.messages = got.messages ?? []; C.project = got.project ?? null; } catch (error) { toast(error.message); }
-  await loadWaiting();
-  await loadExtras(id);
+  try {
+    const got = await api("sessions/" + id);
+    if (!current()) return false;
+    C.messages = got.messages ?? []; C.project = got.project ?? null;
+  } catch (error) { if (!current()) return false; toast(error.message); }
+  await loadWaiting(current);
+  if (!current()) return false;
+  await loadExtras(id, current);
+  if (!current()) return false;
   renderNow();
+  return true;
 }
 /* What the engine last said about the open conversation: its line in the list and its tasks. When it changes, something
    happened there that this window did not start (a new Trunk's hello, a schedule's run, an answer from another window). */
@@ -525,8 +559,8 @@ function watchThinking(on) {
   }, 1000);
 }
 
-async function loadWaiting() {
-  try { C.waiting = (await api("policy")).waiting ?? []; } catch { C.waiting = []; }
+async function loadWaiting(current = () => true) {
+  try { const got = await api("policy"); if (current()) C.waiting = got.waiting ?? []; } catch { if (current()) C.waiting = []; }
 }
 
 /* A line starting with / is offered to the engine's commands first (POST /api/commands/run). One it runs shows its answer
@@ -749,7 +783,7 @@ async function sendPlain(said, withLead = false) {
      the answer is this conversation's, read when it is opened again, never drawn over the one on screen. */
   const moved = () => C.seat !== seat;
   C.messages.push({ role: "user", content: prompt });
-  C.atBottom = true;
+  toEnd();
   C.prompt = prompt;
   S.drafts[C.sessionId ?? "new"] = "";
   C.sending = true;
@@ -998,6 +1032,8 @@ export function init() {
   initBeside();
   initPanes({ asks: paneAsks, readAsks: () => loadWaiting().then(render) });
   initMessages({ state: () => C, sendText: (words) => send(words), reopen: openConversation });
+  initScrollFollow(() => C);
+  initApprovalKeys();
   initMore({ state: () => C });
   initLeaveOut({ state: () => C, reopen: openConversation });
   initBranches({ state: () => C, sendText: (words) => send(words), reopen: openConversation });

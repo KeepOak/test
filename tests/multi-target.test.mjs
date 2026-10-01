@@ -240,7 +240,10 @@ test("only the tools that touch several things declare them; every other tool is
     // "fewer rounds" part's tool, registered now that the part ships on.
     "files.read_many",
     // A move leaves one place and goes to another, and a batch names several: every path is judged (src/files.ts).
-    "files.move"];
+    "files.move",
+    // CHAT-023: an earlier own message is edited or deleted in one exact chat, and the list reads one chat's; each names
+    // that chat so a rule about it judges the call (src/channels/message-actions.ts).
+    "channels.delete_message", "channels.edit_message", "channels.own_messages"];
   // git.push / git.pull / github.publish_repo are registered only when the owner switches them on.
   assert.deepEqual(declared.filter((name) => !expected.includes(name)), [], "no other tool declares targets");
   assert.deepEqual(expected.filter((name) => !declared.includes(name)), [], "every multi-target tool declares them");

@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { compileChange, fetchSource, minutes, ownTemp, readyToCompile, stampDevVersion, type DevStage, type Run } from "../desktop/dev-build.js";
-import { classify, readCompiled, type Classified, type Part } from "./classify.js";
-import { stageLive } from "./live-folder.js";
-import type { LiveManifest } from "./manifest.js";
+import { classify, readCompiled, shellEntries, type Classified, type Part } from "./classify.js";
+import { liveBuildDir, readLiveState, stageLive } from "./live-folder.js";
+import { sha256, verifyLive, type LiveManifest } from "./manifest.js";
 
 /**
  * Live updates (hot-update): a Beta change built the light way.
@@ -60,6 +60,43 @@ async function fileAt(git: (args: string[], timeoutMs?: number) => Promise<strin
   return git(["show", `${commit}:${path}`]).catch(() => null);
 }
 
+/** Read every recorded compiled module, validating the exact buffer used for classification.
+ * Do not walk a second, potentially changed directory tree or tolerate missing recorded modules.
+ */
+async function recordedModules(root: string, manifest: LiveManifest): Promise<Map<string, string>> {
+  const modules = new Map<string, string>();
+  for (const [path, want] of Object.entries(manifest.files)) {
+    if (!path.startsWith("dist/")) continue;
+    const name = path.slice("dist/".length);
+    // Match readCompiled's module mapping and exclusions for copied, non-source folders.
+    if (/^(data|handbook|bundled-add-ons)(\/|$)/.test(name) || !/\.c?js$/.test(name)) continue;
+    const body = await readFile(join(root, path));
+    if (body.length !== want.size || sha256(body) !== want.sha256)
+      throw new Error("A recorded engine module changed while its graph was being read.");
+    modules.set(`src/${name.replace(/\.js$/, ".ts").replace(/\.cjs$/, ".cts")}`, body.toString("utf8"));
+  }
+  return modules;
+}
+
+/** The exact running live engine already compiled all modules needed to classify a later window-only change.
+ * Reuse only its checked immutable build, never an unlabelled build-dir/dist left by an earlier attempt.
+ * A cache that is absent, incomplete, altered or no longer current simply keeps the existing compile path.
+ */
+async function runningModules(plan: LivePlan): Promise<Map<string, string> | null> {
+  if (!plan.engineAt || plan.engineAt === plan.packaged) return null;
+  try {
+    const engine = (await readLiveState(plan.appRoot)).engine;
+    if (!engine || engine.commit !== plan.engineAt) return null;
+    const root = liveBuildDir(plan.appRoot, engine.commit);
+    const manifest = await verifyLive(root, engine);
+    const modules = await recordedModules(root, manifest);
+    if (shellEntries.some(entry => !modules.has(entry))) return null;
+    const current = (await readLiveState(plan.appRoot)).engine;
+    if (!current || current.commit !== engine.commit || current.digest !== engine.digest) return null;
+    return modules;
+  } catch { return null; }
+}
+
 export async function buildLive(run: Run, plan: LivePlan): Promise<LiveOutcome> {
   const fetched = await fetchSource(run, plan);
   const { source, git, version } = fetched;
@@ -73,16 +110,22 @@ export async function buildLive(run: Run, plan: LivePlan): Promise<LiveOutcome> 
   const sinceEngine = await changedFiles(git, from.engine!, plan.commit);
   const sinceWindow = await changedFiles(git, from.window!, plan.commit);
   if (!sinceShell.length && !sinceEngine.length && !sinceWindow.length) return { tier: "none", version };
-  const compiles = [...sinceShell, ...sinceEngine].some((path) => /^(src|data|docs\/handbook)\/|^tsconfig|^scripts\/(build-ts|copy-)/.test(path));
+  const manifest = { before: await fileAt(git, from.shell, "package.json"), after: await readFile(join(source, "package.json"), "utf8") };
+  const delta = classify({ changed: [...sinceEngine, ...sinceWindow], read: () => null, manifest });
+  const windowOnly = delta.parts.has("window") && [...delta.parts].every(part => part === "window");
+  // sinceShell may include engine code that was already compiled and applied live. That history must still be
+  // classified against the packaged shell, but it does not require another compile for an unchanged engine.
+  const cached = windowOnly ? await runningModules(plan) : null;
+  const compiles = !cached && [...sinceShell, ...sinceEngine].some((path) => /^(src|data|docs\/handbook)\/|^tsconfig|^scripts\/(build-ts|copy-)/.test(path));
+  if (cached) plan.note?.("Window-only change: reusing the verified running engine's compiled module graph; TypeScript compile skipped.");
   const reused = await readyToCompile(run, plan, fetched);
   plan.onStage("installing", reused ? "skipped" : "running");
   const env = ownTemp(plan.buildDir), timeoutMs = minutes(30);
   plan.onStage("building", "running");
   if (compiles) await compileChange(run, plan, source);
   else await run("node", ["scripts/copy-fonts.mjs"], { cwd: source, timeoutMs, env });
-  const compiled = compiles ? await readCompiled(source) : new Map<string, string>();
+  const compiled = cached ?? (compiles ? await readCompiled(source) : new Map<string, string>());
   const read = (path: string) => compiled.get(path) ?? null;
-  const manifest = { before: await fileAt(git, from.shell, "package.json"), after: await readFile(join(source, "package.json"), "utf8") };
   const shell = classify({ changed: sinceShell, read, manifest });
   if (shell.parts.has("shell")) {
     const why = shell.files.find((file) => file.part === "shell")?.path ?? "";

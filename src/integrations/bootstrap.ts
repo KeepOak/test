@@ -38,7 +38,7 @@ import { HookSchema, type Hooks, type HookRunner, type HookConfig } from '../hoo
 import type { ToolContext } from '../contracts.js';
 import type { NetworkPolicy } from '../network-policy.js';
 import type { GitTools } from './git.js';
-import { GitHubAccess, GitHubConfigSchema, type TokenSource } from './github.js';
+import { GitHubAccess, GitHubConfigSchema, type TokenSource, type GitHubConfig } from './github.js';
 import { GitHubAppSettingsSchema, chooseGitHubTokenSource } from './github-app.js';
 import { registerGitHub, registerGitRemote } from './git-tools.js';
 import { GitLabAccess, GitLabConfigSchema } from './gitlab.js';
@@ -172,6 +172,8 @@ export interface ChannelHost { router: ChannelRouter; secret: (name: string) => 
   slackEvents?: (channelId: string, event: unknown, botUserId: string | null) => void;
   /** Version control on this computer, so the remote and GitHub tools can be switched on here. */
   git?: GitTools; activeSecret?: (name: string) => Promise<string>;
+  /** Owner's public GitHub device connection, used only after a configured token is absent. */
+  githubToken?: (config: GitHubConfig) => Promise<string | null>;
   /** RES-719: GitLab named in the launch file, handed to the engine's own GitLab connection (src/gitlab-connection.ts). */
   gitlab?: (settings: unknown) => void;
   /** The workspace, so the browser can send a file to a website and keep one it sends back. */
@@ -430,10 +432,11 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
  * A server on demand that has never been connected has no list to show, so it is connected now —
  * once — rather than being silently missing.
  */
+export type McpStop = (() => Promise<void>) & { check?: (signal?: AbortSignal) => Promise<void> };
 export async function startMcp(
   registry: ToolRegistry, server: unknown, env: NodeJS.ProcessEnv,
   policy: NetworkPolicy | undefined, host: McpHost | undefined,
-): Promise<(() => Promise<void>) | null> {
+): Promise<McpStop | null> {
   const guard = policy ? { guard: (base: typeof fetch) => policy.guard(base) } : undefined;
   // mac3/security-check: a server fetched from a package registry is looked up in the malware list
   // before it is added, and again before it is opened later (src/security-audit/malware-check.ts).
@@ -449,7 +452,7 @@ export async function startMcp(
   const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.injectionPolicy); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
-    return connection.close;
+    return Object.assign(connection.close, { check: connection.check });
   }
   const id = McpConfigSchema.parse(server).id;
   // Opening it puts nothing in the tool list — the tools are already there — so `openMcp`, not
@@ -467,9 +470,14 @@ export async function startMcp(
   }, host.injectionPolicy);
   if (!names.length) {
     const connection = await connect();
-    return connection.close;
+    return Object.assign(connection.close, { check: connection.check });
   }
-  return async () => { for (const name of names) registry.unregister(name); };
+  return Object.assign(async () => { for (const name of names) registry.unregister(name); }, {
+    check: async (signal?: AbortSignal) => {
+      if (!host.connections.check) throw new Error('This MCP host cannot check an existing session.');
+      await host.connections.check(id, signal);
+    },
+  });
 }
 /** mac3/security-check: asks the malware check about a server started from a package, if there is one. */
 async function vetLaunch(server: unknown, host: McpHost | undefined): Promise<void> {
@@ -491,6 +499,8 @@ export interface McpHost {
   startupTimeoutMs?: () => number;
   connections: { register(id: string, opener: () => Promise<{ close(): Promise<void> }>): void;
     acquire(runId: string, id: string): Promise<{ close(): Promise<void> }>;
+    /** Check an already-open session without starting a server. */
+    check?(id: string, signal?: AbortSignal): Promise<void>;
     /** Forgets a server the owner switched off or removed (src/mcp-own-servers.ts). */
     forget?(id: string): Promise<void> };
 }
@@ -609,13 +619,19 @@ function enableGit(registry: ToolRegistry, config: z.infer<typeof GitConfigSchem
 
   // bucket-18: GitHub App (A2227): the owner's own app when switched on, the personal token otherwise.
   const github = GitHubConfigSchema.parse(config.github);
-  const personal: TokenSource = async () => {
-    const value = await secret(github.tokenSecret).catch(() => '');
-    if (!value) throw new Error(`Connect GitHub first: save a secret called ${github.tokenSecret} in the active project holding a GitHub personal access token.`);
-    return value;
-  };
+  const personal = githubPersonalToken(github, host);
   const tokenSource = chooseGitHubTokenSource(config.githubApp, personal, policy, secret, { apiBase: github.apiBase });
   registerGitHub(registry, new GitHubAccess(config.github, policy, tokenSource), host.git);
+}
+
+function githubPersonalToken(config: GitHubConfig, host: ChannelHost): TokenSource {
+  return async () => {
+    const configured = await host.activeSecret!(config.tokenSecret).catch(() => '');
+    if (configured) return configured;
+    const connected = await host.githubToken?.(config);
+    if (connected) return connected;
+    throw new Error(`Connect GitHub first: save ${config.tokenSecret} in the active project, or connect your Branch OAuth app in Settings › Developer.`);
+  };
 }
 
 /**
@@ -646,7 +662,8 @@ function enableIssues(
   const trackers: IssueTrackers = {};
   if (config.github) {
     const settings = GitHubConfigSchema.parse(git?.github ?? {});
-    trackers.github = new GitHubAccess(settings, policy, held(settings.tokenSecret, 'GitHub', 'a GitHub personal access token'));
+    const personal = githubPersonalToken(settings, host);
+    trackers.github = new GitHubAccess(settings, policy, chooseGitHubTokenSource(git?.githubApp, personal, policy, secret, { apiBase: settings.apiBase }));
   }
   if (config.linear) {
     const settings = LinearConfigSchema.parse(config.linear);
