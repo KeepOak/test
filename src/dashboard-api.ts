@@ -149,16 +149,22 @@ export interface DashboardDeps extends SummaryDeps {
  * systemd's Restart=on-failure on Linux) starts it again. Anywhere nothing would start it again it
  * is refused, because a restart that only stops would leave the owner with no Branch at all.
  */
-async function restartEngine(dataDir: string, deps: DashboardDeps): Promise<unknown> {
+async function restartEngine(dataDir: string, deps: DashboardDeps, authorize: () => void = () => {}, release: () => void = () => {}): Promise<unknown> {
+  authorize();
   const pid = deps.pid ?? process.pid;
   const plan = restartPlan({
     platform: deps.platform ?? process.platform, env: deps.env ?? process.env, pid,
     running: await (deps.running ?? readRunning)(dataDir), hosted: deps.hosted,
   });
+  authorize();
   if (!plan.possible) throw new DashboardApiError(409, restartWords[plan.reason]);
   const setExitCode = deps.setExitCode ?? ((code: number) => { process.exitCode = code; });
   const signal = deps.signal ?? ((target: number, name: NodeJS.Signals) => { process.kill(target, name); });
-  setTimeout(() => { setExitCode(75); signal(pid, "SIGTERM"); }, 300);
+  setTimeout(() => {
+    try { authorize(); setExitCode(75); signal(pid, "SIGTERM"); }
+    catch { /* Revoked requests never signal the engine. */ }
+    finally { release(); }
+  }, 300);
   return { restarting: true };
 }
 
@@ -192,21 +198,28 @@ let waitingToRestart: NodeJS.Timeout | null = null;
  * is working, looking every five seconds, and then restarts as the button does (work saved, the address let go, the
  * computer's own service starting it again). Asked twice, it waits once. Refused where nothing would start it again.
  */
-async function restartWhenIdle(app: Branch, dataDir: string, deps: DashboardDeps): Promise<unknown> {
+async function restartWhenIdle(app: Branch, dataDir: string, deps: DashboardDeps, authorize: () => void, release: () => void): Promise<unknown> {
+  authorize();
   const pid = deps.pid ?? process.pid;
   const plan = restartPlan({ platform: deps.platform ?? process.platform, env: deps.env ?? process.env, pid,
     running: await (deps.running ?? readRunning)(dataDir), hosted: deps.hosted });
+  authorize();
   if (!plan.possible) throw new DashboardApiError(409, restartWords[plan.reason]);
   const working = () => busyTasks(app.store).working;
-  if (!working()) return restartEngine(dataDir, deps);
+  const idleAuthority = () => {
+    authorize();
+    if (working()) throw new DashboardApiError(409, "A task started working. Request the idle restart again.");
+  };
+  if (!working()) return restartEngine(dataDir, deps, idleAuthority, release);
   if (!waitingToRestart) {
     waitingToRestart = setInterval(() => {
+      try { authorize(); } catch { clearInterval(waitingToRestart!); waitingToRestart = null; release(); return; }
       if (working()) return;
       clearInterval(waitingToRestart!); waitingToRestart = null;
-      void restartEngine(dataDir, deps).catch(() => undefined);
+      void restartEngine(dataDir, deps, idleAuthority, release).catch(() => release());
     }, deps.idleCheckMs ?? 5000);
     waitingToRestart.unref();
-  }
+  } else release(); // The existing request owns the one pending idle restart.
   return { restarting: false, waiting: true, working: working() };
 }
 
@@ -253,8 +266,24 @@ export async function dashboardApi(
   if (path === "/api/dashboard/restart" && method === "POST") {
     masterOnly(context.access, "Restarting Branch");
     if (dashboardSettings(app.store, owner).mode === "off" && throughADoor(request)) throw new DashboardApiError(403, hereOnly);
-    const { whenIdle } = RestartSchema.parse(await context.readBody().catch(() => ({})) ?? {});
-    return whenIdle ? restartWhenIdle(app, context.dataDir, deps) : restartEngine(context.dataDir, deps);
+    const scope = app.store.profiles.scope();
+    let revoked = false;
+    const revoke = () => { revoked = true; };
+    const offPerson = app.store.profiles.onSwitched(revoke);
+    const offLock = app.sessionLock.onLocked(revoke);
+    const release = () => { offPerson(); offLock(); };
+    const authorize = () => {
+      if (revoked) throw new DashboardApiError(403, "The restart request was cancelled when Branch locked or the person changed. Request it again.");
+      app.store.profiles.requireOwner("Restarting the engine");
+      if (app.sessionLock.locked()) throw new DashboardApiError(423, "Unlock Branch before restarting the engine.");
+      if (app.store.profiles.scope() !== scope) throw new DashboardApiError(403, "The person using Branch changed. Request the restart again.");
+    };
+    try {
+      authorize();
+      const { whenIdle } = RestartSchema.parse(await context.readBody() ?? {});
+      authorize();
+      return await (whenIdle ? restartWhenIdle(app, context.dataDir, deps, authorize, release) : restartEngine(context.dataDir, deps, authorize, release));
+    } catch (error) { release(); throw error; }
   }
   // Pausing every automation is also Automations › Scheduled's own row, so, like restarting, it does not wait on the
   // dashboard's switch: the key of this computer only, and, while the dashboard is off, never through a door.

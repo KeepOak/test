@@ -1,3 +1,4 @@
+import { insightsCommand } from "./insights.js";
 import type { Runtime } from "../runtime.js";
 import type { RunSource } from "../policy.js";
 import type { FeatureMode } from "../feature-switches.js";
@@ -15,6 +16,7 @@ import { helpText } from "./help-text.js";
 import { promptsCommand } from "./saved.js";
 import { trunkCommand } from "./trunk.js"; // R17-A
 import { accountCommand } from "./account.js"; // mac6/accounts
+import { analyticsLines, usageAnalytics } from "../accounts/usage-analytics.js";
 import { BOARD_HANDLERS } from "../flows-boards/commands.js"; // r17-h
 import { AUTONOMY_HANDLERS } from "../autonomy/commands.js"; // r17-b
 import { initCommand } from "../coding/commands.js"; // mac7/r17-d
@@ -182,6 +184,15 @@ function stop(call: Call): Reply {
   for (const run of here) runtime.cancel(run.id);
   return say("Stopping. Anything already changed stays changed; the record shows what was done.");
 }
+function history(call: Call): Reply {
+  if (call.argument.trim()) return say("Use /history on its own in the conversation you want to read.");
+  const { runtime } = call.host;
+  if (!call.sessionId) return say("Open a conversation first to see its history.");
+  if (!mayUseConversation(runtime.store, runtime.owner, call.surface, call.sessionId))
+    return say("Conversation not found.");
+  return say(runtime.hideSecrets(historyLines(runtime, call.sessionId, 20).join("\n")));
+}
+
 function usage(call: Call): Reply {
   const { runtime } = call.host, lines: string[] = [];
   if (call.sessionId) {
@@ -195,6 +206,7 @@ function usage(call: Call): Reply {
   lines.push(`This month (since ${month.monthStart}): ${month.currentMonthlyTokens} tokens · about $${month.estimatedCost.toFixed(2)}`
     + (month.unpricedRuns ? ` (${month.unpricedRuns} tasks had no price on file)` : "")
     + (month.stillBeingMade > 0 ? `, including about $${month.stillBeingMade.toFixed(2)} for something still being made` : "")); // hardening-3
+  lines.push(...analyticsLines(usageAnalytics(runtime.store, runtime.owner, month.monthStart.slice(0, 7))));
   return say(lines.join("\n"));
 }
 async function compact(call: Call): Promise<Reply> {
@@ -314,13 +326,13 @@ export const HANDLERS: Record<string, Handler> = {
   plan: toggle("plan"), temporary: toggle("temporary"),
   attach: () => say("Choose a file to send with your next message.", { do: "attach" }),
   export: exportConversation,
-  history: (call) => say(historyLines(call.host.runtime, call.sessionId).join("\n")),
+  history,
   new: freshConversation,
   sessions,
   go: go(""), inbox: go("inbox"), automations: go("automations"), library: go("library"),
   customize: go("customize"), settings: go("settings"),
   theme, default: defaultModel, pane, lockdown,
-  stop, status: (call) => say(statusLines(call).join("\n")), compact, usage, btw: aside, tokens, goal,
+  stop, status: (call) => say(statusLines(call).join("\n")), compact, usage, insights: insightsCommand, btw: aside, tokens, goal,
   whoami: (call) => say(whoamiLines(call).join("\n")),
   version: (call) => say(`Branch Agent ${call.host.version ?? "(version unknown)"}`),
   health,

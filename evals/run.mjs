@@ -20,11 +20,13 @@ import { stopAllEngines } from "./lib/engine.mjs";
 import { startStandin } from "./lib/standin.mjs";
 import { previousRun, scorecardJson, scorecardMarkdown, summarise, writeScorecard } from "./lib/report.mjs";
 import { allTasks, smokeTasks } from "./tasks/index.mjs";
+import { ownerSkillTasks } from "./lib/owner-skills.mjs";
 
 const evalsDir = fileURLToPath(new URL("./", import.meta.url));
 
 function parseArgs(argv) {
-  const args = { model: "ollama", out: join(evalsDir, "results"), smoke: false, only: null, basePort: 0 };
+  const args = { model: "ollama", out: join(evalsDir, "results"), smoke: false, only: null, basePort: 0,
+    ownerSkills: process.env.EVAL_OWNER_SKILLS ?? null };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === "--model") args.model = argv[++i];
@@ -32,6 +34,10 @@ function parseArgs(argv) {
     else if (flag === "--smoke") args.smoke = true;
     else if (flag === "--only") args.only = argv[++i].split(",").map((s) => s.trim()).filter(Boolean);
     else if (flag === "--base-port") args.basePort = Number(argv[++i]);
+    else if (flag === "--owner-skills") {
+      args.ownerSkills = argv[++i];
+      if (!args.ownerSkills) throw new Error("--owner-skills requires an export path");
+    }
   }
   return args;
 }
@@ -39,6 +45,8 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const startedAt = new Date().toISOString();
+  let tasks = args.smoke ? smokeTasks() : [...allTasks(), ...await ownerSkillTasks(args.ownerSkills)];
+  if (args.only) tasks = tasks.filter((t) => args.only.includes(t.id));
 
   // The stand-in model runs for the smoke subset only; it proves the plumbing, never a model's quality.
   let standin = null, standinPort = 0;
@@ -47,9 +55,6 @@ async function main() {
     standinPort = standin.port;
   }
   const model = await describeModel(args.model, { standinPort });
-
-  let tasks = args.smoke ? smokeTasks() : allTasks();
-  if (args.only) tasks = tasks.filter((t) => args.only.includes(t.id));
 
   // One preflight: a model that cannot answer at all marks its tasks, rather than failing each in turn.
   let modelBlock = model.unavailable ?? null;

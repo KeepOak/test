@@ -4,6 +4,7 @@ import { declareShape, type AnswerShape, type ShapedAnswer } from "./answer-shap
 import type { ModelPreset, ModelRouter } from "./models.js";
 import { presetRunsLocally } from "./models.js";
 import type { Store } from "./store.js";
+import type { Budget, ToolContext } from "./contracts.js";
 
 /**
  * P17-D §4: decision models. Small, bounded judgments (yes or no, pick one, a score from 1 to 10, keep or drop each
@@ -31,6 +32,14 @@ export const DecisionSettingsSchema = z.object({
    */
   route: z.boolean().default(false),
   inbox: z.boolean().default(false),
+  /**
+   * models-ui: a long list a tool hands back (search results, files, messages) is filtered by the decision model before
+   * the task reads it, keeping what the task could need. Ships on, and acts only with a decision model on this computer
+   * or one chosen apart from the task's own (a call on the task's own model would cost as much as reading the list).
+   */
+  lists: z.boolean().default(true),
+  /** Lists shorter than this are read whole. */
+  listMin: z.number().int().min(20).max(2000).default(60),
 }).strict();
 export type DecisionSettings = z.infer<typeof DecisionSettingsSchema>;
 
@@ -56,11 +65,19 @@ const SHAPES = {
 type Raw = { answer?: boolean; choice?: string; score?: number; keep?: number[]; confidence: number; why?: string };
 
 /** Asks one shaped question of one connection (src/runtime.ts `shaped`, with no tools). */
-export type DecisionAsk = (text: string, shape: AnswerShape, preset: ModelPreset) => Promise<ShapedAnswer>;
+/**
+ * The task a decision is made for: its Stop and its budget reach the decision too, and its run (given by the runtime,
+ * never by a request) makes the decision's own run part of the task: it stays on this computer when the task must, and
+ * its spending counts against the task's cap.
+ */
+export interface DecisionOrigin { signal: AbortSignal; budget: Budget; runId: string; trunk?: string | undefined; trunkKeys?: ToolContext["trunkKeys"]; dryRun?: boolean }
+export type DecisionAsk = (text: string, shape: AnswerShape, preset: ModelPreset, origin?: DecisionOrigin) => Promise<ShapedAnswer>;
 
 export interface DecisionResult {
   kind: DecisionInput["kind"];
   verdict?: "yes" | "no"; choice?: string; score?: number; kept?: string[]; dropped?: string[];
+  /** A filter's kept lines by their place in the list given, from 0. */
+  keep?: number[];
   why: string; confidence: number; ms: number;
   model: { name: string; local: boolean };
   /** True when the decision model was less sure than the threshold and the task's own model decided. */
@@ -103,7 +120,8 @@ export function checkDecision(input: DecisionInput, raw: Raw): Omit<DecisionResu
   const keep = new Set(raw.keep ?? []);
   if ([...keep].some((n) => n < 1 || n > input.items.length))
     throw new Error("The model kept a line it was not given, so no decision was made.");
-  return { ...base, kept: input.items.filter((_, i) => keep.has(i + 1)), dropped: input.items.filter((_, i) => !keep.has(i + 1)) };
+  return { ...base, kept: input.items.filter((_, i) => keep.has(i + 1)), dropped: input.items.filter((_, i) => !keep.has(i + 1)),
+    keep: input.items.map((_, i) => i).filter((i) => keep.has(i + 1)) };
 }
 
 export class DecisionModels {
@@ -124,7 +142,9 @@ export class DecisionModels {
   overview() {
     const day = Date.now() - 86_400_000;
     const recent = this.log().filter((entry) => entry.at >= day);
+    const lists = this.listModel();
     return { settings: this.settings(), taskModel: this.models.default.id,
+      listModel: lists ? { id: lists.id, name: lists.name, local: presetRunsLocally(lists) } : null,
       models: [...this.models.presets.values()].map((preset) => ({ id: preset.id, name: preset.name, local: presetRunsLocally(preset) })),
       lastDay: { decisions: recent.length, averageMs: recent.length ? Math.round(recent.reduce((sum, e) => sum + e.ms, 0) / recent.length) : null } };
   }
@@ -145,18 +165,45 @@ export class DecisionModels {
   }
 
   /** One decision on one connection; a long list is split and its parts decided one after another. */
-  private async once(input: DecisionInput, preset: ModelPreset, maxList: number) {
-    if (input.kind !== "filter" || input.items.length <= maxList) return this.single(input, preset);
-    const parts: ReturnType<typeof checkDecision>[] = [];
+  private async once(input: DecisionInput, preset: ModelPreset, maxList: number, origin?: DecisionOrigin) {
+    if (input.kind !== "filter" || input.items.length <= maxList) return this.single(input, preset, origin);
+    const parts: (ReturnType<typeof checkDecision> & { start: number })[] = [];
     for (let start = 0; start < input.items.length; start += maxList)
-      parts.push(await this.single({ ...input, items: input.items.slice(start, start + maxList) }, preset));
+      parts.push({ ...await this.single({ ...input, items: input.items.slice(start, start + maxList) }, preset, origin), start });
     return { kind: input.kind, why: "", confidence: Math.min(...parts.map((p) => p.confidence)),
-      kept: parts.flatMap((p) => p.kept ?? []), dropped: parts.flatMap((p) => p.dropped ?? []) };
+      kept: parts.flatMap((p) => p.kept ?? []), dropped: parts.flatMap((p) => p.dropped ?? []),
+      keep: parts.flatMap((p) => (p.keep ?? []).map((i) => i + p.start)) };
   }
-  private async single(input: DecisionInput, preset: ModelPreset) {
-    const answer = await this.ask(prompt(input), SHAPES[input.kind], preset);
+  private async single(input: DecisionInput, preset: ModelPreset, origin?: DecisionOrigin) {
+    const answer = await this.ask(prompt(input), SHAPES[input.kind], preset, origin);
     if (answer.status === "refused") throw new Error(answer.reason);
     return checkDecision(input, answer.value as Raw);
+  }
+
+  /**
+   * models-ui: the model that filters long lists: the decision model the owner chose, when it is one on this computer or
+   * not the task's own; else a model on this computer. Null when there is neither, so no list is filtered.
+   */
+  listModel(): ModelPreset | null {
+    const chosen = this.settings().model ? this.models.presets.get(this.settings().model) : undefined;
+    if (chosen && (presetRunsLocally(chosen) || chosen.id !== this.models.default.id)) return chosen;
+    return [...this.models.presets.values()].find((preset) => presetRunsLocally(preset)) ?? null;
+  }
+  /**
+   * models-ui: which lines of a long list a task could need, by their place in the list; null when it is not filtered
+   * (switched off, short, too long to ask about at once, or no model for it). Never escalated to the task's own model.
+   * A line may say only so much; an empty one is asked about as "(empty)".
+   */
+  async filterList(rule: string, lines: string[], origin?: DecisionOrigin): Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null> {
+    const settings = this.settings(), preset = this.listModel();
+    if (!settings.lists || !preset || lines.length < settings.listMin || lines.length > 2000) return null;
+    const items = lines.map((one) => one.replace(/\s+/g, " ").trim().slice(0, 500) || "(empty)");
+    const question = `Keep every line that could matter for this task, and anything you are not sure about. The task: ${rule.replace(/\s+/g, " ").trim()}`.slice(0, 1000);
+    const started = Date.now();
+    const result = await this.once({ kind: "filter", question, items }, preset, settings.maxList, origin);
+    this.remember(Date.now() - started);
+    return { keep: result.keep ?? [], confidence: result.confidence, sure: result.confidence >= settings.minConfidence,
+      model: { name: preset.name, local: presetRunsLocally(preset) } };
   }
 
   /**

@@ -30,6 +30,7 @@ import { CF } from "./comfort.js"; // message times Always: the time is on the m
 import { tasteButton, initTaste } from "./taste.js";
 
 const M = { sid: null, pins: [], followUps: [], room: null, spend: null, commands: null, slashBox: null, slashI: 0, edit: null };
+const AT = { query: null, index: 0 };
 /* What the conversation module hands over: its state, a way to send words, and a way to re-read a conversation. */
 let X = { state: () => ({ sessionId: null, messages: [] }), sendText: async () => {}, reopen: async () => {} };
 
@@ -58,6 +59,14 @@ function runFor(m) {
 }
 function latestRun(wanted) {
   return (E.state?.runs ?? []).filter(wanted).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0] ?? null;
+}
+
+/** Exact engine receipt projected by the session API, never a guess based on message words. */
+export function viaChannel(m) {
+  const origin = m.channelOrigin;
+  if (m.role !== "user" || m.from || !origin || !/^[a-z][a-z0-9-]{0,63}$/.test(origin.kind ?? "")
+    || typeof origin.name !== "string" || origin.name.length > 80) return "";
+  return `<small class="channel-via" data-css="display:block">${esc(t("window.chat.msg.via-app", { name: origin.name }))}</small>`;
 }
 
 export function msgActs(m) {
@@ -120,9 +129,9 @@ const pinsPop = () => `<div class="ph">${t("window.chat.msg.pinned-here")}</div>
 /* A pin's row carries when its message was written, as the prototype's does. */
 const pinTime = (p) => { const at = sentAt((X.state().messages ?? []).find((m) => m.messageId === p.sourceId)); return at ? `<span class="mi-s">${esc(at)}</span>` : ""; };
 
-async function loadPins(id) {
-  const got = await api(`sessions/${id}/pins`).catch(report);
-  if (got && M.sid === id) M.pins = got.pins ?? [];
+async function loadPins(id, current = () => true) {
+  const got = await api(`sessions/${id}/pins`).catch(error => { if (current()) report(error); return null; });
+  if (current() && got && M.sid === id) M.pins = got.pins ?? [];
 }
 
 /* A pin is held against the message's lasting identity (sourceId); the engine takes and gives back its row id. */
@@ -249,7 +258,9 @@ function readRows(rec) {
   const files = rec.readFirst?.files ?? [], n = rec.readFirst?.remembered;
   const read = [...files, n ? plural(n, { one: "window.chat.msg.remembers.one", other: "window.chat.msg.remembers" }) : ""].filter(Boolean).join(", ");
   const tools = rec.toolsOffered ? t("window.chat.msg.tools-offered", { shown: rec.toolsOffered.shown, more: rec.toolsOffered.oneStepAway }) : "";
-  return [[t("window.chat.msg.read-first"), read], [t("window.chat.msg.tools"), tools]].filter(([, v]) => v);
+  /* models-ui: a long list the decision model filtered before the task read it; the steps still show every line. */
+  const lists = (rec.lists ?? []).map((l) => t("window.chat.msg.list-kept", { tool: l.tool, kept: l.kept, total: l.total, model: l.model })).join("; ");
+  return [[t("window.chat.msg.read-first"), read], [t("window.chat.msg.tools"), tools], [t("window.chat.msg.lists"), lists]].filter(([, v]) => v);
 }
 /* Copy the record: the engine's own record of the task, as Look inside read it. */
 async function copyRecord() {
@@ -292,12 +303,12 @@ async function slashTyped() {
   drawSlash();
 }
 
-function setBox(value) {
+function setBox(value, caret = value.length) {
   const box = $("#prompt");
   if (!box) return;
   box.value = value;
   box.focus();
-  box.setSelectionRange(value.length, value.length);
+  box.setSelectionRange(caret, caret);
   box.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
@@ -332,26 +343,67 @@ const skillsPop = () => `<div class="ph">${t("folder-trust.kind.skills")}</div>$
 export function openSkills() {
   const box = $("#prompt");
   if (!box || !skillsOn().length) return false;
+  AT.index = 0;
   openPop($("#composer"), skillsPop(), { force: true });
+  highlightMention();
   box.focus();
   return true;
 }
 
 /* The list opens over the box while the person keeps typing, so the box keeps focus and caret. */
+/* Caret-aware mention replacement/filtering follows Cline's context-mentions approach (Apache-2.0),
+   adapted to Branch Trunks; original implementation, without Cline's fzf dependency. */
+function mentionAt(box) {
+  if (!box || box.selectionStart !== box.selectionEnd) return null;
+  const end = box.selectionStart, match = box.value.slice(0, end).match(/(^|\s)@([^\s@]*)$/);
+  return match && !/^https?:/i.test(match[2]) ? { start: end - match[2].length - 1, end, query: match[2].toLocaleLowerCase() } : null;
+}
+function mentionItems() {
+  return [...document.querySelectorAll(".pop [data-act='mention-pick'], .pop [data-act='slash-pick']")].filter((item) => !item.hidden);
+}
+function highlightMention() {
+  const items = mentionItems();
+  AT.index = Math.max(0, Math.min(items.length - 1, AT.index));
+  for (const [i, item] of items.entries()) {
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", String(i === AT.index));
+    item.classList.toggle("sel6", i === AT.index);
+  }
+  items[AT.index]?.scrollIntoView({ block: "nearest" });
+}
 function mentionTyped(box) {
   if (!box) return;
   const at = box.selectionStart;
-  if (/(^|\s)@\w*$/.test(box.value)) openPop($("#composer"), mentionPop(), { force: true });
-  else if (/\s\/\w*$/.test(box.value) && skillsOn().length) openPop($("#composer"), skillsPop(), { force: true });
-  else { if (mentionOpen()) closePop(); return; }
+  const match = mentionAt(box);
+  if (match) {
+    if (AT.query !== match.query) AT.index = 0;
+    AT.query = match.query;
+    openPop($("#composer"), mentionPop(), { force: true });
+    for (const item of document.querySelectorAll(".pop [data-act='mention-pick']")) {
+      item.hidden = !!match.query && !`${item.textContent} ${item.dataset.v}`.toLocaleLowerCase().includes(match.query);
+    }
+    const pop = document.querySelector(".pop");
+    if (pop) { pop.setAttribute("role", "listbox"); pop.setAttribute("aria-label", t("window.chat.msg.call-trunk")); }
+    highlightMention();
+    if (!mentionItems().length) closePop();
+  }
+  else if (/\s\/\w*$/.test(box.value) && skillsOn().length) {
+    AT.index = 0;
+    openPop($("#composer"), skillsPop(), { force: true });
+    highlightMention();
+  }
+  else { AT.query = null; if (mentionOpen()) closePop(); return; }
   box.focus();
   box.setSelectionRange(at, at);
 }
 
 function pickMention(el) {
   const box = $("#prompt");
+  const match = mentionAt(box);
   closePop();
-  if (box) setBox(box.value.replace(/@\w*$/, "") + "@" + el.dataset.v + (el.dataset.v === "https://" ? "" : " "));
+  if (!match) return;
+  const inserted = "@" + el.dataset.v + (el.dataset.v === "https://" ? "" : " ");
+  setBox(box.value.slice(0, match.start) + inserted + box.value.slice(match.end), match.start + inserted.length);
 }
 function pickSkill(el) {
   const box = $("#prompt");
@@ -361,7 +413,7 @@ function pickSkill(el) {
 
 /* Arrows, Enter, Tab and Escape belong to an open list before the box sends anything. */
 function listKeys(e) {
-  if (e.target.id !== "prompt") return;
+  if (e.target.id !== "prompt" || e.isComposing || e.keyCode === 229) return;
   const list = $(".slash6");
   if (list) {
     const n = list.querySelectorAll("[role='option']").length;
@@ -370,7 +422,12 @@ function listKeys(e) {
     else if (e.key === "Escape") list.remove();
     else return;
   } else if (mentionOpen()) {
-    if (e.key === "Enter") document.querySelector(".pop [data-act='mention-pick'], .pop [data-act='slash-pick']")?.click();
+    const items = mentionItems();
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (items.length) AT.index = (AT.index + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+      highlightMention();
+    }
+    else if (e.key === "Enter" || e.key === "Tab") items[AT.index]?.click();
     else if (e.key === "Escape") closePop();
     else return;
   } else return;
@@ -386,9 +443,9 @@ export function queueRow() {
 const queuePop = () => `<div class="ph">${t("window.chat.msg.queue-title")}</div>${M.followUps.map((f, i) => `<div class="mi qrow15"><span class="q-n15">${i + 1}</span><input class="inp" value="${esc(f.prompt)}" data-sw="q15" data-q15="${esc(f.id)}" aria-label="${t("window.chat.msg.queued-n", { n: i + 1 })}"><button type="button" class="icon-btn" aria-label="${t("accounts.action.up")}" data-act="qup15" data-id="${esc(f.id)}" ${i ? "" : "disabled"}>${ic("up", "s")}</button><button type="button" class="icon-btn" aria-label="${t("accounts.action.remove")}" data-act="qrm15" data-id="${esc(f.id)}">${ic("x", "s")}</button></div>`).join("") || `<p class="hint" data-css="margin:6px 10px">${t("window.chat.msg.nothing-waiting")}</p>`}`;
 
 /* The every-few-seconds re-read stays quiet when it fails: the status bar already says the engine is not answering. */
-async function loadQueue(id, polling = false) {
-  const got = await api(`sessions/${id}/followups`).catch(polling ? () => null : report);
-  if (!got || M.sid !== id) return false;
+async function loadQueue(id, polling = false, current = () => true) {
+  const got = await api(`sessions/${id}/followups`).catch(error => { if (!polling && current()) report(error); return null; });
+  if (!current() || !got || M.sid !== id) return false;
   const before = JSON.stringify(M.followUps);
   M.followUps = got.followUps ?? [];
   return before !== JSON.stringify(M.followUps);
@@ -480,31 +537,32 @@ function spendPop() {
 
 /* A day's cost is known only when its tasks were priced; a day with only unpriced tasks has no amount. */
 const dayCost = (d) => (d.pricedRuns ? d.estimatedCost : d.runs ? null : 0);
-async function loadSpend() {
-  const got = await api("usage?range=7d&by=day").catch(report);
-  if (!got) return;
+async function loadSpend(current = () => true) {
+  const got = await api("usage?range=7d&by=day").catch(error => { if (current()) report(error); return null; });
+  if (!current() || !got) return;
   const days = got.data ?? [], today = new Date().toISOString().slice(0, 10);
   const day = days.find((d) => d.date === today);
   const costs = days.map(dayCost);
   M.spend = { today: day ? dayCost(day) : 0, week: costs.includes(null) && !costs.some((c) => c) ? null : costs.reduce((a, c) => a + (c ?? 0), 0) };
 }
 
-async function loadRoom(id) {
-  const got = await api(`sessions/${id}/context`).catch(report);
-  if (got && M.sid === id) M.room = got;
+async function loadRoom(id, current = () => true) {
+  const got = await api(`sessions/${id}/context`).catch(error => { if (current()) report(error); return null; });
+  if (current() && got && M.sid === id) M.room = got;
 }
 
 /* ---------- loading ---------- */
 /* Everything above for one conversation, read when it opens and after each message. */
 const drawn = () => JSON.stringify([M.sid, M.pins, M.followUps, M.room, M.spend]);
 /* The switch to another conversation is drawn by the caller's own redraw; this redraws again only if what it read differs. */
-export async function loadExtras(id) {
+export async function loadExtras(id, current = () => true) {
+  if (!current()) return;
   if (M.sid !== id) Object.assign(M, { sid: id, pins: [], followUps: [], room: null });
   const before = drawn();
-  const jobs = [loadSpend(), loadFlags()];
-  if (id) jobs.push(loadPins(id), loadQueue(id), loadRoom(id));
+  const jobs = [loadSpend(current), loadFlags(current)];
+  if (id) jobs.push(loadPins(id, current), loadQueue(id, false, current), loadRoom(id, current));
   await Promise.all(jobs);
-  if (drawn() !== before) render();
+  if (current() && drawn() !== before) render();
 }
 
 function openPrompts() {
@@ -561,6 +619,10 @@ export function initMessages(context) {
   on("spendmenu", (el) => openPop(el, spendPop()));
   document.addEventListener("keydown", listKeys, true);
   document.addEventListener("input", (e) => { if (e.target.id === "prompt") { M.slashI = 0; slashTyped(); mentionTyped(e.target); } });
+  document.addEventListener("click", (e) => { if (e.target.id === "prompt") mentionTyped(e.target); });
+  document.addEventListener("keyup", (e) => {
+    if (e.target.id === "prompt" && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) mentionTyped(e.target);
+  });
   document.addEventListener("branch-prompts", () => { M.commands = null; });
   /* The list closes when the box loses focus for good; a redraw that puts focus back in the box keeps it. */
   document.addEventListener("focusout", (e) => { if (e.target.id === "prompt") setTimeout(() => { if (document.activeElement?.id !== "prompt" && !document.activeElement?.closest(".slash6")) $(".slash6")?.remove(); }, 150); });

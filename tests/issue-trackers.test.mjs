@@ -88,3 +88,21 @@ test("A0174 both trackers stay off until named in the settings", () => {
   assert.throws(() => IssuesConfigSchema.parse({ jira: { site: "acme", token: "inline-secret" } }), "a key cannot be written into the settings");
   assert.equal(plainText({ type: "doc", content: [{ type: "heading", content: [{ type: "text", text: "A" }] }, { type: "paragraph", content: [{ type: "text", text: "b" }] }] }), "A\nb\n");
 });
+
+test("RES-408: a GitHub account check reads only the signed-in user, and says not working when it cannot", async () => {
+  const { GitHubAccess } = await import("../dist/integrations/github.js");
+  const asked = [];
+  const github = (answer) => new GitHubAccess({}, { assertAllowed: async () => {} }, async () => "test-token", async (address, init) => {
+    asked.push(`${init.method ?? "GET"} ${new URL(address).pathname}`);
+    return answer();
+  });
+  const good = new IssueAccess({ github: github(() => new Response(JSON.stringify({ id: 7, login: "octo" }))) });
+  const health = await good.checkAccount("github");
+  assert.equal(health.ok, true);
+  assert.deepEqual(asked, ["GET /user"], "one read of the account, nothing else");
+  const refused = new IssueAccess({ github: github(() => new Response("{}", { status: 401 })) });
+  const bad = await refused.checkAccount("github");
+  assert.equal(bad.ok, false);
+  assert.doesNotMatch(JSON.stringify(bad), /test-token/);
+  await assert.rejects(good.checkAccount("linear"), /not set up/);
+});

@@ -339,3 +339,22 @@ test("a Word file written with data descriptors is read from its directory's siz
   assert.match(docxText(descriptorZip("word/document.xml", words)), /Streamed by a phone app/);
   assert.throws(() => docxText(descriptorZip("word/document.xml", words, 5)), /Damaged document entry size/);
 });
+
+test("TRUNK-197: a document keeps who first added it: the owner from the window, Branch from a task, unknown for old rows", async (t) => {
+  const { app, root } = await fixture(t);
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(() => server.close());
+  const response = await fetch(`${server.url}/api/documents`, { method: "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ name: "Owner notes", text: "The owner wrote this." }) });
+  assert.equal(response.status, 200);
+  const byTool = await app.runtime.executeTool("documents.add", { text: "Branch wrote this.", name: "Task notes" });
+  const old = await app.documents.add("local", { name: "Old notes", text: "Added before anyone was recorded." });
+  const listed = new Map(app.documents.list("local").map((document) => [document.name, document.addedBy]));
+  assert.equal(listed.get("Owner notes")?.kind, "person");
+  assert.equal(listed.get("Owner notes")?.role, "owner");
+  assert.equal(listed.get("Task notes")?.kind, "assistant");
+  assert.ok(listed.get("Task notes")?.runId, "the task that added it is kept");
+  assert.equal(byTool.addedBy?.kind, "assistant");
+  assert.equal(listed.get("Old notes"), null, "a row with nothing recorded says so, never a guess");
+  assert.equal(old.addedBy ?? null, null);
+});
