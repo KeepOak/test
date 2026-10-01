@@ -443,6 +443,21 @@ test("R17-036: a forked conversation works in its own copy, and a helper's copy 
   void run;
 });
 
+test("R17-036: a helper's copy by default is skipped in a project with no Git commit, but one the lead asked for is refused", async (t) => {
+  const { app, on, context } = await fixture(t);
+  on("worktrees"); // perHelper by default; the workspace here has no Git repository at all
+  const started = (task) => {
+    app.store.event(task.id, "run.started", { source: "owner", parentRunId: null,
+      permissions: app.registry.permissions(), deadlineMs: 30_000, depth: 0, delegates: false });
+    return task;
+  };
+  const helper = () => started(app.store.createRun(app.runtime.owner, "helper"));
+  const parent = context();
+  assert.equal(await app.coding.placeTask(helper(), context(), parent), null, "an ordinary helper shares the folder, as it did");
+  await assert.rejects(app.coding.placeTask(helper(), { ...context(), ownCopy: true }, parent), /no readable Git commit/,
+    "a copy the lead required is never quietly swapped for the shared folder");
+});
+
 test("R17-043: the project's review checks run as read-only helpers against the changes", needsGit, async (t) => {
   const asked = [];
   const provider = scripted((request) => {
