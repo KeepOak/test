@@ -223,7 +223,12 @@ export async function openMcp(
     // Told when the connection closes for any reason, so a crashed program is started again on next use, not called dead.
     let alive = true;
     client.onclose = () => { alive = false; };
-    return { config, found, secrets, call: through(client, config), close: () => client.close(), alive: () => alive };
+    return { config, found, secrets, call: through(client, config), close: () => client.close(), alive: () => alive,
+      check: async (signal?: AbortSignal) => {
+        signal?.throwIfAborted();
+        await client.ping({ timeout: 10000, ...(signal ? { signal } : {}) });
+        signal?.throwIfAborted();
+      } };
   } catch {
     await client.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');
@@ -278,7 +283,18 @@ function restarting(first: Awaited<ReturnType<typeof openMcp>>, reopen: () => Pr
     }
     return current.call(tool, args, context);
   };
-  return { call, close: async () => { closed = true; await current.close(); } };
+  const check = async (signal?: AbortSignal) => {
+    if (closed || !current.alive()) throw new Error('MCP connection is not open. Use a tool to connect it before checking.');
+    signal?.throwIfAborted();
+    const checking = current;
+    if (!("check" in checking) || typeof checking.check !== "function")
+      throw new Error('This MCP transport does not support a live connection check.');
+    await checking.check(signal);
+    signal?.throwIfAborted();
+    if (closed || current !== checking || !checking.alive())
+      throw new Error('The checked MCP connection closed or changed. Check the current connection again.');
+  };
+  return { call, check, close: async () => { closed = true; await current.close(); } };
 }
 
 export async function connectMcp(
@@ -299,7 +315,7 @@ export async function connectMcp(
     if (definitions.some(tool => existing.has(tool.name))) throw new Error('MCP tool name collision');
     for (const tool of definitions) registry.register(tool);
     return { id: opened.config.id, version: opened.config.expectedVersion,
-      tools: definitions.map(tool => tool.name), call: opened.call, close: opened.close };
+      tools: definitions.map(tool => tool.name), call: opened.call, close: opened.close, check: live.check };
   } catch {
     await opened.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');

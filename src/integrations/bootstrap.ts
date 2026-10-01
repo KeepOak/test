@@ -432,10 +432,11 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
  * A server on demand that has never been connected has no list to show, so it is connected now —
  * once — rather than being silently missing.
  */
+export type McpStop = (() => Promise<void>) & { check?: (signal?: AbortSignal) => Promise<void> };
 export async function startMcp(
   registry: ToolRegistry, server: unknown, env: NodeJS.ProcessEnv,
   policy: NetworkPolicy | undefined, host: McpHost | undefined,
-): Promise<(() => Promise<void>) | null> {
+): Promise<McpStop | null> {
   const guard = policy ? { guard: (base: typeof fetch) => policy.guard(base) } : undefined;
   // mac3/security-check: a server fetched from a package registry is looked up in the malware list
   // before it is added, and again before it is opened later (src/security-audit/malware-check.ts).
@@ -451,7 +452,7 @@ export async function startMcp(
   const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.injectionPolicy); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
-    return connection.close;
+    return Object.assign(connection.close, { check: connection.check });
   }
   const id = McpConfigSchema.parse(server).id;
   // Opening it puts nothing in the tool list — the tools are already there — so `openMcp`, not
@@ -469,9 +470,14 @@ export async function startMcp(
   }, host.injectionPolicy);
   if (!names.length) {
     const connection = await connect();
-    return connection.close;
+    return Object.assign(connection.close, { check: connection.check });
   }
-  return async () => { for (const name of names) registry.unregister(name); };
+  return Object.assign(async () => { for (const name of names) registry.unregister(name); }, {
+    check: async (signal?: AbortSignal) => {
+      if (!host.connections.check) throw new Error('This MCP host cannot check an existing session.');
+      await host.connections.check(id, signal);
+    },
+  });
 }
 /** mac3/security-check: asks the malware check about a server started from a package, if there is one. */
 async function vetLaunch(server: unknown, host: McpHost | undefined): Promise<void> {
@@ -493,6 +499,8 @@ export interface McpHost {
   startupTimeoutMs?: () => number;
   connections: { register(id: string, opener: () => Promise<{ close(): Promise<void> }>): void;
     acquire(runId: string, id: string): Promise<{ close(): Promise<void> }>;
+    /** Check an already-open session without starting a server. */
+    check?(id: string, signal?: AbortSignal): Promise<void>;
     /** Forgets a server the owner switched off or removed (src/mcp-own-servers.ts). */
     forget?(id: string): Promise<void> };
 }

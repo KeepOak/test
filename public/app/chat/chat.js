@@ -346,6 +346,9 @@ export const addDockItem = (draw) => { OUT.dock.push(draw); };
 const PREFIX = [];
 export const addSendPrefix = (take) => { PREFIX.push(take); };
 const hooked = (list) => list.map((draw) => { try { return draw(C.sessionId) || ""; } catch (error) { toast(error.message); return ""; } }).join("");
+/** Bind a pending new-conversation choice to this composer, project and timeline selection. */
+export const newConversationProject = () => ownerHere() ? C.project ?? "default" : null;
+export const newConversationBinding = () => JSON.stringify([C.seat, C.project, lineTrunk()?.id ?? null]);
 /** pane-stage-006 (B2): who this conversation is (its Trunk, its room, its name), for the stage's name and dock. */
 export const conversationWho = () => ({ sessionId: C.sessionId, trunk: speaker() ?? null, room: E.rooms.find((r) => r.sessionId === C.sessionId) ?? null, title: title() });
 /** shell-002 (B6): "waiting" while a request of the conversation waits for the owner (GET /api/policy), "working" while
@@ -447,8 +450,11 @@ async function rereadRoom() {
 }
 
 /* Opening a conversation closes the phone's list over it, as the prototype's openChat does. */
-export async function openConversation(id) {
+export async function openConversation(id, authority = () => true) {
+  if (!authority()) return false;
   C.seat += 1;
+  const seat = C.seat;
+  const current = () => authority() && C.seat === seat && C.sessionId === id && S.chat === id && S.view === "chat";
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
   openLine();
@@ -459,10 +465,17 @@ export async function openConversation(id) {
   C.mark = openMark(id);
   renderNow();
   C.project = null;
-  try { const got = await api("sessions/" + id); C.messages = got.messages ?? []; C.project = got.project ?? null; } catch (error) { toast(error.message); }
-  await loadWaiting();
-  await loadExtras(id);
+  try {
+    const got = await api("sessions/" + id);
+    if (!current()) return false;
+    C.messages = got.messages ?? []; C.project = got.project ?? null;
+  } catch (error) { if (!current()) return false; toast(error.message); }
+  await loadWaiting(current);
+  if (!current()) return false;
+  await loadExtras(id, current);
+  if (!current()) return false;
   renderNow();
+  return true;
 }
 /* What the engine last said about the open conversation: its line in the list and its tasks. When it changes, something
    happened there that this window did not start (a new Trunk's hello, a schedule's run, an answer from another window). */
@@ -547,8 +560,8 @@ function watchThinking(on) {
   }, 1000);
 }
 
-async function loadWaiting() {
-  try { C.waiting = (await api("policy")).waiting ?? []; } catch { C.waiting = []; }
+async function loadWaiting(current = () => true) {
+  try { const got = await api("policy"); if (current()) C.waiting = got.waiting ?? []; } catch { if (current()) C.waiting = []; }
 }
 
 /* A line starting with / is offered to the engine's commands first (POST /api/commands/run). One it runs shows its answer

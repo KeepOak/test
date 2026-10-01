@@ -14,12 +14,17 @@ import type { OwnMcpServers } from "./mcp-own-servers.js";
 import type { OwnClis } from "./own-clis.js";
 import type { ReplyFlags } from "./reply-flags.js";
 import type { Store } from "./store.js";
+import type { IssueAccess } from "./integrations/issue-tools.js";
+import type { SessionLock } from "./session-lock.js";
+import { HealthCheck, HealthAuthorityError, withHealthCheck } from "./health-check.js";
 
 export interface ConnectorsHost {
   store: Store; version: string; ownMcp: OwnMcpServers; ownClis: OwnClis; replyFlags: ReplyFlags;
+  issues?: IssueAccess | null;
+  sessionLock: Pick<SessionLock, "locked" | "onLocked">;
 }
 
-const serverAction = /^\/api\/mcp\/servers\/([a-z][a-z0-9-]{0,29})\/(start|stop|remove|timeout)$/;
+const serverAction = /^\/api\/mcp\/servers\/([a-z][a-z0-9-]{0,29})\/(start|stop|remove|timeout|test)$/;
 const flagRemove = /^\/api\/reply-flags\/([a-f0-9-]{36})\/remove$/;
 const Empty = z.object({}).strict();
 
@@ -38,6 +43,7 @@ async function serversApi(app: ConnectorsHost, request: IncomingMessage, path: s
   if (action && request.method === "POST") {
     app.store.profiles.requireOwner("Changing a tool server");
     const [, id, verb] = action;
+    if (verb === "test") return checkOwnServer(app, request, id!);
     if (verb === "timeout") {
       const body = z.object({ seconds: z.unknown() }).strict().parse(await readBody(request));
       return app.ownMcp.setCallTimeout(id!, body.seconds);
@@ -46,6 +52,33 @@ async function serversApi(app: ConnectorsHost, request: IncomingMessage, path: s
     return verb === "start" ? app.ownMcp.start(id!) : verb === "stop" ? app.ownMcp.stop(id!) : app.ownMcp.remove(id!);
   }
   return undefined;
+}
+
+/** Owner admission remains bound across a slow body and the existing connection's ping. */
+async function checkOwnServer(app: ConnectorsHost, request: IncomingMessage, id: string): Promise<unknown> {
+  const who = app.store.profiles.active()?.id ?? null;
+  const controller = new AbortController();
+  const refuse = () => controller.abort(new HttpError(403, "The original owner request is no longer authorized."));
+  const check = () => {
+    controller.signal.throwIfAborted();
+    app.store.profiles.requireOwner("Checking your tool server");
+    if (startedWithShortLivedKey() || (app.store.profiles.active()?.id ?? null) !== who)
+      throw new HttpError(403, "Only the original owner request can check this tool server.");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before checking your tool server.");
+  };
+  check();
+  const offProfile = app.store.profiles.onSwitched(refuse);
+  const offLock = app.sessionLock.onLocked(refuse);
+  request.once("aborted", refuse);
+  try {
+    Empty.parse(await readBody(request));
+    check();
+    const health = await app.ownMcp.test(id, controller.signal);
+    check();
+    return { health };
+  } finally {
+    offProfile(); offLock(); request.off("aborted", refuse);
+  }
 }
 
 async function clisApi(app: ConnectorsHost, request: IncomingMessage, path: string): Promise<unknown> {
@@ -83,6 +116,25 @@ async function flagsApi(app: ConnectorsHost, request: IncomingMessage, path: str
 }
 
 export async function connectorsApi(app: ConnectorsHost, request: IncomingMessage, path: string): Promise<unknown> {
+  if (path === "/api/connectors/accounts" && request.method === "GET") {
+    app.store.profiles.requireOwner("Your connected account checks");
+    return { accounts: (app.issues?.available() ?? []).filter((id) => id === "github" || id === "linear") };
+  }
+  const check = /^\/api\/connectors\/accounts\/(github|linear)\/test$/.exec(path);
+  if (check && request.method === "POST") {
+    app.store.profiles.requireOwner("Checking your connected account");
+    const original = app.issues;
+    const authority = new HealthCheck(app.store, app.store.profiles.ownerName, app.sessionLock, request);
+    return withHealthCheck(authority, async () => {
+      authority.bindConnection(() => app.issues === original);
+      Empty.parse(await readBody(request));
+      if (!original) throw new HttpError(409, "No issue tracker accounts are configured.");
+      if (app.issues !== original) throw new HttpError(403, "The connected account changed. Check it again.");
+      const health = await original.checkAccount(check[1] as "github" | "linear");
+      if (app.issues !== original) throw new HttpError(403, "The connected account changed. Check it again.");
+      return { health };
+    }).catch(error => { if (error instanceof HealthAuthorityError) throw new HttpError(error.status, error.message); throw error; });
+  }
   if (path === "/api/release-notes" && request.method === "GET") return notesFor(app.version);
   if (path.startsWith("/api/mcp/")) return serversApi(app, request, path);
   if (path === "/api/clis" || path.startsWith("/api/clis/")) return clisApi(app, request, path);
