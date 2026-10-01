@@ -24,9 +24,10 @@ import { say } from "../core/words.js";
 /* The saved choice and the worker actually running behind a gateway are separate facts. */
 let gw = null;
 let gwReadAt = 0, gwProfile = undefined;
-/** Only successfully read facts for the profile still at the window; no problem text or private worker details. */
+/** Only successfully read facts for the profile still at the window; no problem text or private worker details.
+ *  underGateway says only whether this engine runs under a Gateway's supervision (another Gateway may still exist); null is unknown. */
 export const petGateway = () => ownerHere() && gwProfile === activeId() && Date.now() - gwReadAt <= 60000
-  ? { running: typeof gw?.underGateway === "boolean" ? gw.underGateway : null, problem: !!gw?.problem } : null;
+  ? { supervised: typeof gw?.underGateway === "boolean" ? gw.underGateway : null, problem: !!gw?.problem } : null;
 let gwHealth = null, gwPopContext = null;
 const gatewayAccess = () => S.signedIn && ownerHere() && !document.getElementById("app")?.classList.contains("locked-b17");
 const gatewayContext = () => JSON.stringify([activeId(), S.signedIn, S.view, S.chat, S.setPage]);

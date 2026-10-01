@@ -28,8 +28,8 @@ export function petLine(now, words) {
   if (now.failed) return news(`failed:${now.failed}`, "window.shell.scene.failed-here");
   const running = now.running ?? [];
   if (running.length) return news(`running:${running.map((r) => r.id).sort().join(",")}`, running.length === 1 ? "window.shell.scene.working-one-safe" : "window.shell.scene.working-count", { count: running.length });
-  if (now.owner && now.view === "settings" && now.settingsPage === "gateway" && now.gateway?.running === false)
-    return news("gateway-off", "window.shell.scene.gateway-not-running");
+  if (now.owner && now.view === "settings" && now.settingsPage === "gateway" && now.gateway?.supervised === false)
+    return news("gateway-unsupervised", "window.shell.scene.gateway-unsupervised");
   return hintLine(now, words);
 }
 

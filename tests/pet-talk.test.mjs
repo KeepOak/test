@@ -47,6 +47,17 @@ test("hints fit where the owner is, and name the owner's own keys", () => {
   assert.equal(say({}).kind, "hint");
 });
 
+test("the Gateway line speaks only of this engine's supervision, and says nothing when that is unknown", () => {
+  const page = { view: "settings", settingsPage: "gateway" }, hint = "Search in Settings finds matching pages and settings.";
+  const unsupervised = say({ ...page, gateway: { supervised: false, problem: false } }).text;
+  assert.equal(unsupervised, "This Branch engine is not running under Gateway supervision. Settings › Gateway shows its status.");
+  assert.doesNotMatch(unsupervised, /Gateway is not running/, "another Gateway may be running; only this engine's supervision is known");
+  assert.equal(say({ ...page, gateway: { supervised: null, problem: false } }).text, hint, "unknown is not said as unsupervised");
+  assert.equal(say({ ...page, gateway: null }).text, hint, "no fresh read: nothing about the Gateway");
+  assert.equal(say({ ...page, gateway: { supervised: true, problem: false } }).text, hint);
+  assert.equal(say({ ...page, owner: false, gateway: { supervised: false, problem: false } }).text, petLine({ ...base, ...page, owner: false }, words).text);
+});
+
 test("hints shrink with rank: Bronze and Silver at most hourly, Gold and above never, none while tips are off", () => {
   for (const rank of ["Bronze", "Silver"]) {
     assert.equal(say({ rank }).kind, "hint", `${rank} gets a hint`);
