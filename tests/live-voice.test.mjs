@@ -178,13 +178,19 @@ test("L4 how loud a room is, worked out with nothing installed at all", () => {
   assert.equal(loudness(quietSound(3200)), 0);
   assert.ok(loudness(speechSound(3200)) > 0.2, "speech should be plainly louder than nothing");
   const room = new RoomFloor();
-  // The first second is the room being learned, and nothing in it counts as speech.
-  for (let frame = 0; frame < RoomFloor.learningFrames; frame += 1)
-    assert.equal(room.speech(quietSound(640)), false, "something counted as speech before the room was learned");
   assert.equal(room.speech(quietSound(640)), false, "a quiet room counted as speech");
+  // Speech must last RoomFloor.startFrames pieces (200 ms) before it counts, so a click does not open a phrase...
+  for (let frame = 1; frame < RoomFloor.startFrames; frame += 1)
+    assert.equal(room.speech(speechSound(640)), false, "a moment of noise counted as speech");
   assert.equal(room.speech(speechSound(640)), true, "speech did not count as speech");
+  // ...and a short pause inside it does not end it.
+  for (let frame = 1; frame < RoomFloor.stopFrames; frame += 1)
+    assert.equal(room.speech(quietSound(640)), true, "a short pause ended the speech");
+  assert.equal(room.speech(quietSound(640)), false, "a long quiet did not end the speech");
   room.forget();
-  assert.equal(room.speech(speechSound(640)), false, "the room was not learned again after being forgotten");
+  // Speech from the very first piece is not learned as the room: it still counts once it has lasted.
+  for (let frame = 1; frame < RoomFloor.startFrames; frame += 1) room.speech(speechSound(640));
+  assert.equal(room.speech(speechSound(640)), true, "speech at the start was learned as the room");
 });
 
 /* ---------- letting go of the microphone ---------- */

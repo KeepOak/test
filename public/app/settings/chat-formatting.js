@@ -4,11 +4,21 @@ import { toast } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
+import { S, ownerHere, activeId } from "../core/state.js";
 
 let formats = {};
+/* A late answer is kept, drawn or its error shown only for the newest read, by the same owner on the same page, with the
+   window unlocked: nothing lands behind the lock or for another person. */
+let reading = 0;
+function fence() {
+  const mine = ++reading, profile = activeId(), view = S.view;
+  return () => mine === reading && ownerHere() && activeId() === profile && S.view === view
+    && !document.getElementById("app")?.classList.contains("locked-b17");
+}
 export async function loadFormats() {
-  try { formats = (await api("channels/formatting")).formats ?? {}; }
-  catch (error) { toast(error.message); }
+  const still = fence();
+  try { const read = (await api("channels/formatting")).formats ?? {}; if (still()) formats = read; }
+  catch (error) { if (still()) toast(error.message); }
 }
 export function formatButtons(id, nativeLabel) {
   const mode = formats[id] ?? "native";
@@ -18,11 +28,14 @@ export function formatButtons(id, nativeLabel) {
 export function initFormatting() {
   markLive(["chfmt17d"]);
   on("chfmt17d", async (el) => {
+    const still = fence();
     try {
-      formats = (await api("channels/formatting", { channel: el.dataset.id, mode: el.dataset.v })).formats;
+      const saved = (await api("channels/formatting", { channel: el.dataset.id, mode: el.dataset.v })).formats;
+      if (!still()) return;
+      formats = saved;
       for (const button of el.parentElement.querySelectorAll("[data-act=chfmt17d]"))
         button.setAttribute("aria-pressed", String(button.dataset.v === formats[el.dataset.id]));
       render();
-    } catch (error) { toast(error.message); }
+    } catch (error) { if (still()) toast(error.message); }
   });
 }

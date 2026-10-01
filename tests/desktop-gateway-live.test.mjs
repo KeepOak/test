@@ -28,6 +28,15 @@ test("the broker reconstructs a live outcome from its own verified folder and re
   await assert.rejects(applyGatewayLive(f.appRoot, hooks, { ...f.request, changed: [{ path: "src/desktop/main.ts", part: "shell" }] }, () => undefined));
 });
 
+test("a live update whose change also touched docs or tests still reaches the broker, with only the files that run", async (t) => {
+  const f = await staged(t); let applied;
+  const outcome = { ...f.outcome, changed: [{ path: "public/app.css", part: "window" }, { path: "tests/app.test.mjs", part: null }, { path: "docs/app.md", part: null }] };
+  const request = gatewayLiveRequest(outcome);
+  assert.deepEqual(request.changed, [{ path: "public/app.css", part: "window" }]);
+  await applyGatewayLive(f.appRoot, { apply: async (live) => { applied = live; return { tier: live.tier }; } }, request, () => undefined);
+  assert.deepEqual([...applied.parts], ["window"]);
+});
+
 test("changed staged bytes are refused before the retained engine or window is touched", async (t) => {
   const f = await staged(t); await writeFile(join(f.outcome.dir, "public", "app.css"), "tampered"); let called = false;
   await assert.rejects(applyGatewayLive(f.appRoot, { apply: async () => { called = true; } }, f.request, () => undefined), /not the file/);

@@ -21,6 +21,8 @@ export function trunkActivity(events: readonly Event[]): TrunkActivity {
       active.delete(id);
       active.set(id, typeof event.data.name === "string" ? event.data.name : "");
     } else if (["tool.completed", "tool.failed", "tool.stalled", "program.step.finished"].includes(event.kind)) active.delete(id);
+    else if (["policy.denied", "tool.simulated", "reconciliation.required"].includes(event.kind) && typeof event.data.id === "string")
+      active.delete(event.data.id); // These recorded outcomes end this invocation without executing it.
   }
   const names = [...active.values()];
   if (!names.length) return modelActive ? "think" : "work";
