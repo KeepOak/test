@@ -10,7 +10,7 @@ Implementation:
 Validation on 2026-10-01:
 - Three deterministic scheduler tests passed, including multiple overlays, dismissal during hidden/resting states, duplicate wake prevention, disposal and frame-budget compensation
 - JavaScript syntax and whitespace checks passed
-- Native Windows pre-push validation after normal protected base 0cf75d35d4374035a5910d0d97f650c6af71e272 integration: tsc --noEmit and npm run build passed; modal-background-motion plus window-sleep passed all nine tests (19.357 seconds). This includes all three scheduler tests, strengthened real computed-CSS transformed-frame preservation, nested overlays, reduced-motion/Keep things still, and five existing sleep regressions
+- Native Windows pre-push validation after normal protected base 4f0b961244721ad53d05e77c9ee86d5e91fb6bb6 integration: tsc --noEmit and npm run build passed; modal-background-motion plus window-sleep passed all nine tests (23.549 seconds). This includes all three scheduler tests, strengthened real computed-CSS transformed-frame preservation, nested overlays, reduced-motion/Keep things still, and five existing sleep regressions
 - Independent review found no blockers for the narrow scope. Procedural position state is retained, but absolute-time firefly alpha can change phase on resume
 
 Scope: this does not pause video/GIF scenery, avatars or pets. It does not establish a CPU, GPU-utilization, energy or battery improvement. The observed native OAuth-error high-CPU state needs an identical-build A/B with this patch and graphics status recorded, followed by hardware-accelerated Linux/Windows reproduction. The cloud GPU process can perform software rendering; process CPU is not GPU utilization.
