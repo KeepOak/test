@@ -1254,7 +1254,7 @@ export class ChannelRouter {
     for (const name of picked.names) {
       if (!allowed(name)) return "ignored";
       // The same check holds the answer at the queue and at the send, so a pause while it is on its way keeps it back.
-      await this.command(message, { name, argument: "" }, `inline-${name}`, () => allowed(name));
+      if (await this.command(message, { name, argument: "" }, `inline-${name}`, () => allowed(name)) === "ignored") return "ignored";
     }
     if (!remaining.text.trim()) return "replied";
     if (paused() || this.appLocked() || !this.senderAllowed(message.channel, message.senderId)) return "ignored";
@@ -1552,8 +1552,11 @@ export class ChannelRouter {
     let reply: string;
     try { reply = asks ? await this.withSlot(work) : await work(); }
     finally { if (named) this.trunkCommands.delete(chatKey(message)); }
-    await this.deliver(channel, chatId, reply, `${deliveryKind}:${chatId}:${message.messageId}`, this.quoteFor(message), allowed).catch(() => undefined);
-    return "replied";
+    // An answer the check held back was not given, so it is not reported as one.
+    let refused = false;
+    const gate = allowed && (() => { if (allowed()) return true; refused = true; return false; });
+    await this.deliver(channel, chatId, reply, `${deliveryKind}:${chatId}:${message.messageId}`, this.quoteFor(message), gate).catch(() => undefined);
+    return refused ? "ignored" : "replied";
   }
   /** What the owner-DM commands can reach: the whole app's command host, set by createBranch. Without it they are not read. */
   ownerDmHost: (() => CommandHost) | null = null;

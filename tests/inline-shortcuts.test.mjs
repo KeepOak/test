@@ -92,6 +92,15 @@ test("pausing the chat app while a shortcut's answer is checked or waiting to se
   assert.equal(await f.app.channels.handle(f.message(text, { authoredCommandText: authored(text) })), "ignored");
   assert.deepEqual(f.sent, [], "the answer was held back at the queue");
   assert.equal(f.prompts.length, 0);
+  // A bare shortcut whose answer is held back there was not answered, so it is not reported as replied.
+  const h = await fixture(t);
+  const guardH = h.app.channels.outboundGuard;
+  h.app.channels.outboundGuard = async (words) => {
+    if (words === answer) setPaused(h.app.store, h.app.runtime.owner, "chat", true, "test");
+    return guardH(words);
+  };
+  assert.equal(await h.app.channels.handle(h.message("/status", { authoredCommandText: authored("/status") })), "ignored");
+  assert.deepEqual(h.sent, [], "the bare shortcut's answer was held back at the queue");
 
   // Send boundary: the first send fails, the chat app is paused, and a later flush must not send the queued answer.
   const g = await fixture(t);
