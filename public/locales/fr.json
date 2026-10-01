@@ -8838,6 +8838,8 @@
   "window.rooms.drop.with": "Ouvrir un salon avec {name}",
   "window.rooms.talk.everyone": "Tout le monde répond",
   "window.rooms.talk.only": "Seulement {name}",
+  "window.schedule-gateway.unknown": "La supervision de la passerelle n’a pas pu être confirmée pour ces tâches planifiées.",
+  "window.schedule-gateway.unwatched": "Les tâches planifiées dépendent du maintien de ce moteur en marche. Ce moteur ne passe pas par la passerelle.",
   "window.sessions.showOlder": "Afficher les anciennes conversations",
   "window.settings.accounts.accounts-signed-in": "comptes connectés",
   "window.settings.accounts.add-an-account": "Ajouter un compte",
@@ -10597,7 +10599,5 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier",
-  "window.schedule-gateway.unwatched": "Les tâches planifiées dépendent du maintien de ce moteur en marche. Ce moteur ne passe pas par la passerelle.",
-  "window.schedule-gateway.unknown": "La supervision de la passerelle n’a pas pu être confirmée pour ces tâches planifiées."
+  "wsedit.up": "Remonter d'un dossier"
 }
