@@ -105,7 +105,23 @@ test('Windows live capture source pins actual provenance and never substitutes t
   assert.match(capture, /if \(kind == "monitor"\).*return;/);
   assert.match(capture, /if \(!printed\) throw/);
   assert.match(capture, /if \(EmptyWindow\(image\)\) throw/);
+  assert.match(live, /image\.LockBits/);
+  assert.match(live, /y < image\.Height/);
+  assert.match(live, /x < row\.Length; x \+= 4/);
+  assert.match(live, /finally \{ image\.UnlockBits\(data\); \}/);
+  assert.doesNotMatch(live, /image\.GetPixel/, 'sparse useful content is not classified by sampled pixels');
   assert.equal((capture.match(new RegExp('CopyFrom' + 'Screen', 'g')) ?? []).length, 1, 'screen copy occurs only in explicit monitor branch');
   assert.match(desktopScript, /Assert-CaptureInput \$handle\s*\[System\.Windows\.Forms\./);
-  assert.match(desktopScript, /\$point = Capture-Point \$handle\s*\[BranchDesktop\]::Wheel/);
+  assert.match(desktopScript, /\$point = Capture-Point \$handle\s*Assert-Uncovered \$handle \$point\s*\[BranchDesktop\]::Wheel/); // computer-control: and nothing covers it
+});
+
+test('native capture snapshots include class provenance and guarded input rechecks it before effect', () => {
+  const live = /'live' \{([\s\S]*?)\n  default/.exec(desktopScript)?.[1] ?? '';
+  assert.match(live, /GetClassNameW\(h, className, 256\)/);
+  assert.match(live, /Quoted\(className\.ToString\(\)\)/);
+  const guard = /function Assert-CaptureInput\(\$handle\) \{([\s\S]*?)\n\}/.exec(desktopScript)?.[1] ?? '';
+  assert.match(guard, /Get-Process -Id \$owner -ErrorAction Stop/);
+  assert.match(guard, /\[BranchDesktop\]::ClassOf\(\$handle\)/);
+  assert.match(guard, /chrome_widget\|chromium\|mozilla\|webview\|cefbrowser/);
+  assert.match(guard, /Browser and Branch viewer windows cannot be controlled/);
 });

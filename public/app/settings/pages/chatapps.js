@@ -17,6 +17,7 @@ import { level, S, E, ownerHere, activeId } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { toast, openDlg } from "../../core/ui.js";
 import { ownerCommandCard, initOwnerCommands } from "../owner-commands.js";
+import { routingCard, initRouting } from "../chat-routing.js";
 import { stepsCard, initSteps } from "../chat-steps.js";
 import { phoneAccessCard, initPhoneAccess, loadPhoneAccess } from "../phone-access.js";
 import { logo } from "../../core/logos.js";
@@ -28,7 +29,7 @@ import { formatButtons, initFormatting, loadFormats } from "../chat-formatting.j
 import { initReplyStyle, loadReplyStyles, replyStyleRows } from "../chat-reply-style.js";
 import { t } from "../../../i18n.js";
 
-const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], steps: null, watchdogLog: [] };
+const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], chats: [], routing: null, steps: null, watchdogLog: [] };
 const STEPS = "Show steps in chats";
 /* owner-dm-full: the owner's own verified direct chat runs with the owner's full access (GET /api/channels
    `permissions.ownerChats`, saved with POST /api/channels/permissions { ownerChats }). On as Branch ships. */
@@ -47,7 +48,7 @@ async function loadApps() {
   if (!ownerHere() || !unlocked()) return; // the owner's chat apps: no page asks for them on a household person's profile
   const read = ++appsRead, current = () => read === appsRead && sameOwner(profile);
   A.at = Date.now();
-  const [live, setup] = await Promise.all(["channels", "channel-setup"].map((path) => api(path).catch((error) => { if (current()) toast(error.message); return null; })));
+  const [live, setup, routing] = await Promise.all(["channels", "channel-setup", "channels/routes"].map((path) => api(path).catch((error) => { if (current()) toast(error.message); return null; })));
   if (!current()) return;
   A.channels = live?.channels ?? A.channels; // a failed read is unknown, never evidence that no app is connected
   A.intake = live?.intake ?? null;
@@ -56,6 +57,8 @@ async function loadApps() {
   A.ownerCommands = live?.ownerCommands ?? null;
   A.ownerNamed = live?.ownerNamed !== false; // owner-dm-signin: no chat account is marked as the owner's yet
   A.approved = live?.approved ?? [];
+  A.chats = live?.chats ?? [];
+  A.routing = routing;
   A.steps = live?.steps ?? null;
   A.permissions = live?.permissions ?? null;
   A.apps = setup?.channels ?? [];
@@ -76,7 +79,7 @@ export function draw() {
   if (A.live) html += `<div class="rows">${sw15(STEPS, "While a task works, one message in your direct chat lists each step, with commands and files as code. Groups get a short message.", A.live.steps !== "off")}</div>` + stepsCard(A, lv);
   if (E.profiles?.isOwner !== false && A.permissions)
     html += `<div class="rows">${sw15(OWN_FULL, OWN_FULL_SUB, A.permissions.ownerChats !== false)}</div>`;
-  if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + phoneAccessCard();
+  if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + routingCard(A) + phoneAccessCard();
   // Replies in each connected app: quoting your message, and the reaction on it while Branch works.
   const kinds = [...new Set(on.map(kindOf))];
   const quotes = (id) => on.some((c) => kindOf(c) === id && c.replyQuotes === true); // an app whose replies can quote
@@ -201,6 +204,7 @@ export function init() {
   });
   loadApps();
   initOwnerCommands(A, loadApps);
+  initRouting(A, loadApps);
   initSteps(loadApps);
   initPhoneAccess(loadApps);
 }

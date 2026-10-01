@@ -100,6 +100,7 @@ import { registerAttachmentTools } from "./attachment-tools.js";
 import { BrowserProfiles } from "./integrations/browser-profiles.js";
 import { ChannelRouter } from "./channels/router.js";
 import { linkChatThreads } from "./channels/threads.js"; // defaulttrunk
+import { bindingFor as channelBinding, dropTrunkRoutes } from "./channels/routes.js";
 import { ChannelConnectors, registerChannelTools } from "./channels/connectors.js";
 import { WebAccess, registerWeb } from "./integrations/web.js";
 import { Hooks } from "./hooks.js";
@@ -200,7 +201,7 @@ import { ScreenWatches, registerScreenWatches } from "./screen-watch.js";
 import { readScreenText } from "./screen-watch-ocr.js";
 import { registerLocalOcr } from "./local-ocr.js";
 import { MorningBrief, registerBrief } from "./brief.js";
-import { DesktopControl } from "./integrations/desktop.js";
+import { DesktopControl, type NativeCaptureLease } from "./integrations/desktop.js";
 import { LinuxDesktopSandbox } from "./integrations/linux-desktop.js";
 import { TakeOverBanner } from "./integrations/linux-desktop-banner.js";
 import { registerLinuxDesktop } from "./integrations/linux-desktop-tools.js";
@@ -367,6 +368,8 @@ export async function createBranch(options: {
   reliability?: ReliabilityInput;
   /* mac2/desktop-ui: the desktop app's own Stop notice window, for screen control on macOS and Linux. */
   bannerWindow?: BannerWindowFactory;
+  /** The authenticated native host's own-window capture lease; no HTTP body or CLI setting supplies it. */
+  nativeCaptureLease?: NativeCaptureLease;
   /** Wave mac2: how the hidden snapshot store runs git; null means "git is not installed". */
   snapshotGit?: GitCall | null;
   /** mac3/security-check: the home folder the security check looks under; this computer's own when left out. */
@@ -595,6 +598,7 @@ export async function createBranch(options: {
   // mac2/desktop-ui: on a Mac or Linux the screen is used only while the app's Stop notice shows.
   const desktop = new DesktopControl(store, {
     artifacts, ...screenControlParts(options.bannerWindow ? { window: options.bannerWindow } : {}),
+    ...(options.nativeCaptureLease ? { nativeCaptureLease: options.nativeCaptureLease } : {}),
   });
   // Batch 26 (wave 8): Windows has switches of its own under Privacy & security, and a refusal
   // there looks like nothing happening at all. The screen is probed by asking for the window list;
@@ -1559,6 +1563,10 @@ ${result.output || "(it said nothing)"}`;
   };
   channels.trunkIdReach = (channel, trunkId) => reachRefusal(channel, trunkId) ?? trunks.pause.refusal(trunkId, "it did not answer");
   channels.defaultTrunk = () => trunks.mode("trunks") === "off" ? null : trunks.defaultTrunk()?.id ?? null;
+  channels.bindingFor = (channel, chatId) => channelBinding(store, runtime.owner, channel, chatId, channels.adapter(channel)?.kind ?? "");
+  channels.routingTrunks = () => trunks.records.list().map(({ id, name, handle }) => ({ id, name, handle }));
+  const removedTrunk = trunks.onRemoved;
+  trunks.onRemoved = id => { removedTrunk?.(id); dropTrunkRoutes(store, runtime.owner, id); };
   channels.trunkOfConversation = (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null;
   trunks.afterSettle = () => { linkChatThreads(store, runtime.owner, (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null); };
   // The migration, at every start (idempotent): conversations with no Trunk are put with one, chats' threads linked.

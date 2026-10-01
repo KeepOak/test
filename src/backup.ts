@@ -285,7 +285,9 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   "asks-",
   // Q230: a chat made known for sends, a plan the next message carries on, a project's every-turn instructions and
   // branch, a registry address, a conversation's connection, and a skill's trial, origin and package.
-  "channel-session:", "plan:", "project:", "registry-index:", "session-model:", "skill-candidate:", "skill-draft:",
+  "channel-session:", "plan:", "project:",
+  // Which Trunk answers a chat app or one chat (src/channels/routes.ts): it chooses where the words go, so it is held too.
+  "channel-route:", "registry-index:", "session-model:", "skill-candidate:", "skill-draft:",
   // CHAT-096: a chat's /voice choice; "always" speaks every reply there, which a paid speech service charges for.
   "channel-voice:",
   "skill-origin:", "skill-package:",

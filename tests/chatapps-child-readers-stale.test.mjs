@@ -26,6 +26,7 @@ const stubs = {
   "app/settings/chat-steps.js": "export const stepsCard = () => \"\"; export const initSteps = () => {};",
   "app/settings/rows15.js": "export const sw15 = () => \"\"; export const sec15 = () => \"\"; export const seg15 = () => \"\"; export const id15 = (s) => s;",
   "app/flows/chatapps17d.js": "export const nativeFormat = () => \"\"; export const pill17d = () => \"\"; export const stateOf = () => [];",
+  "app/settings/chat-routing.js": "export const routingCard = () => \"\"; export const initRouting = () => {};",
   "i18n.js": "export const t = (key) => key;",
 };
 
@@ -36,7 +37,8 @@ async function page(t) {
   for (const [file, code] of Object.entries(stubs)) await writeFile(join(root, file), code);
   const held = [];
   const cc = { S: { view: "settings" }, E: { profiles: { isOwner: true } }, owner: true, profile: null, locked: false, toasts: [], acts: {}, renders: 0,
-    api: (path, body) => new Promise((resolve, reject) => held.push({ path, body, resolve, reject })) };
+    // The Who answers here card's read (channels/routes) is not what these cases hold open: it answers at once.
+    api: (path, body) => (path === "channels/routes" ? Promise.resolve(null) : new Promise((resolve, reject) => held.push({ path, body, resolve, reject }))) };
   globalThis.__cc = cc;
   globalThis.document = { getElementById: (id) => (id === "app" ? { classList: { contains: (c) => c === "locked-b17" && cc.locked } } : null),
     addEventListener: () => {} };

@@ -5193,6 +5193,73 @@ words rather than from pixels), `desktop.click`, `desktop.type`, `desktop.key`, 
 `desktop.clipboard` — and none of the three counts as merely looking, so under **Ask before
 changes** every single one stops and asks you first. Photographing your screen is treated as a
 change on purpose.
+**The whole pointer (computer-control).** Beside those, `desktop.move` (rest the pointer on something so a
+tooltip or hover menu appears), `desktop.drag` (press, glide and let go inside one window), `desktop.scroll`
+(up, down, left or right, 1 to 10 steps), `desktop.zoom` (a close-up of part of a window, enlarged when
+small) and `desktop.wait` (0.1 to 30 seconds, touching nothing) complete the set, and `desktop.click` takes
+`button` (left, right, middle), `count` (2 is a double-click, 3 a triple-click) and `modifiers` (ctrl,
+shift, alt held during the click); `desktop.key` takes `repeat` (1 to 20). `desktop.read` gives every part a
+`ref` (UI Automation's id for that exact part, searched for inside that window only) and its `box` in window
+pixels, and a picture or reading of a window comes with a `shot`: a point passed with that `shot` is
+refused, and nothing is done, once the window has moved or changed size since (OpenClaw's frame binding).
+A plain left click on a named part still presses it through UI Automation without moving the pointer, and a
+named list or page scrolls through UI Automation's scroll pattern the same way. Every pointer action checks
+that the spot is inside the window and that this window is what is really on top there, so a click never
+lands on something covering it (another program, a password prompt, or Branch's own window); held keys are
+always let go, and the pointer goes back where the owner left it after a click, drag or wheel. The script
+runs per-monitor DPI aware, so window boxes, part boxes and the pointer all count real pixels on a scaled
+display. Branch's own windows are never a target. Each new tool
+goes through the same switch, approvals, Lockdown, Stop notice, action allowance and "You're driving" wait
+as the rest; `desktop.wait` alone uses none of the allowance. These verbs are Windows-only for now; on a Mac
+or Linux they say so. (Code: `src/integrations/desktop.ts`, `src/integrations/desktop-script.ts`.)
+**Anthropic's computer tool, as it is (computer-control).** `desktop.mouse_down` and `desktop.mouse_up` press and
+let go of a mouse button (one held at a time; Stop, the task ending, the owner taking over, Branch stopping or thirty
+seconds let go of it, and a let-go spot that is covered or outside the window lets go where it was pressed instead),
+`desktop.hold_key` holds a chord for 0.1 to 10 seconds and always lets go, even when stopped mid-hold, and
+`desktop.cursor` says where the pointer is (on the screen, and in a window's pixels) without moving it.
+`desktop.computer` takes Anthropic's computer tool actions and fields as they are (`screenshot`, `zoom`,
+`left_click` … `triple_click`, `left_click_drag`, `mouse_move`, `left_mouse_down`/`up`, `scroll`, `type`, `key`,
+`hold_key`, `wait`, `cursor_position`, with `coordinate`, `start_coordinate`, `text`, `scroll_direction`,
+`scroll_amount`, `duration` and `region`), so a Claude model uses it as it was trained to; the one difference is that
+it names a window, and coordinates are in that window's own picture. Each action is the matching `desktop.*` tool, with
+every check it has. **On Linux (X11)** the pointer verbs, `hold_key` and the pointer's place go through `xdotool`,
+pressed only once the window is the active one and the spot is inside it; parts by name or ref, and close-ups, are
+Windows only. **On a Mac** these verbs say they are not available yet.
+**Take a screenshot (computer-control).** The message box's + menu takes a picture of the main display and attaches it
+to the next message (`POST /api/panels/screen/shot`): Branch's own windows are left out where the desktop app can hide
+them, no picture is taken while a window that handles passwords shows, and only the owner's own window may ask.
+**A paired computer's screen, live (computer-control).** When a conversation uses one of the owner's paired computers
+(a `branch node` whose "Take a picture of the screen" the owner switched on), its full-size computer view shows that
+computer's screen, one picture about every two and a half seconds, passed through from its device socket and kept
+nowhere (`GET /api/panels/screen/device`, `src/device-screen.ts`). Only the owner's window, for their own conversation
+that uses that computer, never under Lockdown or the app lock; the pictures come from a budget of their own on the
+device socket, so watching never takes a task's turns.
+**Using a paired computer from the view (computer-control).** When that computer's own "Let you use its screen and
+keyboard from Branch" switch is on (Customize, Channels, Devices; Windows, and Linux on X11 with `xdotool`), the view's
+Take over lets the owner click, right-click, double-click and scroll on the picture, and send text and key chords
+(`POST /api/panels/screen/device/drive` and `/input`). Each press names the picture it was aimed at, which must be the
+last one shown and under 30 seconds old, and a click or scroll uses that picture up, so nothing lands on a screen the
+owner has not seen. While the owner drives, a task cannot act on that computer ("You're driving"; it may still look);
+Hand back, closing the view, Lockdown, the app lock, switching it off, or two quiet minutes end it. There is no task tool
+for it: the device socket refuses it unless it comes from the owner's view. The computer checks its own switch again
+and takes these from a budget of their own (120 a minute). While the owner holds it, that computer shows a notice on top
+of every window, "Being used from Branch by <owner>", with a Stop that works there: Stop ends the hold at once, Branch is
+told, and the view says someone there pressed Stop. The computer takes no input unless its notice is up and on top
+(Windows: a topmost window; Linux: `xmessage` kept above with `wmctrl`, so input on Linux needs `xdotool`, `xmessage`
+and `wmctrl`). Key chords the owner presses are written to that computer's own `branch node` log; typed words are not.
+On Windows a fixed, encoded PowerShell script reads the input from one environment value; on Linux each is one
+`xdotool` command with the text after `--`.
+**The computer view never shows itself (computer-control).** The owner's live view of this computer
+(`/api/panels/screen`, `src/local-screen.ts`) opens on the main display by itself, and offers every display
+and every app window (browser windows are left out). While a view is open the desktop app's main process
+hides each of its own windows from screen capture (`SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`
+through Electron's `setContentProtection`, Windows 10 version 2004 or newer), and every display frame is
+dropped unless each visible Branch window is still hidden before and after it, so the view can no longer
+show itself inside itself. Only the app's main process decides which windows to hide
+(`src/desktop/capture-service.ts`, `src/desktop/capture-link.ts`); outside the desktop app, or on an older
+Windows, no view opens and the reason is shown. A whole display is watched, and Take control pauses every
+task, but the owner drives it with their own mouse and keyboard; clicking and typing through the view is
+for a chosen app window.
 How it works underneath: one Windows PowerShell script, written once into a private temporary
 folder and called with `-File` so nothing is ever pasted into a command line, driving Windows' own
 accessibility layer (UI Automation) and `user32`. Clicking and typing go through the accessibility
