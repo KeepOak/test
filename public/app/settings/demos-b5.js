@@ -4,9 +4,9 @@
    Registered once, from Settings' init, so every page's row is live or greyed the moment it is drawn.
    Rows with no handler here stay greyed, each for the reason written beside WHY below. */
 import { esc, render } from "../core/dom.js";
-import { S, E } from "../core/state.js";
+import { S, E, activeId } from "../core/state.js";
 import { api } from "../core/api.js";
-import { closeDlg, toast } from "../core/ui.js";
+import { closeDlg, toast, dialog } from "../core/ui.js";
 import { onDemo17, demoDlg17 } from "../places/demo17.js";
 import { WORDS } from "./rows17.js";
 import { t, language } from "../../i18n.js";
@@ -62,9 +62,18 @@ function money() {
 
 /* ---------- Models ---------- */
 function models() {
-  /* Retirement is the router's current flag; health retains only the latest failure per connection, in memory. */
+  /* Retirement is the router's current flag; health retains only the latest failure per connection, in memory. The
+     names and failures are the owner's connections: a reply is shown (or its error said) only if, when it lands, this is
+     still the newest ask and the same person, page and dialog, with the window not locked. */
+  let retiredAsk = 0;
   onDemo17("retired", { open: async () => {
-    const state = await api("state"), cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const ask = ++retiredAsk, profile = activeId(), view = S.view, page = S.setPage, before = dialog();
+    const current = () => ask === retiredAsk && activeId() === profile && S.view === view && S.setPage === page && dialog() === before
+      && !document.getElementById("app")?.classList.contains("locked-b17");
+    let state;
+    try { state = await api("state"); } catch (error) { if (current()) throw error; return; }
+    if (!current()) return;
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const rows = list(state.models?.presets).flatMap((preset) => {
       const health = preset.health, failedAt = Date.parse(health?.lastErrorAt ?? "");
       const recent = Number.isFinite(failedAt) && failedAt >= cutoff;
