@@ -128,8 +128,9 @@ function scheduleRow(s, i) {
   const due = repeatWords(s.data) ?? (s.data?.dueAt ? new Date(s.data.dueAt).toLocaleString(language(), { weekday: "short", hour: "numeric", minute: "2-digit" }) : "");
   const who = trunk?.name ?? E.state?.identity?.name ?? "";
   const on = s.data?.status !== "paused";
+  const recovery = s.data?.authenticationRunId ? `<small>${esc(s.data.pausedBecause ?? "")}</small><button class="btn sm" type="button" data-act="sched-reauth" data-id="${esc(s.id)}">${t("window.settings.secrets.scheduled-retry")}</button>` : "";
   /* QA retest 2026-09-28 (m5): Open goes to the schedule's own conversation, where every turn is. */
-  return `<div class="prow">${trunk ? av(trunk, 34) : `<span class="ico-tile">${ic("clock", "s")}</span>`}<span class="grow"><b>${esc(what)}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}${s.data?.dashboard && ownerHere() ? `<button class="btn sm ghost" type="button" data-act="schedule-dashboard" data-id="${esc(s.id || "")}">${t("scheduleddash.title")}</button>` : ""}${s.data?.threadId ? `<button class="btn sm ghost" type="button" data-act="chat" data-id="${esc(s.data.threadId)}">${t("ov.open")}</button>` : ""}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(what) })}"></div>`;
+  return `<div class="prow">${trunk ? av(trunk, 34) : `<span class="ico-tile">${ic("clock", "s")}</span>`}<span class="grow"><b>${esc(what)}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small>${recovery}</span>${health(s)}${s.data?.dashboard && ownerHere() ? `<button class="btn sm ghost" type="button" data-act="schedule-dashboard" data-id="${esc(s.id || "")}">${t("scheduleddash.title")}</button>` : ""}${s.data?.threadId ? `<button class="btn sm ghost" type="button" data-act="chat" data-id="${esc(s.data.threadId)}">${t("ov.open")}</button>` : ""}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}" ${recovery ? "disabled" : ""}>${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(what) })}"></div>`;
 }
 
 /* A saved prompt (GET /api/prompts), every one of them: its name and command, then its group and the first 80 characters of
@@ -337,7 +338,7 @@ export function init() {
     const add = e.target.closest("form.nl")?.querySelector('button[type="submit"]');
     if (add) add.disabled = !e.target.value.trim();
   });
-  markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run", ...recipeRunLive]);
+  markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "sched-reauth", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run", ...recipeRunLive]);
   initRecipeRun();
   on("bmove15", (el) => {
     const card = cardOf(el.dataset.id);
@@ -374,6 +375,12 @@ export function init() {
     renderNow();
   });
   on("sched-run", async (el) => { try { await api(`schedules/${encodeURIComponent(el.dataset.id)}/trigger`, {}); await refresh(); renderNow(); } catch (error) { toast(error.message); } });
+  on("sched-reauth", async (el) => {
+    el.disabled = true;
+    try { await api("action", { tool: "schedules.reauthenticate", args: { id: el.dataset.id } }); await refresh(); }
+    catch (error) { toast(error.message); }
+    renderNow();
+  });
   on("hb-every", (el) => (el.dataset.v === "off" ? saveHeartbeat(null, "off") : saveHeartbeat({ everyMinutes: +el.dataset.v }, "on")));
   on("hb-hours", (el) => (el.dataset.v === "always" ? saveHeartbeat({ activeHours: null }) : el.dataset.v === "work" ? saveHeartbeat({ activeHours: WORK_HOURS }) : null));
   on("hb-rm", (el) => removeLine(el.dataset.v));
