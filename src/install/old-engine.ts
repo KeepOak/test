@@ -1,3 +1,4 @@
+import { processAlive as stillAlive } from "./process-alive.js";
 import { spawn } from "node:child_process";
 import { readdir, readFile, readlink, writeFile } from "node:fs/promises";
 import { daemonCommandLine, hiddenRunner } from "./daemon.js";
@@ -34,9 +35,6 @@ export type CloseOutcome =
   | { closed: true; instance: RunningInstance; forced: boolean }
   | { closed: false; why: string };
 
-const stillAlive = (pid: number): boolean => {
-  try { process.kill(pid, 0); return true; } catch (error) { return (error as { code?: string }).code === "EPERM"; }
-};
 const pause = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
 
 /** Windows: the process listening at 127.0.0.1:`port` (or every address), from the system's own table. */
