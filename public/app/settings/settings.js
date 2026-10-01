@@ -150,6 +150,9 @@ async function go(id) {
   S.setPage = id;
   renderNow();
 }
+/** A Settings page opened from elsewhere (an engine command's or a link's home, chat/goto.js) goes the way the page list
+    goes: a page drawn from what the engine keeps (waitFirst) is shown once its read is back. */
+export const openPage = (id) => go(id);
 
 export function draw() {
   const lv = level();

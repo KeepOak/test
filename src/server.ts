@@ -67,6 +67,7 @@ import { localRuntimes } from "./local-runtimes.js";
 import { localKitFor } from "./local-kit.js";
 import { adaptApi, handlesAdaptPath } from "./adapt/api.js"; // mac7/adapt
 import { streamLiveSteps, streamOwnerEvents, streamRunEvents } from "./streams.js";
+import { trunkActivity } from "./trunk-activity.js";
 import { liveSteps, specialistName } from "./live-steps.js"; // live steps: watch Branch think and work
 // Web app (wave 6): "Look inside" a task, and "Try a tool" in the developer playground.
 import { inspectRun } from "./inspect.js";
@@ -990,6 +991,7 @@ function state(app: Branch): unknown {
     preferences: preferences(app.store, owner),
     runs: runs
       .map((run) => ({ ...run, title: titles.get(run.id) ?? "", usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
+        ...(run.status === "running" ? { activityState: trunkActivity(app.store.events(run.id)) } : {}),
         ...(aside.has(run.id) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
