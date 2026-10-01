@@ -60,7 +60,9 @@ export function contextMeter(sid) {
   if (Date.now() - last > 5000) refresh(sid);
   const view = state?.available ? state : null;
   const label = view ? `${view.reported === null ? "~" : ""}${percent(view)}%${view.pending ? " · pending" : ""}` : "unknown";
-  return `<button class="sb" type="button" data-act="context-audit" aria-haspopup="dialog" aria-expanded="false" aria-label="Context of the last model request: ${esc(label)}"><span>Context ${esc(label)}</span>${view ? `<meter min="0" max="100" value="${percent(view)}" aria-label="Last request fullness" data-css="width:38px"></meter>` : ""}</button>`;
+  /* The status bar's collapse (pass 18, styles/context-audit.css): the word goes once the bar is tight and the whole item
+     where even the meter has no room, so the running count and the connection are never cut off. */
+  return `<button class="sb" type="button" data-act="context-audit" aria-haspopup="dialog" aria-expanded="false" aria-label="Context of the last model request: ${esc(label)}"><span><span class="sbt18c">Context </span>${esc(label)}</span>${view ? `<meter min="0" max="100" value="${percent(view)}" aria-label="Last request fullness" data-css="width:38px"></meter>` : ""}</button>`;
 }
 function rows(view) {
   const groups = view.categories.map((entry) => `<li>${esc(entry.name)} <span>~${number(entry.tokens)}</span></li>`).join("");
