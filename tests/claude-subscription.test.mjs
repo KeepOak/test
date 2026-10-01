@@ -161,13 +161,30 @@ test("abort kills the owned native tree and connection, erases private files and
   await assert.rejects(stat(f.launches[0].cwd), /ENOENT/);
 });
 
+/* The provider arms its own deadline the moment complete() starts. Racing that wall-clock deadline against the fixture's
+   start-up (a native process, its grandchild, the relay and the upstream) failed whenever start-up took longer on a busy
+   machine. The test instead holds the one timer armed with the provider's own deadline, and fires it itself once the
+   upstream and the native tree are active: the provider's own deadline handler still does all of the stopping. */
+function withHeldDeadline(deadline, start) {
+  const real = globalThis.setTimeout;
+  let held = null;
+  globalThis.setTimeout = (callback, delay, ...rest) => {
+    if (delay !== deadline || held) return real(callback, delay, ...rest);
+    held = () => callback(...rest);
+    return real(() => {}, 2 ** 31 - 1); // stands in for the deadline: the provider still unrefs and clears it
+  };
+  try { return { started: start(), expire: () => { assert.ok(held, "the provider armed its own deadline"); held(); } }; }
+  finally { globalThis.setTimeout = real; }
+}
+
 test("generation cancellation and the provider's own deadline close an active upstream and its native tree", async (t) => {
   for (const timeout of [false, true]) {
     const f = await fixture(t, { hold: true, mode: "grandchild", options: { timeoutMs: timeout ? 1500 : 15000 } });
-    const cancel = new AbortController(), running = scope(() => f.provider.complete(request(undefined, cancel.signal)));
+    const cancel = new AbortController(), deadline = withHeldDeadline(timeout ? 1500 : 15000,
+      () => scope(() => f.provider.complete(request(undefined, cancel.signal)))), running = deadline.started;
     await until(async () => f.seen.length === 1 && await stat(join(f.root, "pids.json")).then(() => true, () => false));
     const ids = JSON.parse(await readFile(join(f.root, "pids.json"), "utf8"));
-    if (!timeout) cancel.abort(new Error("cancel active generation"));
+    if (timeout) deadline.expire(); else cancel.abort(new Error("cancel active generation"));
     await assert.rejects(running, timeout ? /too long/ : /cancel active generation/);
     await until(() => f.disconnected());
     assert.throws(() => process.kill(ids.parent, 0)); assert.throws(() => process.kill(ids.child, 0));
