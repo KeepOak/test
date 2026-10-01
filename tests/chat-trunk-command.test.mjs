@@ -18,6 +18,7 @@ test("/trunk asks the named Trunk once, lists them bare, and leaves the chat's r
   const before = app.channels.chats(app.runtime.owner).find((chat) => chat.chatId === "dm-owner-1")?.sessionId;
   await say("owner-1", "/trunk");
   assert.match(last(sent), /@ada — Ada/);
+  assert.match(last(sent), /\n.+ answers here \(default\)\.$/,"the same reply names which Trunk answers this chat");
   await say("owner-1", "/trunk ada plan dinner");
   assert.equal(last(sent), "@ada: Done.");
   const asked = app.store.runs(app.runtime.owner).find((run) => run.prompt === "plan dinner");

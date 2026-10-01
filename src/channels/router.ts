@@ -1613,8 +1613,17 @@ export class ChannelRouter {
     let reply: string;
     try { reply = asks ? await this.withSlot(work) : await work(); }
     finally { if (named) this.trunkCommands.delete(chatKey(message)); }
+    // Bare /trunk: the Trunks, and which of them answers this chat.
+    if (command.name === "trunk" && !command.argument.trim()) reply = `${reply}\n${this.routeStatus(message)}`;
     await this.deliver(channel, chatId, reply, `command:${chatId}:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
     return "replied";
+  }
+  /** Which Trunk answers this chat, and whether it was chosen for it or is the default. */
+  private routeStatus(message: InboundMessage): string {
+    const adapter = this.adapters.get(message.channel)?.adapter;
+    const id = this.chatTrunk(message.channel, message.chatId), trunk = this.routingTrunks().find(one => one.id === id);
+    const bound = adapter ? routeFor(this.store, this.runtime.owner, message.channel, message.chatId, adapter.kind) : null;
+    return `${trunk?.name ?? "The default Trunk"} answers here${bound ? " (chosen for this chat)" : " (default)"}.`;
   }
   private routeCommand(message: InboundMessage, argument: string): string {
     const adapter = this.adapters.get(message.channel)?.adapter;
@@ -1622,9 +1631,7 @@ export class ChannelRouter {
       { ...message, kind: adapter.kind }, lockedDown(this.store, this.runtime.owner) || this.appLocked())
       && this.pair(message.channel, message.senderId)?.status === "approved" && this.senderAllowed(message.channel, message.senderId);
     if (!argument) {
-      const id = this.chatTrunk(message.channel, message.chatId), trunk = this.routingTrunks().find(one => one.id === id);
-      const bound = adapter ? routeFor(this.store, this.runtime.owner, message.channel, message.chatId, adapter.kind) : null;
-      const current = `${trunk?.name ?? "The default Trunk"} answers here${bound ? " (chosen for this chat)" : " (default)"}.`;
+      const current = this.routeStatus(message);
       return own ? `${current}\nSend /trunk <name>, /trunk default, or /trunk inherit.\n${this.routingTrunks().map(one => `${one.name} (@${one.handle})`).join("\n")}` : current;
     }
     if (!own) return "Change who answers in Branch's window, or from an approved account in your own paired direct chat.";
