@@ -1,3 +1,4 @@
+import { processRunning } from "./process-running.mjs";
 /**
  * Never breaks: chaos. The engine and the gateway are killed at random points in a scripted task,
  * the gateway's settings are filled with rubbish, and the disk fills up part-way through — and every
@@ -56,7 +57,7 @@ async function folder(t, seed) {
   return root;
 }
 const exited = (child) => new Promise((done) => { if (child.exitCode !== null || child.signalCode !== null) done(); else child.once("exit", () => done()); });
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } };
+const alive = (pid) => processRunning(pid, () => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } });
 
 /**
  * What must be true however the task was cut off: nothing that reaches outside happened twice; a
