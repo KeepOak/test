@@ -30,7 +30,10 @@ export type OAuthProvider = z.infer<typeof OAuthProviderSchema>;
 export interface OAuthTokens {
   accessToken: string; refreshToken: string | null; tokenType: string;
   expiresAt: string | null; scope: string | null; obtainedAt: string;
-  /** Which settings (issuerOf) signed in or renewed this; absent on sign-ins saved before it was kept. */
+  /**
+   * Which settings (issuerOf) signed in or renewed this, kept beside the tokens (Locker.origin), never inside them;
+   * absent on sign-ins saved before it was kept, or saved since by a Branch that does not keep it.
+   */
   issuer?: string | undefined;
 }
 export interface OAuthStart { id: string; url: string; redirectUri: string; expiresInMs: number }
@@ -201,8 +204,10 @@ export class OAuthConnections {
     const expect = replacing
       ? (current: string | null) => { const held = storedTokens(current); return !!held && sameCredential(held, replacing); }
       : undefined;
+    /* The stored form stays exactly what an older Branch reads (StoredTokensSchema), so a rollback keeps the sign-in. */
+    const { issuer: _issuer, ...plain } = tokens;
     const write = () => this.secrets.put(this.owner, "default", oauthSecretName(provider.id),
-      JSON.stringify({ ...tokens, issuer: issuerOf(provider) }), {}, expect);
+      JSON.stringify(plain), {}, { expect, origin: issuerOf(provider) });
     const check = currentHealthCheck();
     try {
       if (check) await check.writeOwnCredential(this.owner, "default", oauthSecretName(provider.id), write);
@@ -220,7 +225,8 @@ export class OAuthConnections {
     const saved = storedTokens(values?.[name] ?? null);
     if (!saved) return null;
     this.secrets.scrubber.remember(name, saved.accessToken);
-    return saved;
+    const issuer = this.secrets.origin(this.owner, "default", name);
+    return issuer === null ? saved : { ...saved, issuer };
   }
   /**
    * A usable access key, renewed first when the saved one has expired. Calls that find it expired at the same moment
@@ -273,7 +279,7 @@ function listenOnLoopback(server: Server): Promise<number> {
 const StoredTokensSchema = z.object({
   accessToken: z.string().min(1).max(4000), refreshToken: z.string().max(4000).nullable().default(null),
   tokenType: z.string().max(40).default("Bearer"), expiresAt: z.string().nullable().default(null),
-  scope: z.string().max(1000).nullable().default(null), obtainedAt: z.string(), issuer: z.string().max(64).optional(),
+  scope: z.string().max(1000).nullable().default(null), obtainedAt: z.string(),
 }).strict();
 /** A saved sign-in's tokens, or null when there is none or it cannot be read. */
 function storedTokens(text: string | null): OAuthTokens | null {

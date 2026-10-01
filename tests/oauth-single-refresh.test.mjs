@@ -3,19 +3,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { z } from "zod";
 import { OAuthConnections, oauthSecretName } from "../dist/oauth.js";
 import { Locker, LockerConflict } from "../dist/locker.js";
 import { Secrets } from "../dist/vault.js";
 
 function lockerWith(tokens) {
-  const kept = new Map([[oauthSecretName("svc"), JSON.stringify(tokens)]]);
+  const kept = new Map([[oauthSecretName("svc"), JSON.stringify(tokens)]]), origins = new Map();
   return {
     scrubber: { remember() {} },
     /* As the real locker: with `expect`, written only if it accepts the value held at that moment. */
-    async put(_owner, _project, name, value, _options, expect) {
+    async put(_owner, _project, name, value, _options, { expect, origin } = {}) {
       if (expect && !expect(kept.get(name) ?? null)) throw new LockerConflict(`${name} changed`);
       kept.set(name, value);
+      if (origin === undefined) origins.delete(name); else origins.set(name, origin);
     },
+    origin(_owner, _project, name) { return origins.get(name) ?? null; },
     async resolve(_owner, _project, names) { return Object.fromEntries(names.filter((n) => kept.has(n)).map((n) => [n, kept.get(n)])); },
     kept,
   };
@@ -170,5 +173,40 @@ test("a sign-in replaced while the renewal's write waits for the locker key surv
   assert.equal(await waiting, "signed-in-again", "the waiting caller gets the new sign-in");
   const kept = JSON.parse((await locker.resolve("owner", "default", [name]))[name]);
   assert.equal(kept.accessToken, "signed-in-again", "the old renewal's key is not written over the new sign-in");
-  await assert.rejects(locker.set("owner", "default", name, "x", () => false), LockerConflict);
+  await assert.rejects(locker.set("owner", "default", name, "x", { expect: () => false }), LockerConflict);
+});
+
+/* The tokens an older Branch reads, exactly as it reads them (its StoredTokensSchema, strict): a rollback after a save by
+   this Branch keeps the sign-in. The settings stamp lives beside the tokens, is dropped by a later write that does not
+   keep one (as an older Branch writes), and goes when the tokens are removed. */
+const olderStoredTokens = z.object({
+  accessToken: z.string().min(1).max(4000), refreshToken: z.string().max(4000).nullable().default(null),
+  tokenType: z.string().max(40).default("Bearer"), expiresAt: z.string().nullable().default(null),
+  scope: z.string().max(1000).nullable().default(null), obtainedAt: z.string(),
+}).strict();
+
+test("a renewed sign-in is stored in the form an older Branch reads, with its settings kept beside it", async () => {
+  const keys = { async key() { return Buffer.alloc(32, 9); } };
+  const db = new DatabaseSync(":memory:"), locker = new Locker(db, keys), secrets = new Secrets(db, locker);
+  const name = oauthSecretName("svc");
+  await secrets.put("owner", "default", name, JSON.stringify(expired("old", "refresh-1")));
+  const fetchImpl = async () => new Response(JSON.stringify({ access_token: "renewed", refresh_token: "refresh-2", expires_in: 3600 }),
+    { status: 200, headers: { "content-type": "application/json" } });
+  const connections = new OAuthConnections("owner", secrets, policy, fetchImpl);
+  assert.equal(await connections.accessToken(provider), "renewed");
+  const raw = (await locker.resolve("owner", "default", [name]))[name];
+  const older = olderStoredTokens.safeParse(JSON.parse(raw));
+  assert.ok(older.success, "an older Branch still reads the saved sign-in");
+  assert.equal(older.data.accessToken, "renewed");
+  assert.ok(locker.origin("owner", "default", name), "the settings are kept beside the tokens");
+  const otherClient = { ...provider, clientId: "client-2" };
+  await assert.rejects(connections.accessToken(otherClient), /other settings; sign in again/);
+
+  await locker.set("owner", "default", name, raw); // as an older Branch writes: no settings kept
+  assert.equal(locker.origin("owner", "default", name), null, "a later write without settings leaves none");
+  assert.equal(await connections.accessToken(otherClient), "renewed", "a sign-in with no settings kept is read as before");
+
+  await secrets.put("owner", "default", name, raw, {}, { origin: "label" });
+  secrets.remove("owner", "default", name);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM locker_origin").get().n, 0, "the settings go with the tokens");
 });
