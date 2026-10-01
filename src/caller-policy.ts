@@ -66,6 +66,9 @@ export const personDoors: readonly Door[] = [
   door("POST", "/api/people/conversations"),
   door("GET", `/api/people/conversations/${idPattern}`),
   door("POST", `/api/people/conversations/${idPattern}/message`),
+  door("GET", "/api/people/rooms"),
+  door("GET", `/api/people/rooms/${idPattern}`),
+  door("POST", `/api/people/rooms/${idPattern}/message`),
 ];
 /** Where a set-up key (from the owner's one-time code) reaches: a new PIN or a passkey, then sign in again. */
 export const setupDoors: readonly Door[] = [
@@ -127,6 +130,8 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
     return "A short-lived key cannot read an update's problem or make its file. Do that in the app window.";
   if (path === "/api/updates/data-copies")
     return "A short-lived key cannot see or put back the copies of the data folder taken before updates. Do that in the app window.";
+  // CHAT-156: who may message Branch names people; like the door above, a script's key may not even read it.
+  if (path === "/api/channels/allowlist") return "A short-lived key cannot read or change who may message Branch. Do that in the app window.";
   if (method === "GET") return ownerOnlyRead(path);
   // Wave mac3 (commands, integration review): when Branch checks with you, which model every new
   // conversation starts with (and the model services behind it), and which commands are offered
@@ -274,6 +279,7 @@ const opensOnThisComputer: readonly RegExp[] = [/^\/api\/accounts\/sign-ins\/(st
 const permanentHereOnly: readonly RegExp[] = [/^\/api\/sessions\/[a-f0-9-]{36}\/delete-now$/, /^\/api\/sessions\/put-away\/empty$/, /^\/api\/retention\/prune$/];
 /** Why a door (the paired door, a phone's own key, or a caller beyond this computer) may not send this, or null. */
 export function hereOnlyRefusal(method: string | undefined, path: string): string | null {
+  if (/^\/api\/taste(\/|$)/.test(path) || /^\/api\/self-development\/publications(\/|$)/.test(path)) return hereOnly;
   if (/^\/api\/self-development\/merge(\/|$)/.test(path)) return hereOnly;
   if (secretToADoor.some((route) => route.test(path))) return hereOnly;
   if (method === "GET" || method === "HEAD") return null;

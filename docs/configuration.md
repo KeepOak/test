@@ -1,5 +1,11 @@
 # Configuration
 
+### Weekly recap
+
+Overview shows completed Trunk tasks from the last seven days, grouped by their recorded Trunk. Helpers, engine activity, temporary chats and deleted conversations are excluded. Completion uses the retained task's finish timestamp, so work started before the week can count when it finishes during it. The scan is bounded to the latest 5,000 completed records and the card says when older records were left out. This is retained activity, not an audit of work that has been erased.
+
+There is no invented time-saving figure. Set your usual manual minutes per Trunk task on the card to get an explicitly labeled estimate of manual work avoided; clear it to show no estimate. Running time is recorded activity, not your attention time and is not treated as a saving. This estimate applies to completed Trunk tasks only. `GET /api/weekly-recap` reads the recap and `POST /api/weekly-recap` sets `{ "manualMinutesPerTask": 10 }` (0–1,440, or `null`); both belong to the owner at the app and refuse short-lived keys and household profiles. No message is sent or recurring job created.
+
 ## Practice runs in the window
 
 The Permissions page's **Practice runs** switch controls availability and defaults on. In the
@@ -422,6 +428,10 @@ for a Google Cloud project.
 
 **Settings → Models → On this computer** sets a model up with one click, through Ollama, LM Studio, llama.cpp's `llama-server` or (on a Mac with Apple silicon) MLX's `mlx_lm.server`, so a model can answer without anything leaving this machine and without any charge.
 
+**Installed vLLM on Linux:** the owner can also start an already installed compatible vLLM GPU runtime with an existing Hugging Face model directory through `POST /api/local-models/setup`, for example `{ "runtime": "vllm", "name": "/absolute/path/to/model", "found": true, "toolParser": "hermes" }`. Choose the parser that matches the model: `hermes`, `llama3_json`, `qwen3_coder` or `qwen3_xml`. Branch reads a bounded local `config.json`, limits context to at most 8,192 tokens and the model's declared maximum, starts one local multiprocess engine on a fresh `127.0.0.1` port, waits for its model list, and registers a connection only after its ordinary small-question check succeeds. One vLLM setup runs at a time. The owner/profile, local-model switch and Lockdown checks apply; chat apps, household people, Trunks and short-lived keys cannot request this setup.
+
+This vLLM path installs and downloads nothing, leaves the model directory where the owner put it, disables Hugging Face online loading, general vLLM plugins and usage telemetry, and does not opt into remote model code. Its process inherits the existing stripped runtime environment. These options are not an operating-system network sandbox. Memory/GPU fit, parser compatibility and complete model weights are the owner's responsibility; startup or the check can fail. No curated GGUF/MLX package is offered as a vLLM model. Use runtime Stop or model Unload to end the server Branch started; Branch refuses to delete the owner-selected vLLM files. After restart, the connection sends nothing until the directory is set up again on a fresh port. Automatic installers, a dedicated directory/parser picker and managed LocalAI remain separate work. Live runtime, tool-call and cancellation acceptance have not been run for this addition.
+
 **The switch** (`settings/local-models`, `mode`): `off` (every route that changes something refuses in one sentence, and nothing is restored at start), `when-needed` (the default: one click works; at start Branch rebuilds the local connections and carries on setups that were interrupted), `on` (the same, and at start Branch also starts Ollama or LM Studio for your local connections when it is installed and not already running; this one is yours to pick).
 
 **What one click does** (`POST /api/local-models/setup`, with `{ "model": "qwen3-8b", "quant": "Q4_K_M" }` from the list, or `{ "name": "qwen3:8b" }`, and an optional `runtime`):
@@ -529,6 +539,8 @@ The free fallback reads a public results page rather than an interface meant for
 ```
 
 `searchEndpoint` still sets the address the free fallback uses, so anything already set up keeps working.
+
+The window can pick the service too, under Settings › Advanced › Web search (`GET`/`POST /api/web-search`, owner only). Once the owner picks one there, that pick wins over the launch settings file; until then the file decides. Without a `keySecret`, a paid service looks for its usual secret name (`BRAVE_SEARCH_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY` or `SERPER_API_KEY`), and the row says whether that secret is saved.
 
 ### Pinned skills and memory retention
 
@@ -934,6 +946,26 @@ Create a bot with @BotFather, then either save its token as the secret `TELEGRAM
 
 Delivery to a chat is at-least-once: a message is marked sent only after the chat service took it, so if Branch stops in that very moment the message is sent again after the restart. `activation`, `pairing` and `allowlist` mean the same on every channel, and every channel uses the same delivery ledger, the same pairing codes and `POST /api/channels/link { channel, chatId, sessionId }`. Every credential is read from an environment variable of that name first, then from a secret of that name in the **default project's** locker; nothing is ever written into the connections file. Every outbound request goes through the network settings in `web`, including the chat sockets (checked as the matching `https://` address) and the mail servers (checked by host name). `GET /api/channels` reports each channel's `health` as `connected`, `reconnecting` or `needs attention` with a plain reason; **Settings → Channels** shows the same line and a **Check the connection** button. A secret never appears in that output, in an error message or in the log.
 
+### The home chat, what is working, and naming a conversation (the chat-parity build)
+
+Three commands Hermes Agent and OpenClaw have, on the one command table:
+
+- **`/sethome`** (Hermes). The home chat is the one chat that results sent "home" go to: a schedule, heartbeat,
+  watch or morning brief whose `deliverTo` is `{"channel": "home", "chatId": "home"}`. Home is read when each
+  one is sent, so moving it moves them all; with no home a delivery fails with "No chat is set as home yet".
+  Choosing it is the owner's. At the window, phone or terminal, `/sethome` says where home is,
+  `/sethome <chat app> [chat]` chooses a chat that has talked to Branch (the latest one on that app when no chat
+  is named), and `/sethome off` forgets it. In a chat, `/sethome` (or `/sethome off`) is taken only in a direct
+  chat from one of your own chat accounts (the exact list `/platform` uses, or the paired accounts marked as yours
+  under Settings › Chat apps › Commands from your own chat, whether or not running commands is on), and before any other command
+  is read; from anybody else, or in a group, it is an ordinary message, and one sent while Branch was closed is
+  let go.
+- **`/agents`** (`/tasks`, `/subagents`; Hermes `/agents`, OpenClaw `/subagents` and `/tasks`): every task working
+  now, with the helpers each one started listed under it. In a chat, only that chat's own tasks.
+- **`/title <name>`** (`/name`, `/rename`; Hermes `/title`, OpenClaw `/name`): names the conversation it is typed
+  in, as renaming it from the window's menu does, from a chat too.
+- **`/commands`**: every command the surface can use, as `/help all`.
+
 ### The window's commands from your own chat (CHAT-185)
 
 From one of your own chat accounts (the `/platform` list, or the paired accounts marked as yours under Settings ›
@@ -958,8 +990,8 @@ task a chat message starts is marked as coming from a chat (`source: "channel"` 
 record), and so is everything it starts: a helper it hands work to, a side question (`/btw`, `/compact`,
 `/help <question>`), a prompt step of a workflow it runs, and the same task carried on after a restart
 (with the same tools it had). No setting makes a chat account count as you. The one list of your own
-chat accounts (under reach, for `/platform pause|resume|status`) is used only for that command and
-lends those accounts nothing else. What that means:
+chat accounts (under reach, for `/platform pause|resume|status` and `/sethome`) is used only for those
+two commands and lends those accounts nothing else. What that means:
 
 - **Your approval rules are held to "Ask before changes"**, as they are for a schedule or another AI
   tool: your standing yeses do not reach a chat's task, so a change it wants waits for a yes. The chat
@@ -1005,8 +1037,22 @@ to be able to change your local copy but never publish it, and now it cannot do 
 below allows it — unlike commands and your devices, which a line can never allow. This is a change: before, a chat's task was given everything except
 a named few, so anything nobody had thought of was handed over. It is now the other way round.
 
-**Your own paired account is a chat account.** The list above is what your own phone gets too. Nothing
-makes a chat account count as you.
+**Who may message Branch.** The owner's `GET /api/channels/allowlist` and `POST /api/channels/allowlist` read and change the shared sender list. `unknown: "pair"` offers unapproved senders a code; `"block"` refuses them with a private-assistant reply; `"ignore"` refuses them and leaves unauthorized direct chats unanswered, without creating a pairing request. Groups keep the existing refusal reply. Existing approved pairings and allow rules still work, and explicit block rules win. For example, `{"unknown":"ignore"}` changes only that choice; rules not supplied stay as they are. The default remains `"pair"`. Changing the list requires the owner's full app access; no chat command changes it.
+
+**Your own chats have your full access.** One chat counts as you: an account you named as your own
+(Customize → Chat apps → Commands from your own chat, or `/platform`), writing to Branch one to one, on an
+app whose servers vouch for who sent it (Telegram, Discord, Slack, Matrix; never email, SMS or a webhook).
+Its task runs as a task you start in the window: every permission, your approval rules, and the Access
+level a new conversation in the window starts on (Full access included), and you can answer its questions
+from that chat. The switch is `ownerChats` on this card, **Your own chats have your full access**, on by
+default. What `/goal` and `/bg` start from that chat is yours in the same way, and so is Full Access in
+the self-development worktree (Branch building Branch works from your phone). Lockdown and the App lock
+turn it off while they are on. It is checked again at every step: turning the switch off (or unmarking
+the account) gives the next message the short list, and a task already running is held to a chat's rules
+from its next step, so its next change waits for your yes in the window. A group,
+anybody else, or a message the app cannot vouch for still gets the short list above. This follows
+OpenClaw's "main" session: the owner's direct chat runs on the host with the full toolset, and every
+other session is held back.
 
 **Allowing more, per app and per person.** The card is **Customize → Chat apps → What a chat may do
 beyond talking** (`POST /api/channels/permissions`, read back from `GET /api/channels` as
@@ -1155,6 +1201,8 @@ Save the mailbox password as `EMAIL_PASSWORD` and give both servers:
 
 Built on Node's own TLS with no mail library: a small IMAP4rev1 reader (`LOGIN`, `SELECT INBOX`, `SEARCH UNSEEN`, `FETCH`, `STORE \Seen`) looks for unread mail every `pollSeconds`, answers it, and marks it read so it is never answered twice; a small SMTP sender (implicit TLS, `AUTH PLAIN` then `AUTH LOGIN`, `8BITMIME`) sends the reply threaded onto the original with `In-Reply-To` and `References` and a `Re:` subject. `allowlist` holds sender addresses. `tls: false` on a server connects in the clear and upgrades with `STARTTLS` when the server offers it, which is only sensible for a mail server on this computer. **Plain text only**: attachments, HTML mail and multipart bodies are not read or sent, and quoted history below an "On … wrote:" line is trimmed from the question. An address longer than 60 characters is shortened to a stable `who:<hash>` handle, because a chat id may hold 64 characters; such an address therefore cannot be put on the `allowlist` by address, and has to pair with a code instead. The first look at the inbox does not hold up starting, so a mail server that is unreachable shows as **reconnecting** with the reason rather than stopping Branch.
 
+Email channels require authenticated sender domains by default (`requireAuthenticatedSender: true`). The first `Authentication-Results` header must report DMARC pass, or SPF/DKIM pass with an exactly matching From domain. Missing, malformed or ambiguous results are ignored before pairing, approvals or task dispatch. Your receiving provider must remove forged authentication headers and prepend its own verdict; set `trustedAuthservIds` to its exact authentication server names, for example `["mx.example.com"]`. Only the first header is considered, even with pins. `requireAuthenticatedSender: false` explicitly opts out for a mailbox whose sender identity is established separately. These checks authenticate the sender domain; the existing address allowlist and pairing still control who may use Branch. Messages ignored by this check are marked read by the ordinary inbox poll and receive no reply. Hosted mailbox proof is still required before relying on a configuration.
+
 ## Connections: the other chat services
 
 Ten more team-chat services work the same way as each other: you paste in an address to send to, the service posts what people write to an address of yours, and a signature or a shared word proves the post really came from the service. Branch has one connection for all of them, and what each one needs is kept as data in `data/channels.json` rather than as a separate piece of program. The table below is written from that file, so it can never say a service does something its row does not say it does.
@@ -1246,6 +1294,18 @@ Use `"type": "instagram"` for Instagram, with the professional account's id as `
 ### Sending without being asked
 
 Two tools send on the assistant's own initiative rather than answering somebody. `channels.broadcast` sends one message to several linked chats at once — leave the list empty to reach every chat that has talked to the assistant — and `channels.digest` sends the morning brief as it stands right now to one chat on any connected service. Both go through the same waiting line every reply uses, so quiet hours, splitting and retries apply unchanged: during quiet hours the message is written down and sent when they end. Both are the owner's alone: somebody else using this computer under their own profile is refused, because the chats belong to the owner. Neither is available to a task started from a chat message, so somebody you have paired cannot make the assistant write to everyone else.
+
+### Correcting or removing Branch's own messages
+
+From your own task in the app, ask Branch to correct or remove an earlier message it sent. `channels.own_messages`
+lists up to 50 retained own text deliveries in one exact channel and chat, including message IDs and edit/delete
+availability. `channels.edit_message` replaces one recorded message's text; `channels.delete_message` removes it.
+They require `channels.send` and the owner's profile, and refuse tasks from chat apps, schedules, triggers,
+short-lived keys or borrowed conversations. Edits pass the outbound secret and safety checks and must fit in one
+message. Actions pause while Branch is locked, paused, in Lockdown or in quiet hours. Service failures and time
+limits are reported, and success is recorded only after the service accepts the action. The original send and its
+stable deduplication key remain, so deletion does not resend the message after reconnect. Sent deliveries are kept
+for seven days; unknown, expired, already deleted or other people's message IDs are refused.
 
 ### Who may change the chat apps
 
@@ -1668,8 +1728,8 @@ means this wave added it (behind its switch, off); **not built** gives the reaso
 
 ## Setting up a chat app in one command
 
-*mac7/connect.* For every chat app Branch supports (55 of them, counted from the code: the nine with a
-type of their own, the ten team-chat services in `data/channels.json`, and the 36 wave mac3 services in
+*mac7/connect.* For every chat app Branch supports (56 of them, counted from the code: the nine with a
+type of their own, the ten team-chat services in `data/channels.json`, and the 37 added services in
 `src/channels/connectors.ts`), one command gets the official app, opens the page that makes the bot,
 takes the token without showing it, checks it with the app's own service, keeps it in the locker, and
 switches the app on if you say so:
@@ -1845,6 +1905,7 @@ says so.
 | KOOK (`kook`) | yes; switched on from it | Windows: download page; Mac: download page; Linux: download page | `https://developer.kookapp.cn/app/index` | `KOOK_BOT_TOKEN` | GET `https://www.kookapp.cn/api/v3/user/me` |
 | WeChat Official Account (`wechat-mp`) | yes; switched on from it | Windows: winget `Tencent.WeChat`; Mac: cask `wechat`; Linux: download page | `https://mp.weixin.qq.com/` | `WECHAT_MP_APP_SECRET`, `WECHAT_MP_TOKEN`, `WECHAT_MP_AES_KEY`; plus appId | none |
 | WeCom app (`wecom-app`) | yes; switched on from it | Windows: winget `Tencent.WeCom`; Mac: download page; Linux: download page | `https://work.weixin.qq.com/wework_admin/frame#apps` | `WECOM_APP_SECRET`, `WECOM_APP_TOKEN`, `WECOM_APP_AES_KEY`; plus corpId, agentId | none |
+| WhatsApp (personal number) (`whatsapp-web`) | yes; switched on from it | Windows: download page; Mac: cask `whatsapp`; Linux: download page | none (plain steps) | `WAHA_API_KEY`; plus server | none |
 
 <!-- channel-setup-table:end -->
 
@@ -2448,6 +2509,9 @@ Everyone answers or Only who I tag. A checked, sufficiently confident pick is wr
 does not ask again; an unknown or unsure pick falls back to the room rule. Tagged messages are never rerouted.
 `inbox` enables `POST /api/decisions/urgency { items }`, an owner-only action that scores Needs you rows from
 1 to 10, at most eight new rows per call. Scores are cached by row key and content; changed words are scored again.
+The `lists` switch (on by default) filters a long list a tool hands back (search results, files, messages) before
+the task reads it, keeping what the task could need. It acts only with a decision model on this computer or one chosen
+apart from the task's own; a list shorter than `listMin` lines (20 to 2000, default 60) is read whole.
 Switching it off refuses scoring with 409 and restores the inbox's original order.
 
 ## Teams, linked chats, registries and evaluation
@@ -2521,7 +2585,8 @@ them on a task in a suite file as `"scorers": [...]`:
 `exact` (the answer, once case, spacing and trailing punctuation are taken off), `contains`,
 `regex`, `json-schema`, `numeric` (with a tolerance), `url` (a pattern the address must match),
 `file-exists` and `file-contains` (inside the workspace), `tool-called` (optionally `withArgs`, so
-you can say a tool must have been used with particular arguments), `budget` (`maxSteps`, `maxMs`,
+you can say a tool must have been used with particular arguments), `helper-runs` (`min`, `max`,
+`completed`, `output`: the helpers the engine actually recorded for the task), `budget` (`maxSteps`, `maxMs`,
 `maxTokens`, `maxDollars` — the rounds, time, tokens and money a task may use), `finished` (did it
 actually do the work, or did it say it could not — the completion checks you already use, plus the
 phrases an answer uses when it has quietly given up), `f1`, `passage`, `html`, `trajectory`, and
@@ -3326,6 +3391,8 @@ Two switches, both saved in `settings/reflection` (`src/reflection/`). Looking b
 
 - `reflection` (`off`, `when-needed`, `on`). With `on`, once `everyTurns` of your turns (5–500, default 25) have passed in a conversation, and whenever a long conversation is shortened, the assistant rereads only the turns since its last look, beside what it remembers and which skills are on, and asks the model once, with no tools, for corrections, merges, facts to set aside and notes on skills. With `when-needed` it looks only when a conversation is shortened, or when you press *Look back now* (`POST /api/reflection/look-back { sessionId? }`). Every answer is a suggestion in the usual queue, grouped as one batch; a suggestion naming a fact or skill it was not shown, or reading like an order slipped in from outside, is dropped. `POST /api/reflection/batches/:id/accept|reject` decides a whole batch. Temporary conversations are never read.
 - `newSkills` (`off`, `when-needed`, `on`). With `when-needed` a skill is drafted only when asked: typing `/learn` (with anything to add after it) in a conversation, `POST /api/reflection/learn { sessionId, notes? }`, or accepting a skill idea from the learning core. The assistant also has one short tool, `skills.learn` (`skills.manage`), for the same request in plain words. With `on` it may also draft after a finished task that used three or more different tools without a skill (once per conversation), and a look back may suggest skill ideas. A draft is installed switched off, tried as a practice run on the task it came from and up to two like it, once without any skill and once with it, and waits: `POST /api/reflection/new-skills/try|accept|reject { skillId }`. Keeping one that was not tried, or did worse, needs `force: true` with the words shown in the app, and is written to the record. Throwing one away removes it, since nothing used it.
+For a video or tutorial, first use the ordinary permitted `media.watch`, `media.captions`, `web.fetch` or `files.read` tool. When asked to keep its procedure as a skill, `skills.learn { sourceCallId, notes? }` selects that completed read from the same task. It keeps up to 10,000 characters of source text, marks missing portions, removes embedded instruction lines, and records the source call. This does not fetch anything again or turn a draft on; the usual trial and owner decision still apply.
+
 - Accepting a **skill note** in the queue now changes the skill: a note on an installed skill is written into a new, switched-off version, tried on the last tasks that used the skill, and listed under *Suggested better versions* with its diff, where a second yes switches it on. A skill idea with no skill becomes a new-skill draft as above, and is only noted while `newSkills` is `off`.
 - `retireAfterDays` (7–365, default 60). *Look for skills nobody uses* (`POST /api/reflection/retire`) offers to set aside each switched-on skill that no task has read in that time, once. It looks at the last 100 tasks only and says so; when those go back less far than the setting, it offers nothing. A skill a schedule names is left alone. Accepting switches the skill off; it stays installed.
 
@@ -3741,6 +3808,28 @@ The assistant has these tools, each of which asks first whether the connected pr
 
 **What is deliberately not here.** On its own the assistant does not make videos (switch on *Making videos* under *Reach and platform* to use OpenAI's or Google's video service with your own key), and on its own it cannot pull still frames out of one: that needs a video decoder this app does not ship. With your own ffmpeg and the switch below turned on, it can (see *Watching and saving videos*). `media.info` exists so it can still reason about a video's length and shape. Sound editing is limited to trimming uncompressed WAV.
 
+**Pictures through your ChatGPT sign-in** use `gpt-image-2` through the native JSON picture route
+used by Codex, after your existing sign-in opt-in. Branch's existing **unofficial, may stop working**
+standing for that third-party sign-in remains; reading the official client's request format does
+not mean OpenAI endorses Branch. Settings offers `gpt-image-2` when the signed-in primary
+connection is eligible, without reading a token. Clear another picture-model override before
+using this route. `media.image` makes a picture or edits one PNG/JPEG/WebP from the workspace;
+masked edits are refused. Output is one decoded PNG up to 5 MB; the result reports its actual
+dimensions separately from the size requested. A practice run reads no token and
+makes no request.
+
+Only the owner's own task can use this route. Local-only tasks, household profiles, short-lived
+keys, outside task sources, pinned helpers, a separately chosen conversation connection/account,
+and Trunks with separately chosen or unpermitted sign-ins refuse it. It uses the one enabled
+primary account, with no account fallback; a multi-account or account-capped pool is refused.
+Task/monthly dollar caps and enabled model cost thresholds also refuse it because picture usage
+and any charge are not attributed to those budgets. Cost stays **unknown**, never free; the plan's
+picture allowance is not measured here. Tokens remain private, the address is fixed to the
+original ChatGPT backend, requests pass through the network rules with redirects refused, and
+errors contain only the status. A real account, picture output and plan allowance still need
+acceptance proof. Turning off that sign-in or choosing an API-key picture connection restores
+the ordinary picture route.
+
 Reading a file is `media.read` and counts as looking, not changing; making a picture, speaking and trimming are `media.write` and are held to your approval rules like any other change. Each of those tools tells the approval rules the workspace path it would write (`media/poster.png`), so a rule about that folder fires on the path the file really gets rather than the bare name that was asked for. Every result is signed by the ordinary tool receipt, so what was made and where it was saved can be checked afterwards. A practice run reports what it would have made without calling the provider.
 
 ### Watching and saving videos (bucket 17)
@@ -3813,7 +3902,7 @@ Sending work to the branch everyone shares (`main` or `master`) stops and asks y
 { "git": { "remote": true, "github": { "tokenSecret": "GITHUB_TOKEN" } } }
 ```
 
-That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (75 by default, looking again every `checksPollSeconds`, 15 by default, 1 to 120), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators, leaves required reviews and merge queues to GitHub, and refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
+That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (300 by default, at most 600, looking again every `checksPollSeconds`, 15 by default, 1 to 120; it only looks, so one call may wait past the owner's tool time limit, and the loop guard treats it as a polled tool), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators and leaves required reviews to GitHub. When the base takes changes only through GitHub's merge queue, the checked commit joins the queue instead (GitHub's `enqueuePullRequest`, pinned to that commit), the tool says it is queued, not merged, and `github.wait_for_checks` stays pending until GitHub says merged, or failed if the queue took it out. It refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
 
 **GitLab (RES-719)** is a connection of its own, set up in the window: **Settings › Advanced › GitLab**. Its switch
 ships "when needed"; the row under it says whether GitLab is connected. **Connect** asks for your GitLab's address
@@ -3978,12 +4067,17 @@ the checks itself on the exact head commit rather than relying on GitHub enforci
 every check run, commit status and Actions workflow run must have finished and passed (skipped or neutral is
 accepted only for checks the base does not require), every check the base requires through classic
 protection or an active ruleset must have passed from its configured app, and the head must contain the exact
-base commit. Queued, running, missing or not-yet-registered checks are pending and never count as passed.
-Required approving reviews, merge queues and other rules Branch cannot satisfy by checking are left to
-GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
+base commit (unless the base has a merge queue, which tests the head on the newest base itself). Queued, running,
+missing or not-yet-registered checks are pending and never count as passed, and so is GitHub's "blocked" while
+they run. On a base with a merge queue (KeepOak/Branch-Agent's `redesign/window` has one) the checked commit joins
+the queue rather than merging directly, and the change is merged only when GitHub says so. Required approving
+reviews and other rules Branch cannot satisfy by checking are left to GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
 force-merges or bypasses a rule; the merge request names the checked head SHA, so a later push is refused by
 GitHub itself. `github.wait_for_checks` waits for the checks; in the owner's selected Full Access,
-`branch.finish_source_change` then gets an independent read-only review and merges without asking.
+`branch.finish_source_change` then gets an independent read-only review and merges without asking (or joins
+the merge queue). `branch.run_contract_tests` runs a worktree's contract tests the one way that counts as
+evidence (`node scripts/review.mjs --jobs 1` with its `expectedTests`, behind the command wall) and says whether
+they passed, with counts, or failed and why; a failed run is kept too, never as evidence.
 
 Integration review (mac4/bucket-18): each file goes through the same checks as the assistant's own
 file tools before it is sent: secret-looking names (`.env`, keys), anything `.branchignore` hides,
@@ -4218,6 +4312,8 @@ Local HTTP authorization is single-owner access, not a multi-user tenancy system
 record (`PreferencesSchema` in `src/preferences.ts`) holds `appearance` (`forest` or `daylight`),
 `followSystem`, `accent` (`copper`, `leaf`, `earth`, `slate`, `ink`), `textSize`
 (`small`/`medium`/`large`), `density` (`comfortable`/`compact`), `font` (`geist`/`system`),
+`readingFont` (a reading face for replies, used only when it is installed on this computer: `Atkinson Hyperlegible`,
+`OpenDyslexic`, `Lexend`, `Arial`, `Georgia`, `Verdana` or `Segoe UI`; `null`, the default, keeps the theme's font),
 `reduceMotion`, `showAcorn` (the pixel acorn in the rail's bottom corner, off by default), `showEverything`
 and `showVoice`. Every field has a default, so a record saved by an older version still loads.
 Settings → Appearance changes all of them; each choice shows at once and Save keeps it.
@@ -4678,9 +4774,24 @@ files open as the window, so a hand-over would hit a locked file. Before the han
 written, the window reads `running.json`, asks that process to close (`taskkill /PID <pid> /T`, then
 `/T /F` if it will not), waits a bounded time for it to go and removes the note. An engine that
 still refuses is not treated as a failure: the hand-over script waits for the engine's process id
-as well as the window's, and ends it itself before mirroring anything. Nothing new is started: the
-hand-over still runs through the same hidden Windows Script Host launcher, and every tool is run
-with no window.
+as well as the window's, and ends it itself before mirroring anything. Every tool is run with no
+window.
+
+**How Windows installs an update (versioned folders).** Each version sits in a folder of its own,
+`<install>\app-<version>\`, beside the others; `current.json` names the one in use and the one
+before it. A new version is made beside the one running (Electron's own program is hard linked from
+it, never made anew), tried on a copy of the work, and put in use by one rename of `current.json`,
+so there is never a half-copied program. The version before is kept whole for going back; older
+ones are removed once nothing runs from them, so two are kept. Going back is the same rename the
+other way, and it is refused when the new version has already moved the saved work to a format the
+older one cannot read (then the new version is started again and the owner is told why). A start
+of an older version's program (an old shortcut, say) starts the version in use instead. A copy
+installed before this layout is the version before on its first update, and on the update after,
+when it is no longer needed to go back, its app is replaced by a small launcher that starts the
+version in use, so shortcuts to the top of the install keep working. The switch is run by a small
+runner: Electron's own program, linked with its files beside the update's scratch files, which runs
+the switch with no window and no Windows Script Host. A portable copy keeps its data beside the
+program, so it keeps the older swap, run by the same runner.
 
 **Checking a computer is ready.** `branch doctor --fix`, and the *Check and repair what I can*
 button, look for Git, the private browser Branch uses to read pages, a free address on this
@@ -5735,13 +5846,14 @@ question and only runs after you say yes, and the result is shown exactly as the
 Below that, one question can be put to two models using the evaluation route where that is
 configured.
 
-**On a phone.** `/manifest.webmanifest` and `/service-worker.js` make the page installable. The
-worker keeps the app's own files (stylesheets, scripts, icons, the English words) so it opens
-quickly and shows the app rather than a browser error when the connection drops. Nothing under
-`/api/`, `/v1/` or `/webhooks/` is ever cached: your assistant is live or it is nothing, and an
-unreachable computer puts a plain banner on the screen. The worker is never registered inside the
-desktop app or when the page is opened with `?desktop=1`, and the desktop app never offers to
-install itself.
+**On a phone.** The redesigned window serves `/manifest.webmanifest` and its icons, but it
+does not register a service worker or promise an offline shell. Opening it needs a reachable
+Branch computer. If the connection drops while the window is open, live requests fail and the
+window shows its connection banner; it does not cache assistant requests or replay changes.
+The legacy `/service-worker.js` URL now only retires its own previously installed registration
+and deletes the exact historical Branch shell caches. It creates no cache or registration and
+preserves unrelated workers and caches. Retirement takes effect when the browser next checks
+that worker for an update; it cannot clear an old installation which never reconnects.
 
 **Languages.** Labels go through `t(key)` in `/i18n.js`, reading `/locales/en.json`. The rail, the
 sections, the owner menu, the message box and the screens described above are covered; the older
@@ -5753,9 +5865,10 @@ and kept in this browser, not in the workspace. Dates and numbers are written wi
 chosen language.
 
 The files `/web-ui.js`, `/web-ui.css`, `/markdown.js`, `/i18n.js`, `/inspector.js`, `/live-run.js`,
-`/conversation-facts.js`, `/playground.js`, `/service-worker.js`, `/manifest.webmanifest`,
+`/conversation-facts.js`, `/playground.js`, `/manifest.webmanifest`,
 `/locales/en.json`, `/locales/fr.json` and the app icons are served from the same local allowlist
-as the rest of the interface.
+as the rest of the interface. `/service-worker.js` is a compatibility retirement response rather
+than a static app asset.
 
 ## Knowledge bases (batch 24, wave 7)
 
@@ -6128,6 +6241,29 @@ a yes for this conversation that runs out in an hour, or a standing rule you can
   sentence the settings screen shows.
 - `POST /api/rules/allowed/revoke` — `{ session, tool, target }`. Removes one remembered answer and
   hands back what is left. A yes that is not there any more answers 404.
+
+### WhatsApp with a personal number, through a bridge you run
+
+The official WhatsApp Business Cloud API (the WhatsApp card) needs a business number and Meta's app review. For a
+personal number Branch talks to **WAHA** (github.com/devlikeapro/waha, Apache-2.0), a WhatsApp Web bridge you install
+and run yourself with Docker on this computer, the way Signal works through signal-cli: Branch ships none of it.
+**This automates a personal number through an unofficial client, which WhatsApp's terms do not allow, so the number
+can be banned.** Use a spare number; the official Cloud API has no such risk. It is off until you set it up.
+
+The setup (WhatsApp (personal number) in Customize › Channels) says the risk first, then:
+installing Docker (Docker Desktop needs administrator rights), running
+`docker run -d --restart unless-stopped -p 127.0.0.1:3000:3000 -e WAHA_API_KEY=… --name waha devlikeapro/waha`,
+typing its address and pasting the key, and a **Link** step that shows the code the bridge makes, to scan with
+WhatsApp › Settings › Linked devices (`POST /api/channel-setup/whatsapp-web/link`: owner only, this computer only,
+never returns the key). Only a loopback address is accepted for the bridge (127.0.0.1, localhost, ::1): it is a
+program on this computer, so the network settings are not asked about that one address. Messages arrive over the
+bridge's socket (`/ws?session=…&events=message`) and replies go out with `POST /api/sendText`; a direct chat is always
+answered, a group when the assistant's number is @mentioned or one of its messages is replied to, and its own
+messages and status updates are never read. Pairing codes and the allowlist apply as on every app.
+Pictures, videos, files and voice notes sent to the number come in too: the bridge downloads them, and Branch fetches
+each one from the bridge alone (same address, with its key, no redirects, at most 20 MB) only once the message has
+earned an answer; a voice note is transcribed as on the other apps. Files go out through the bridge's `sendImage`
+(JPEG and PNG) and `sendFile`, and a spoken reply through `sendVoice` as a voice note, at most 16 MB each.
 
 ### Files and voice in the other chat apps (CHAT-094, 104, 105)
 
@@ -6537,6 +6673,12 @@ plainest example — something for you to do by hand. `GET /api/deferred` lists 
 `POST /api/deferred/settle` with the id and what came of it brings the answer back into the
 conversation as an ordinary follow-up message.
 
+`user.task` keeps the small core API for manual handoffs. Typed handoffs are available through
+`user.later` in the agents toolbox: `kind: "signing"` waits for your report that you signed,
+and the default `kind: "later"` records unfinished work for the **Finish now** action.
+Neither performs or verifies a signature, sets a timer, or grants the continuation new permissions.
+Earlier `user.task` calls with `kind: "signing"` remain accepted.
+
 All the routes in this batch — flows, the handed-over jobs, the programs left running, and the
 three switches above — belong to the owner. With somebody else's profile switched on they answer
 "belongs to the owner", exactly as saved workflows and the waiting line do, and so does the
@@ -6840,19 +6982,18 @@ Mac and on Linux: each switch with its explanation, on Linux the session type, a
 a Mac an **Open System Settings** button that opens that one page only when you press it (in the app
 through its own link opener, which accepts only these four pages). On Windows the card is not shown.
 
-## Commands nobody has ruled on (batch 26, wave 8)
+## Commands nobody has ruled on (batch 26, wave 8; changed 2026-09-30)
 
-A command on this computer is the one thing that can do absolutely anything, including things none
-of Branch's own tools offer. Until now, a command that no rule mentioned was simply run. It is now
-put to you instead, whatever preset you are on, and answering yes writes a standing rule for that
-command — so it is one question the first time and nothing afterwards.
+A command that no rule mentions runs for your own tasks, as OpenClaw's host commands and Hermes Agent's terminal do
+for their owner. The commands on Hermes Agent's dangerous-command list (a recursive delete, a force push, `git reset
+--hard`, formatting a disk, shutting down, piping a download into a shell, and the rest) are still put to you, under
+every mode including Full access, while "Checking commands" in Settings › Safety extras is on (it ships on).
 
-**What changes for you.** If you have been using Branch already, the first time it wants to run each
-kind of command you will see one extra question, naming the command. Say "yes, always" and you will
-not be asked about that one again. Nothing else changed: a file, a web page or a message that no
-rule mentions is still simply allowed, exactly as before. If you would rather have the old behaviour
-back, set `unmatchedCommands` to `allow` on the approval settings; the rules you already have are
-untouched either way.
+**What changes for you.** An install that was on "No approvals" with commands set to ask is moved to allow once;
+any other preset keeps asking before commands through its own lines. A household person's task, a short-lived key's,
+a chat message's and a schedule's still ask before every command nobody has ruled on. If you would rather be asked,
+set `unmatchedCommands` to `ask` on the approval settings; saying "yes, always" to a command then writes a standing
+rule for it, and the rules you already have are untouched either way.
 
 ## What each person here may do (batch 26, wave 8)
 
@@ -7662,6 +7803,43 @@ A password manager showing on screen stops it outright, as it stops any other pi
 
 Tools: `monitors.screen.create`, `monitors.screen.check`. File: `src/screen-watch.ts`.
 
+Set `readText: true` when creating a screen watch to explain changed pictures with local OCR text
+differences. This is optional and off by default. It requires Tesseract on PATH with its English
+language data; Branch does not install or download it. This optional existing executable avoids
+adding a bundled OCR runtime or sending screen content to a provider. The image is passed through
+stdin, with a 15-second cap and bounded input/output. The existing private-window capture refusal
+and screen-control switches still apply, and known secrets are scrubbed before comparison.
+
+At most 4,096 recognized characters per watch are held as a memory-only baseline. Screenshots and
+baselines are not saved by OCR. A restart or evicted baseline means the next look establishes a new
+baseline; it cannot reconstruct earlier words. When pixels change, the summary includes up to six
+removed and six added text lines, capped at 1,600 characters. These summaries can be retained in
+the resulting conversation or delivered to the chat selected by `notifyVia`, so enable this only
+for a region whose words you want in those notifications. OCR errors fail the look without
+advancing its fingerprint; unchanged OCR text is reported honestly rather than invented as a
+text change. OCR recognizes printed text imperfectly and does not infer what a page means.
+
+### Local OCR of workspace pictures and scans
+
+`documents.ocr` reads a workspace-relative PNG/JPEG or explicitly selected scanned-PDF pages locally.
+It uses the same bounded Tesseract adapter as screen watches. PDF pages additionally need installed
+Poppler `pdftoppm`; neither executable is installed automatically. Executables are resolved only
+from absolute directories on the owner's startup PATH, never from a task argument or working folder.
+
+This is an owner-only `files.read` tool, held to the task's workspace/project, file rules, hidden and
+secret filename checks, and symlink/hardlink refusals. No renderer endpoint accepts arbitrary paths.
+PNG/JPEG inputs are capped at 8 MiB and 4 megapixels; PDFs at 24 MiB. Choose `firstPage` (default 1)
+and `pageCount` (default 1, maximum 5). PDF pages render one at a time at a maximum 2048-pixel long
+side; a page outside the document is an error. Private temporary input/raster files are removed
+on success, error and cancellation. A job has a 90-second overall cap, each child 15 seconds, and
+only one local document OCR job runs at a time.
+
+Recognized text is capped at 4096 characters per page, scrubbed for known secrets and passed through
+the existing file-content instruction filter. Results identify the selected page numbers and remain
+untrusted document content; OCR does not execute their instructions or index the file. Returned text
+can be retained in the tool's conversation, as with other file reads. Password-protected or damaged
+PDFs, unsupported pictures, missing executables and cancelled work fail explicitly.
+
 ## Asking a specialist one question (batch 22, wave 8)
 
 The composer has a **Who should answer** picker beside the Temporary toggle. Leave it on "Your
@@ -8133,19 +8311,40 @@ Every field of `VoiceSettingsSchema` (`src/voice.ts`), which is what **Settings 
 | `useProviderVoice` | Prefer the connected service's higher-quality voice over the browser's. |
 | `sttRoute` | Who writes out what you say: `auto`, `openai`, `gemini`, or `local` (a speech program here). |
 | `sttModel` | The model name to use for writing speech out, when the route wants one. |
-| `ttsRoute` | Who reads replies aloud: `auto`, `openai`, `gemini`, or `windows` (the voices Windows ships). |
+| `ttsRoute` | Who reads replies aloud: `auto`, `openai`, `gemini`, `windows` (the computer's voice), or `piper` (an installed CLI and model). Auto prefers an available Piper model for the default local voice; an explicit system or provider route keeps that choice. Local voices still obey `systemVoice`. Piper reuses one external process across sentences and releases it after two idle minutes. |
 | `ttsModel` | The model name to use for reading aloud, when the route wants one. |
 | `keepAudioOnThisComputer` | Nothing containing sound may leave. Both cloud routes then refuse in plain words, and so does a live conversation. |
 | `replyWithVoiceOnChannels` | Answer a voice note on a chat app with a voice note back. Telegram only, today. |
 | `localSpeechExecutable` | The full path to whisper.cpp, or to the Python that has faster-whisper. Empty: Branch looks for faster-whisper where `uv tool install faster-whisper-cli` or `pipx install faster-whisper-cli` put it. Branch downloads nothing. |
 | `localSpeechModel` | The model file whisper.cpp should use; for faster-whisper a model name (`base.en`) or folder. Empty: the fastest faster-whisper model already on this computer. |
 | `localSpeechKind` | Which of the two it is: `whisper-cpp` or `faster-whisper`. faster-whisper runs as a small worker kept loaded while it is used, offline. |
+| `localVoiceExecutable` | Absolute path to an already installed Piper CLI. Empty looks for `piper` or `piper.exe` on PATH. Branch does not install it. |
+| `localVoiceModel` | Absolute path to an existing Piper `.onnx` voice with an adjacent `.onnx.json`; empty uses `PIPER_VOICE`. No model is downloaded. The voice's license remains the owner's responsibility. |
 | `localSpeechStream` | The full path to a streaming speech program that is handed sound on its standard input and writes words out as it hears them, for live dictation. Empty means none, and Branch looks for `whisper-stream` or sherpa-onnx on your search path instead. Branch downloads nothing. |
 | `liveMaxMinutes` | How many minutes one live conversation may last. 10 by default. |
 | `liveMaxDollars` | How much one live conversation may cost. $1.00 by default. |
 | `liveVoiceDetection` | Let the service decide when you have stopped speaking, rather than waiting for the button. |
 | `keepLiveRecordings` | Note in the task's record how much sound a live conversation carried — the size of each piece and nothing else. The sound itself is never kept either way. |
 | `liveView` | `off` (the default) or `on`. On: Talk live opens a view of its own, like the voice modes of ChatGPT and Codex: a circle that moves with the real sound going up and coming back, what each side says as it is said, Mute (the sound stops leaving this computer), Show the chat, and End; the send button offers Talk live while the message box is empty. A question the assistant asks mid-conversation folds the view away so its card can be answered. The microphone is asked for only when you press Talk live. Off: Talk live is the plain button it always was. Talk live is never offered in a room or a conversation a Trunk answers in. |
+
+Local faster-whisper captions and completed recordings prefer the installed package's Silero VAD.
+The existing offline worker keeps the VAD and speech model warm, excludes neural-classified silence,
+and preserves 400 ms of speech padding. If its local VAD asset or runtime cannot load, recognition
+continues without neural filtering and the Voice status reports that fallback after first use.
+No model or package is fetched. Installed sherpa VAD dictation also accepts complete Whisper ONNX
+bundles (`<name>-encoder[.int8].onnx`, matching decoder, `<name>-tokens.txt`, `silero_vad.onnx`)
+alongside transducer bundles. An explicitly named streaming program still wins.
+
+When the selected connection is a ChatGPT subscription, Talk live uses its existing selected account
+for `gpt-live-1-codex`, with a browser WebRTC audio offer and engine-owned sideband. No provider token
+is given to the page. The existing owner/profile, app-lock, Lockdown, conversation and local-audio
+refusals still apply. This route requires automatic voice detection; its provider controls interruption
+when you speak. Requests needing Branch actions go through the ordinary delegated runtime, using
+the exact selected account and usual approval cards. Answer a waiting card in Inbox; spoken agreement
+does not grant approval. End or a new consultation cancels pending work and retires its unanswered cards.
+With account pooling off, the connection's primary account remains selected. A later account/model
+change ends the live conversation. The time limit applies, but subscription quota/dollar usage is
+unavailable and the dollar cap cannot be enforced for this route. WebRTC audio size recording is unavailable.
 
 ### The rest
 
@@ -8582,7 +8781,7 @@ wait at once.
 | Suggested automations | Automations → Scheduled | A catalogue of 13 blueprints with checked blanks, and up to five suggestions worked out from what Branch remembers and what is connected, without asking a model (`automation.ideas`, `automation.propose`, `/suggestions`, `/blueprint`) |
 | Standing orders | Automations → Scheduled | A named programme: what it may do, when it starts, what needs a yes, when to stop and ask. A reply starting `ESCALATE:` pauses it and asks you (`orders.list`, `orders.propose`) |
 | Repeating in a conversation | Automations → Scheduled | `/loop every 10m <what> [--times n] [--until …]` (1 minute apart at least, 10 turns unless said, 100 at most, stops on `LOOP_COMPLETE`) and `/heartbeat every 30m <what>` (5 minutes apart at least, adds a note only with news). Owner only |
-| Sub-goals, background tasks, handing on | The message box | `/subgoal` adds to the conversation's goal (the judge sees them); `/bg` runs a task in its own conversation, three at most; `/handoff <chat app>` points a chat that has talked to Branch at this conversation, and `/handoff terminal` or `assistant <name>` uses Interop's hand-on, behind its own switch |
+| Sub-goals, background tasks, handing on | The message box | `/subgoal` adds to the conversation's goal (the judge sees them); `/bg` runs a task in its own conversation, three at most; Conversation → Share → Hand off selects an exact available Telegram owner DM and rechecks both conversation pointers before linking. The chooser considers the latest 50 Telegram chats and their latest 20 runs. Busy tasks, waiting questions, changed destinations and unavailable chats are refused. `/handoff terminal` shows the attach command to run; `/handoff assistant <name>` reports the remote assistant's returned state and answer, behind Interop's own switch. A chat app name alone does not choose a destination. |
 | Procedures that start themselves | Automations → Procedures | Steps that start on a clock, after one of your tasks, or by hand; each asks before every step, before it starts (the default), or runs on its own. A step marked `confirm` always asks; an "on its own" procedure under 50% after four runs goes back to asking (`procedures.auto.list`, `procedures.auto.propose`, `procedures.auto.suggest_change`, which the owner answers in the flow editor) |
 | What skills need | Customize → Skills | Programs, keys and systems a skill declares in its `metadata` (`requires-bins`, `requires-any-bins`, `requires-keys`, `os`, `install-brew`/`-apt`/`-winget`/`-npm`/`-pip`, or OpenClaw's `openclaw` block), and whether this computer has them (`skills.readiness`). Programs are looked for on `PATH` without running anything; install lines are only shown |
 | "From now on" instructions | Settings → Assistant | "From now on, …" in one of your messages is kept, after one yes, as a standing instruction for the assistant, every specialist, or one specialist (`instructions.list`, `instructions.propose`) |
@@ -9129,6 +9328,44 @@ is sent only to OpenRouter, and selecting Cheapest or Fastest clears that list.
 The planning, difficulty and OpenRouter ideas come from aider, cline, gemini-cli and Hermes Agent
 (Apache-2.0 and MIT); no code was copied.
 
+### Recorded cost thresholds
+
+The owner can set a **stop-next-round estimate** through `POST /api/model-savings`, initially off:
+
+```json
+{"card":"costThresholds","values":{"mode":"on","activatedAt":"2026-09-30T12:00:00.000Z","rules":[
+  {"provider":"openai","model":"gpt-4o","maxMonthlyDollars":10,"fallbackPreset":"my-small-model"}
+]}}
+```
+
+Use `connections[].thresholdProvider` and `connections[].model` from `GET /api/model-savings`:
+the provider key is the catalogue service id, or the preset id for a custom connection. A null
+`model` counts every model on that service. The named fallback must already be set up; null stops
+the round. This API is owner-only, including reads; there is no dedicated window control yet.
+
+`activatedAt` (ISO 8601 timestamp or null) records when the guard was last enabled; the system uses it
+to determine which month's rounds to count. The field is set automatically when the guard is turned on
+and cleared when it is turned off. Changing rules while the guard is on retains the current `activatedAt`.
+
+Estimates count completed runtime rounds from when the owner enables the guard, resetting at the
+start of each UTC month. Turning it off and on starts a new counting period; changing rules while
+it is on retains that period. Prices are the current catalogue or owner correction and tokens use
+the larger of Branch's estimate and the service's reported count, including cache-read, cache-write,
+and one-hour cache-write tokens. Kept answers cost nothing. Unknown prices or unreadable receipts
+stop an enabled matching guard instead of counting as zero.
+
+Only the owner's explicitly named fallback is considered, and its own thresholds, known price,
+tool/picture/JSON capabilities, local-only routing and Trunk sign-in rules still apply. A pinned
+helper model/account is stopped rather than moved to another account. Household and short-key
+callers receive no dollar figures from a threshold refusal.
+
+This is not an API billing ceiling: it reserves nothing for concurrent or in-flight requests and
+a completed round can cross the figure before the next round stops. Failed/interrupted requests,
+direct provider calls, mixture members and cache keep-alive pings are not attributed separately.
+Plan subscription list-price estimates are not subscription bills. Disable the guard or reset this
+card to roll back its routing effect. The cost guard is original Branch code: Hermes's similarly
+named `model_thresholds` sets context-compression ratios, not dollar limits.
+
 **macOS and Linux.** Nothing here depends on the system: the cards, the routing and the pings behave
 the same on Windows, macOS and Linux, and the keep-alive timers never keep the app from closing.
 
@@ -9526,13 +9763,19 @@ authors who test their plugin against Branch before shipping it. A tool with `se
   their names: this computer, numbers and private-network names (`localhost`, `.local`, `.lan`, `.internal`,
   `.home.arpa`) are refused in the package. A hand-placed plugin walled by the tick is pinned to the code it
   had when it was loaded. One question to a plugin is at most 1 MB, and at most 4 plugin runs go at once.
-- **Windows.** Windows has no file and network wall, only a job object, so add-on code is refused there unless
-  the owner ticks "Run add-on code on Windows without the wall" (`windowsWithoutWall`, ships off); a plugin run
-  that way says so instead of claiming a wall. Nothing else on Windows changes.
-- **Hand-placed plugins stay in-process by default (decided).** "Also run plugin files I put in the plugins
-  folder myself in their own walled program" (`wallEveryPlugin`) keeps shipping off: those files are the owner's own, the switch
-  would change how existing plugins behave (Windows included), and a walled plugin loses model connections and
-  chat services. Add-ons from a package, list or draft are walled whatever the tick says.
+- **Windows.** Windows has no file and network wall, only a job object, so add-on code other people wrote is
+  refused there unless the owner ticks "Run add-on code on Windows without the wall" (`windowsWithoutWall`, ships
+  off; turning it on needs the owner's yes and is refused under Lockdown); a plugin run that way says so instead of
+  claiming a wall. A plugin the owner placed themselves runs there as its own program with the job object's limits.
+- **Hand-placed plugins run as their own program too (RES-251).** "Also run plugin files I put in the plugins folder
+  myself in their own walled program" (`wallEveryPlugin`) ships on: no plugin runs inside Branch unless the owner
+  chose that. Hand-placed plugins already switched on when this first started keep running as before, each recorded
+  (`grandfathered`, and `add-ons-plugin-wall-kept` on this computer), and Customize › Tools › Plugins lists them once
+  with **Wall it** beside each. A walled plugin brings no model connections or chat services, since those live inside
+  Branch; the owner lets one plugin run inside (`insideBranch`, set by `POST /api/plugin-catalog/add-ons/inside { id, inside }`, its row
+  "Where it runs") or switches the wall off for all. Either is less careful, so it needs the owner's yes
+  (`confirmLoosening`) and is refused under Lockdown; walling a plugin always goes through. A walled plugin is held to the same add-on
+  interface version as one inside. Add-ons from a package, list or draft are walled whatever the tick says.
 - **Branch as a plugin.** A `.branch-export.json` file is trusted only for folders Branch remembers writing, so a
   record planted in a folder cannot make Branch remove or overwrite the owner's files. A folder with a file the
   owner changed stays Branch's until everything it wrote is gone.
@@ -9688,6 +9931,26 @@ looked at, so no more than this is ever in memory, and it is thrown away again e
 switch and `sureness` are in the settings catalogue, so a whole-app preset or a settings file can
 turn listening off or make it stricter but can **never choose what this computer listens for**: the
 word is set by you, in the card, and nowhere else.
+
+**Installed streaming keyword spotter.** Branch prefers
+`sherpa-onnx-keyword-spotter-microphone` when its complete model bundle and a tokenized
+keyword file are already present. The owner-only wake settings API accepts `keywordModel`
+(model folder), `keywordFile` (defaults to `keywords.txt` in that folder), and
+`confirmationFrames` (1–20, default 3 trailing blank frames in the native decoder).
+The bundle needs `tokens.txt` plus encoder, decoder and joiner ONNX files. The keyword
+file must contain a tokenized entry with an `@DISPLAY_NAME` matching your word in
+uppercase with spaces replaced by underscores. Prepare that entry with the installed
+spotter's vocabulary tools; Branch does not tokenize or download models for you.
+Check the license of the model you choose: no pretrained model is included, and
+openWakeWord's noncommercial pretrained models are never used.
+
+This program holds the microphone open continuously while the wake word is On, keeps
+its model loaded, and stops on lock, Lockdown, switch-off or application exit. Matches
+have a two-second cooldown and start ordinary turns with the existing permissions.
+If only faster-whisper is available, Branch uses its existing worker instead of passing
+whisper-cli flags to Python. That fallback still records separate windows and can miss
+speech while a window is being recognized. The new model/file settings currently have
+no dedicated controls in the Voice card; configure them through the owner settings API.
 
 **Your word stays yours.** `GET /api/voice/wake` is readable by anybody using this computer, so it
 never carries the word itself to anybody but you: somebody on a household profile is told only
@@ -10632,3 +10895,27 @@ The Gardener extends this record with the following settings when its feature is
 | `archiveAfterDays` | `30` | 2–730: set unused adopted skills aside after this many days. |
 | `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
 | `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |
+
+
+### Thirty-day usage insights
+
+`/insights` reports completed-task tokens, estimated cost, unknown prices, recorded failures, top models and task sources for the last thirty days. It works in the window, phone, terminal, dashboard and supported chat commands, without invoking a model. In chat or with a restricted key, it reports only the current conversation. With the owner key on other surfaces, it reports the owner's conversations; `/insights conversation` narrows it, and `/insights all` explicitly requests the owner aggregate. Household profiles cannot request the owner's aggregate. Costs are estimates rather than bills, and running tasks are excluded.
+
+
+`/history` also works in the window and phone conversation composer. It reads the current conversation only, shows the last twenty user/assistant turns with bounded previews, and scrubs known secrets. Household profiles can read their own current conversation; unknown or another person's conversation is refused. It does not invoke a model and can be used while a task runs.
+
+### Price-drop watches
+
+Automations > Running on its own > Watches can add a price watch and show its retained price history. Choose the exact item/variant, page, one unique literal label, source currency marker/code, decimal format and threshold. A supported field looks like `Total: $199.95`; the label is `Total:` and the marker is `$`. Multiple copies of the label, a missing marker or an invalid amount fail closed. This deterministic field reader does not infer a variant, taxes, shipping, stock, discounts, exchange rates, or browser login state. Choose a label that identifies the intended price. Dynamic/login-only pages without that text remain unsupported.
+
+The first successful fetch establishes a baseline before the watch is saved. The watch is quiet unless the numeric price drops from the last good observation and is strictly below the threshold. Equal prices, rises and unrelated page changes do not alert. The UI sends to Activity; `monitor.create` may specify an existing approved chat destination under the existing channels-send and Trunk rules. A failed fetch, parse or delivery preserves the prior baseline and price history for retry. A stable delivery key suppresses duplicate chat delivery on a retry of the same transition. History keeps the latest 100 successfully committed observations; removing the watch deletes it.
+
+Example tool input: `{ "url": "https://example.com/item", "every": "6h", "price": { "item": "Specific item and variant", "currency": "USD", "currencyMarker": "$", "label": "Total:", "below": 200, "decimals": 2, "decimalSeparator": "." } }`. Decimal commas use `decimalSeparator: ","`. `monitor.prices` reads creator-scoped retained observations; the owner-only window route is `GET /api/monitors/<id>/prices`. No watch is started until explicitly created.
+
+### Agent-written scheduled dashboards
+
+In Scheduled → Describe it, the owner can choose Keep the result as a dashboard before confirming an ordinary assistant task. A task/check can also declare `dashboard: { title: "My dashboard" }` through its existing authorized schedule creation API. This adds a structured-output instruction, no tool permission or source connection. Each scheduled task refreshes up to eight columns and forty rows with values, source identifiers, retrieval timestamps and freshness status, plus up to twelve attention notes. Dashboard jobs default to notifying only on material value, source, freshness, layout or attention changes; timestamp-only refreshes and repeated invalid-refresh errors do not alert again. Explicit `notify: "always"` retains the owner's digest choice. The table and fifty recent field-change notes persist in owner governance, separate from editable schedule definitions.
+
+A stale source preserves that cell's previous good value and provenance when its row/field labels still agree; without one, the cell reads Unknown. An incomplete task, oversized response, invalid structure or future timestamp keeps the prior valid dashboard and records a generic refresh failure. Sources/timestamps are reported by the model's task, not independently verified; the renderer does no source/auth/provider read. Choosing sources and permissions remains the task's existing contract. Omitted rows are removals, not failed source reads, so the task must mark a failed field stale explicitly.
+
+The owner's Dashboard button reads the latest valid page in an opaque sandboxed, script-free frame with a no-network/no-forms CSP. Read latest page reads the retained snapshot; it neither starts a task nor schedules polling. English page/locale fallback. `GET /api/schedules/<id>/dashboard` requires the current owner and an unlocked app and rejects short-lived script keys. Removing the schedule removes its saved projection. Branch's existing profile/App-lock watcher clears open dialogs on observed ownership/lock changes. No public link, source-login automation, arbitrary HTML/scripts, automatic download or verified live source refresh is implied. Trunk-routine dashboards and automatic open-page repaint remain separate.

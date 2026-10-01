@@ -3,6 +3,7 @@ import type { ToolContext, ToolTarget } from '../contracts.js';
 import type { ToolRegistry } from '../registry.js';
 import { ScreenshotSchema, WaitSchema } from './browser-page.js';
 import type { DialogRecord, DownloadRecord } from './browser-session.js';
+import { profileNameSchema } from './browser-profiles.js';
 
 /**
  * FQ-execution.browser: one page or action, as a step in a `browser.flow`. Kept small on purpose —
@@ -22,6 +23,8 @@ export const FlowStepSchema = z.discriminatedUnion('action', [
 export type FlowStep = z.infer<typeof FlowStepSchema>;
 export const FlowSchema = z.object({
   steps: z.array(FlowStepSchema).min(1).max(12),
+  /** Explicit saved sign-in, selected in the same task before opening any page. */
+  profile: profileNameSchema.optional(),
   /** Passed straight through to each step's picture. */
   fullPage: z.boolean().default(false),
 }).strict().superRefine((value, ctx) => {
@@ -49,6 +52,7 @@ export interface FlowStepReport extends PageEvents {
 
 /** What the browser tool lends the flow runner: its own actions, called one after another. */
 export interface FlowHost {
+  profileAction?(action: 'use', name: string, context: ToolContext): Promise<unknown>;
   navigate(url: string, context: ToolContext): Promise<{ url: string; title: string } & PageEvents>;
   click(role: 'button' | 'link', name: string, context: ToolContext): Promise<{ url: string; clicked: string } & PageEvents>;
   fill(label: string, value: string, context: ToolContext): Promise<{ filled: string } & PageEvents>;
@@ -124,6 +128,11 @@ async function judgeFlow(registry: ToolRegistry, host: FlowHost, input: z.infer<
   context: ToolContext): Promise<string[]> {
   const hosts = stepHosts(input.steps, host.hostFor(context));
   const usedOverrules: string[] = [];
+  if (input.profile) {
+    if (!host.profileAction) throw new Error('Saved browser profiles are unavailable for this flow.');
+    const fingerprint = registry.judgeStep?.('browser.profile', { action: 'use', name: input.profile }, context);
+    if (fingerprint) usedOverrules.push(fingerprint);
+  }
   for (const [index, step] of input.steps.entries()) {
     const { tool, args } = toolCall(step);
     const moved = step.action === 'click' || step.action === 'fill';
@@ -168,6 +177,7 @@ export async function runFlow(registry: ToolRegistry, host: FlowHost, input: z.i
     if (!registry.takeStepYeses) throw new Error(stepYesUsedRefusal);
     if (!registry.takeStepYeses(usedOverrules, context)) throw new Error(stepYesUsedRefusal);
   }
+  if (input.profile) await host.profileAction!('use', input.profile, context);
   const steps: FlowStepReport[] = [];
   const seen = new Set<string>();
   for (const [index, step] of input.steps.entries()) {

@@ -2,6 +2,8 @@ import { z } from "zod";
 import { NeedsInputError, errorText } from "./contracts.js";
 import type { Message, Run } from "./contracts.js";
 import type { Store } from "./store.js";
+import { planProgress, type PlanProgress } from "./orchestration-progress.js";
+import { PausedError } from "./long-work.js";
 import { checkResult } from "./delegation.js";
 import { CheckError, CompletionCheckSchema, evaluateChecks, type CompletionCheck } from "./reliability.js";
 import { audit } from "./audit.js";
@@ -53,6 +55,8 @@ export type PlanDecision = "waiting" | "approved" | "rejected";
 export interface StoredPlan {
   runId: string; sessionId: string; prompt: string;
   steps: PlanStep[]; current: number; approved: boolean; createdAt: string;
+  /** Durable execution phase and bounded counters, separate from owner approval. */
+  progress?: PlanProgress;
   /** Which mode made this plan. Only a "Show me the plan first" plan holds the task to it. */
   mode?: PlanMode;
   /** How far this task may go before checking back, as it was when the plan was agreed. */
@@ -78,6 +82,10 @@ export interface PlanAnswer {
   actor?: string | undefined;
 }
 export interface ConductOptions {
+  /** The parent task's existing lifecycle; reviewer failure must not swallow Stop or Pause. */
+  signal?: AbortSignal;
+  /** Pause/handover uses the runtime's separate between-step lifecycle check. */
+  checkLifecycle?: () => void;
   /** Ask for a plan for this task whatever the saved setting says. */
   plan?: boolean;
   /** Review the finished answer for this task whatever the saved setting says. */
@@ -150,8 +158,9 @@ export class Orchestration {
     return this.store.get("settings", this.owner, `plan:${sessionId}`)?.data as unknown as StoredPlan | undefined;
   }
   savePlan(plan: StoredPlan): StoredPlan {
-    this.store.save("settings", this.owner, `plan:${plan.sessionId}`, { ...plan });
-    return plan;
+    const saved = { ...plan, progress: planProgress(plan) };
+    this.store.save("settings", this.owner, `plan:${plan.sessionId}`, saved);
+    return saved;
   }
   clearPlan(sessionId: string): void {
     this.store.delete("settings", this.owner, `plan:${sessionId}`);
@@ -168,6 +177,10 @@ export class Orchestration {
   dropAbandonedPlan(sessionId: string, status = "failed"): void {
     const plan = this.plan(sessionId);
     if (!plan?.approved) return;
+    // Explicit Stop abandons even a review/check-back pause. Pause or shutdown keeps the
+    // recorded phase and completed actions for the authorized continuation.
+    if (status === "cancelled") { this.clearPlan(sessionId); return; }
+    if (status === "interrupted") return;
     if (plan.waitingOnOwner || (plan.mode === "show-plan" && status === "needs_input")) return;
     this.clearPlan(sessionId);
   }
@@ -180,6 +193,7 @@ export class Orchestration {
   currentStep(sessionId: string): { plan: StoredPlan; step: PlanStep; at: number } | null {
     const plan = this.plan(sessionId);
     if (!plan?.approved || plan.mode !== "show-plan") return null;
+    if (plan.progress && plan.progress.phase !== "steps") return null;
     const step = plan.steps[plan.current];
     return step ? { plan, step, at: plan.current + 1 } : null;
   }
@@ -280,6 +294,9 @@ export class RunConductor {
   private index = 0;
   private retried = false;
   private reviews = 0;
+  private goalId: string | null = null;
+  private actionIds: string[] = [];
+  private fixes: string[] = [];
   /** How far this task may go before checking back, and the last step the owner has cleared. */
   private autonomy: Autonomy = "at-the-end";
   private cleared = 0;
@@ -327,9 +344,9 @@ export class RunConductor {
   lastStep(): boolean {
     return this.stage !== "steps";
   }
-  /** How many rounds this task may use; a planned task gets room for its steps. */
+  /** How many rounds this task may use; a planned task gets room for its steps, up to 40, never fewer than `base`. */
   maxRounds(base: number): number {
-    return this.steps.length ? Math.min(40, base + 4 * this.steps.length) : base;
+    return this.steps.length ? Math.max(base, Math.min(40, base + 4 * this.steps.length)) : base;
   }
   /** What to do with an answer that asked for no tools: a next message, or null when the task is done. */
   async afterAnswer(answer: string): Promise<Message | null> {
@@ -337,10 +354,15 @@ export class RunConductor {
       const next = await this.afterStep(answer);
       if (next) return next;
       this.stage = "wrap";
-      return { role: "user", content: "Every step of the plan is done. Give the person one short answer that covers the whole task." };
+      this.persist();
+      return this.wrapMessage();
     }
     if (this.stage === "wrap") this.stage = "review";
-    return this.review(answer);
+    this.fixes = [];
+    this.persist();
+    const next = await this.review(answer);
+    if (!next && this.goalId) this.deps.orchestration.clearPlan(this.run.sessionId);
+    return next;
   }
   private planAct(): PlanActSettings {
     return this.deps.orchestration.planActFor(this.run.sessionId);
@@ -354,12 +376,26 @@ export class RunConductor {
     return this.planAct().planMode === "show-plan" || this.deps.orchestration.settings().planApproval;
   }
   private begin(plan: StoredPlan): Message {
+    const progress = planProgress(plan);
     this.steps = plan.steps;
-    this.index = Math.min(plan.current, plan.steps.length - 1);
-    this.stage = "steps";
+    const unfinished = plan.steps.findIndex((step) => step.status !== "done");
+    this.index = unfinished < 0 ? plan.steps.length : unfinished;
+    this.stage = progress.phase;
+    this.goalId = progress.goalId; this.actionIds = progress.actionIds;
+    this.retried = this.index === plan.current && progress.retried;
+    this.reviews = progress.reviews; this.fixes = progress.fixes;
     this.autonomy = plan.autonomy ?? "at-the-end";
     this.cleared = plan.clearedThrough ?? this.index;
-    return this.startStep();
+    this.persist();
+    if (this.stage === "steps") return this.startStep();
+    this.event("plan.phase.resumed", { phase: this.stage, reviews: this.reviews });
+    return this.fixes.length ? this.revisionMessage() : this.wrapMessage();
+  }
+  private wrapMessage(): Message {
+    return { role: "user", content: "Every recorded step of the plan is done. Give the person one short answer that covers the whole task. Use the recorded work and do not repeat completed actions." };
+  }
+  private revisionMessage(): Message {
+    return { role: "user", content: `A reviewer checked your answer and asked for these changes:\n${this.fixes.map((fix, i) => `${i + 1}. ${fix}`).join("\n")}\nApply them and give the answer again. Do not repeat completed plan actions.` };
   }
   /**
    * Stops before a step the owner asked to be checked with about, in the words they chose. Their
@@ -384,7 +420,7 @@ export class RunConductor {
     this.persist();
     this.event("plan.step.started", { step: this.index + 1, of: this.steps.length, title: step.title, ...(begunBefore ? { begunBefore } : {}) });
     return { role: "user", content: `Step ${this.index + 1} of ${this.steps.length}: ${step.title}. Do only this step now and say what you did. Do not start the next step.`
-      + (begunBefore ? " You had already begun this step before it stopped: check what is already done before repeating anything that changes something." : "") };
+      + (begunBefore ? " You had already begun this step before it stopped: reconcile the recorded work with what is actually done before continuing. Do not repeat an already-completed change. If an earlier change cannot be confirmed, ask the owner rather than assume it is safe to repeat." : "") };
   }
   /** Checks the finished step, then moves to the next one; null when the last step is done. */
   private async afterStep(answer: string): Promise<Message | null> {
@@ -392,6 +428,7 @@ export class RunConductor {
     const problem = step.check ? await evaluateChecks(answer, step.check, this.deps.workspace) : null;
     if (problem && !this.retried) {
       this.retried = true;
+      this.persist();
       this.event("plan.step.retry", { step: this.index + 1, reason: problem });
       return { role: "user", content: `Step ${this.index + 1} did not pass its check: ${problem}. Put that right and finish this step.` };
     }
@@ -402,24 +439,39 @@ export class RunConductor {
     if (problem) throw new CheckError(`Step ${this.index + 1} of the plan did not pass its check: ${problem}`);
     this.retried = false;
     this.index++;
+    this.stage = this.index < this.steps.length ? "steps" : "wrap";
+    this.persist();
     if (this.index < this.steps.length) return this.startStep();
     this.event("plan.completed", { steps: this.steps.length });
-    this.deps.orchestration.clearPlan(this.run.sessionId);
     return null;
   }
-  /** One reviewer pass; at most two in a task, and a reviewer that cannot be read accepts. */
+  /** At most two completed passes; planned tasks retain a missing review for recovery. */
   private async review(answer: string): Promise<Message | null> {
     const settings = this.deps.orchestration.settings();
     const wanted = this.options.verify ?? (settings.verify && !this.options.delegated);
     if (!wanted || this.reviews >= 2) return null;
-    this.reviews++;
-    this.event("verify.started", { pass: this.reviews });
+    const pass = this.reviews + 1;
+    this.event("verify.started", { pass });
     const verdict = await this.critique(answer);
+    if (!verdict.received) {
+      this.event("verify.unavailable", { pass, completedPasses: this.reviews });
+      if (this.goalId) {
+        this.persistPause();
+        throw new NeedsInputError("The planned work is recorded, but its review did not return a usable verdict. The review is still pending; say go ahead to try the read-only review again.");
+      }
+      // Preserve the legacy unplanned-task fallback without recording a completed review.
+      return null;
+    }
+    // Count only returned results. An interrupted read-only review may repeat on recovery,
+    // but must never consume a completed pass without a verdict.
+    this.reviews = pass;
+    this.fixes = verdict.verdict === "revise" ? verdict.fixes : [];
+    this.persist();
     this.event("verify.verdict", { pass: this.reviews, verdict: verdict.verdict, fixes: verdict.fixes });
-    if (verdict.verdict === "accept" || !verdict.fixes.length) return null;
-    return { role: "user", content: `A reviewer checked your answer and asked for these changes:\n${verdict.fixes.map((fix, i) => `${i + 1}. ${fix}`).join("\n")}\nApply them and give the answer again.` };
+    if (!this.fixes.length) return null;
+    return this.revisionMessage();
   }
-  private async critique(answer: string): Promise<{ verdict: "accept" | "revise"; fixes: string[] }> {
+  private async critique(answer: string): Promise<{ received: boolean; verdict: "accept" | "revise"; fixes: string[] }> {
     const memory = this.deps.store.review.sessionSnapshot(this.options.memory?.scope ?? this.deps.owner, this.run.sessionId, this.options.memory?.agent);
     const body = [
       `Task: ${this.run.prompt.slice(0, 2000)}`,
@@ -429,16 +481,23 @@ export class RunConductor {
     ].filter(Boolean).join("\n\n");
     let raw: string;
     try {
+      this.checkLifecycle();
       raw = await this.aside([{ role: "system", content: criticInstructions }, { role: "user", content: body }]);
+      this.checkLifecycle();
     } catch (error) {
+      this.checkLifecycle();
+      if (error instanceof PausedError) throw error;
       this.event("verify.failed", { error: errorText(error) });
-      return { verdict: "accept", fixes: [] };
+      return { received: false, verdict: "accept", fixes: [] };
     }
     const parsed = checkResult(raw, verdictShape);
-    if (parsed.status !== "resolved") return { verdict: "accept", fixes: [] };
+    if (parsed.status !== "resolved") return { received: false, verdict: "accept", fixes: [] };
     const value = parsed.value as { verdict?: string; fixes?: unknown[] };
+    if ((value.verdict !== "accept" && value.verdict !== "revise")
+      || (value.fixes !== undefined && !Array.isArray(value.fixes)))
+      return { received: false, verdict: "accept", fixes: [] };
     const fixes = (value.fixes ?? []).filter((f) => typeof f === "string" && f.trim()).slice(0, 3).map((f) => String(f).slice(0, 500));
-    return { verdict: value.verdict === "revise" ? "revise" : "accept", fixes };
+    return { received: true, verdict: value.verdict, fixes };
   }
   /** Asks the model for a numbered plan; a plan that cannot be read means the task runs as usual. */
   private async makePlan(previous: StoredPlan | undefined): Promise<StoredPlan | null> {
@@ -447,8 +506,12 @@ export class RunConductor {
     const note = previous ? `\n\nThe person saw this plan:\n${previous.steps.map((s, i) => `${i + 1}. ${s.title}`).join("\n")}${sentBack}\nand replied: ${this.run.prompt.slice(0, 1000)}\nPlan again with that in mind.` : "";
     let raw: string;
     try {
+      this.checkLifecycle();
       raw = await this.aside([{ role: "system", content: planInstructions }, { role: "user", content: `Task: ${prompt.slice(0, 4000)}${note}` }]);
+      this.checkLifecycle();
     } catch (error) {
+      this.checkLifecycle();
+      if (error instanceof PausedError) throw error;
       this.event("plan.failed", { error: errorText(error) });
       return null;
     }
@@ -457,25 +520,38 @@ export class RunConductor {
     const steps = planSteps(parsed.value);
     if (!steps.length) { this.event("plan.failed", { error: "The plan had no usable steps" }); return null; }
     const settings = this.planAct();
-    this.event("plan.created", { steps: steps.map((s) => s.title),
-      touches: steps.map((s) => s.touches ?? ""), changes: steps.map((s) => s.changes),
-      risk: riskSentence(steps), mode: settings.planMode, autonomy: settings.autonomy });
-    return { runId: this.run.id, sessionId: this.run.sessionId, prompt, steps, current: 0, approved: false,
+    const plan: StoredPlan = { runId: this.run.id, sessionId: this.run.sessionId, prompt, steps, current: 0, approved: false,
       createdAt: new Date().toISOString(), mode: settings.planMode, autonomy: settings.autonomy,
       decision: "waiting", clearedThrough: -1 };
+    plan.progress = planProgress(plan);
+    this.event("plan.created", { goalId: plan.progress.goalId, actionIds: plan.progress.actionIds,
+      steps: steps.map((s) => s.title),
+      touches: steps.map((s) => s.touches ?? ""), changes: steps.map((s) => s.changes),
+      risk: riskSentence(steps), mode: settings.planMode, autonomy: settings.autonomy });
+    return plan;
+  }
+  private checkLifecycle(): void {
+    this.options.signal?.throwIfAborted();
+    this.options.checkLifecycle?.();
   }
   private persist(): void {
+    if (!this.goalId) return;
     const saved = this.deps.orchestration.plan(this.run.sessionId);
-    if (saved) this.deps.orchestration.savePlan({ ...saved, steps: this.steps, current: this.index, runId: this.run.id });
+    if (saved) this.deps.orchestration.savePlan({ ...saved, steps: this.steps, current: this.index, runId: this.run.id,
+      progress: { ...planProgress(saved), phase: this.stage, retried: this.retried, reviews: this.reviews, fixes: this.fixes } });
   }
   /** The same, plus the note that says this plan is waiting on the owner rather than abandoned. */
   private persistPause(): void {
+    if (!this.goalId) return;
     const saved = this.deps.orchestration.plan(this.run.sessionId);
     if (saved) this.deps.orchestration.savePlan({ ...saved, steps: this.steps, current: this.index,
-      runId: this.run.id, clearedThrough: this.cleared, waitingOnOwner: true });
+      runId: this.run.id, clearedThrough: this.cleared, waitingOnOwner: true,
+      progress: { ...planProgress(saved), phase: this.stage, retried: this.retried, reviews: this.reviews, fixes: this.fixes } });
   }
   private event(kind: string, data: Record<string, unknown>): void {
-    this.deps.store.event(this.run.id, kind, data);
+    this.deps.store.event(this.run.id, kind, { ...data,
+      ...(this.goalId ? { goalId: this.goalId, phase: this.stage,
+        ...(this.actionIds[this.index] ? { actionId: this.actionIds[this.index] } : {}) } : {}) });
   }
 }
 

@@ -244,7 +244,22 @@ export class AddOnLists {
     return found;
   }
 
-  /** Takes the newer version the owner chose: checked first, then the old one goes and the new one arrives switched off. */
+  /** Keeps a signed, checked candidate for the executable plugin comparison, without replacing anything. */
+  async stageUpdate(id: string): Promise<{ source: string; sha256: string }> {
+    const record = this.shelf.record(id);
+    if (!record?.origin) throw new Error("This add-on did not come from a list.");
+    const prepared = await this.prepare(record.origin.list, record.origin.entry);
+    try {
+      if (!laterVersion(prepared.origin.version, record.origin.version)) throw new Error("The list has no newer version.");
+      if (signatureDropped(record, prepared.origin.signed)) throw new Error("The signed version cannot be replaced by an unsigned package.");
+      const look = await this.shelf.look(prepared.source);
+      if (look.offer.id !== id) throw new Error("The newer version names a different add-on.");
+      const refused = look.malware.find(verdict => verdict.refused);
+      if (refused) throw new Error(refused.refused!);
+      return this.shelf.stage(prepared.source, prepared.origin);
+    } finally { await prepared.done(); }
+  }
+  /** Non-code updates retain a rollback package. Code updates use stageUpdate, evaluation and promotion. */
   async update(id: string): Promise<AddOnRecord> {
     const record = this.shelf.record(id);
     if (!record?.origin) throw new Error("This add-on did not come from a list.");
@@ -260,8 +275,7 @@ export class AddOnLists {
       if (malware) throw new Error(malware.refused!);
       const before = record.plugin?.permissions ?? [];
       const grew = (look.offer.plugin?.permissions ?? []).filter((permission) => !before.includes(permission));
-      await this.shelf.remove(id);
-      const installed = await this.shelf.install(prepared.source, { origin: prepared.origin });
+      const installed = await this.shelf.replace(id, prepared.source, record.sha256, look.offer.sha256, { origin: prepared.origin });
       return grew.length ? this.shelf.note(id, { grew }) : installed;
     } finally { await prepared.done(); }
   }

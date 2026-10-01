@@ -13,6 +13,8 @@ import { clearWatch, readWatch, repairSwap, watchVerdict, type UpdateWatch } fro
 import { runAsNode } from "../child-env.js";
 import { previewRequest } from "./gateway-preview.js";
 import { quitPath, quitRequest } from "../install/quit.js";
+import { EngineWatchdog, engineAnswers, watchdogDefaults } from "./engine-watchdog.js";
+import { gatewayResources } from "./gateway-resources.js";
 
 /**
  * The gateway: a small process that keeps Branch's public address open and keeps one worker — the
@@ -51,7 +53,7 @@ export interface GatewayOptions {
   /** Puts the previous version back after an update that does not stay up; the gateway stops afterwards. */
   rollBack?: (watch: UpdateWatch) => Promise<void>;
   /** Told about every worker that says it is ready, and every crash. */
-  onWorker?: (event: { kind: "ready"; ready: WorkerReady } | { kind: "crash"; code: number | null; signal: string | null; tripped: boolean }) => void;
+  onWorker?: (event: { kind: "ready"; ready: WorkerReady } | { kind: "crash"; code: number | null; signal: string | null; tripped: boolean; why?: string }) => void;
   /** Retained desktop broker only: act after a successful owner OFF response has finished. */
   onOwnerOff?: () => void;
   /**
@@ -59,15 +61,24 @@ export interface GatewayOptions {
    * the request used to be refused there and `branch quit` fell back to ending the process from outside (exit code 1).
    */
   quit?: () => void;
+  /**
+   * Owner's PC 2026-09-29: how the gateway watches a ready engine's own address (src/never-break/engine-watchdog.ts), or
+   * false for none. An engine that answers nothing for `unresponsiveMs` is ended and started again, and the reason kept.
+   */
+  watchdog?: false | { everyMs?: number; timeoutMs?: number; unresponsiveMs?: number };
 }
 
 /** The engine, through this same runtime, with a message channel and no window on Windows. */
 const defaultSpawn = (script: string, args: string[], env: NodeJS.ProcessEnv): GatewayChild =>
   spawn(process.execPath, [script, ...args], { env: { ...env, ...runAsNode(process.execPath) }, stdio: ["ignore", "inherit", "inherit", "ipc"], windowsHide: true });
 
-interface Worker { child: GatewayChild; state: WorkerState; port: number | null; ready: WorkerReady | null; startedAt: number }
+interface Worker { child: GatewayChild; state: WorkerState; port: number | null; ready: WorkerReady | null; startedAt: number; endedBecause?: string }
+
+/** Bump for any resident field, private-brand, or callback invariant change; such changes require a packaged restart. */
+export const gatewayCodeContract = 1;
 
 export class Gateway {
+  private codeVersion: string;
   private server: Server | null = null;
   private worker: Worker | null = null;
   private config!: GatewayConfig;
@@ -88,10 +99,19 @@ export class Gateway {
   private deadPort: number | null = null;
   /** Connections carried through as upgrades, closed when the gateway stops. */
   private readonly tunnels = new Set<Duplex>();
+  /** Asks the ready engine's own address on a timer; armed only while the worker is ready. */
+  private watchdog: EngineWatchdog | null = null;
   readonly notes: GatewayNote[] = [];
   restarts = 0;
   url = "";
-  constructor(private readonly options: GatewayOptions) {}
+  constructor(private readonly options: GatewayOptions) { this.codeVersion = options.version; }
+
+  /** Only the checked resident-code adopter changes the version, without rebuilding process-owned state. */
+  useCodeVersion(version: string): string {
+    const previous = this.codeVersion;
+    this.codeVersion = version;
+    return previous;
+  }
 
   note(text: string): void {
     this.notes.push({ at: new Date().toISOString(), text });
@@ -115,7 +135,7 @@ export class Gateway {
     if (!address || typeof address === "string") throw new Error("The gateway could not open its address.");
     this.url = `http://127.0.0.1:${address.port}`;
     if (this.options.presence)
-      await writeRunning(this.options.dataDir, { port: address.port, pid: process.pid, url: this.url, mode: "daemon", version: this.options.version }).catch(() => undefined);
+      await writeRunning(this.options.dataDir, { port: address.port, pid: process.pid, url: this.url, mode: "daemon", version: this.codeVersion }).catch(() => undefined);
     this.launch();
     return this.url;
   }
@@ -123,9 +143,9 @@ export class Gateway {
   /** What the gateway can say about itself without asking the worker. */
   health(): Record<string, unknown> {
     const worker = this.worker;
-    return { ok: worker?.state === "ready", gateway: { pid: process.pid, version: this.options.version, contract: gatewayContract.speaks },
+    return { ok: worker?.state === "ready", gateway: { pid: process.pid, version: this.codeVersion, contract: gatewayContract.speaks },
       worker: { state: worker?.state ?? "stopped", pid: worker?.child.pid ?? null, version: worker?.ready?.version ?? null },
-      restarts: this.restarts, slowedDown: this.tripped, notes: this.notes.slice(-10) };
+      restarts: this.restarts, slowedDown: this.tripped, notes: this.notes.slice(-10), resources: gatewayResources() };
   }
 
   /* ---------- the worker ---------- */
@@ -153,6 +173,7 @@ export class Gateway {
   private heard(worker: Worker, message: unknown): void {
     if (worker === this.worker && (message as { type?: unknown } | null)?.type === "checking") {
       worker.state = "checking"; worker.port = null;
+      this.watchdog?.disarm();
       if (this.settle) clearTimeout(this.settle);
       return;
     }
@@ -167,7 +188,8 @@ export class Gateway {
     this.deadPort = null;
     this.failedStarts = 0;
     for (const [wake, preview] of this.waiters) if (!ready.data.provisional || preview) wake(ready.data.port);
-    if (ready.data.provisional) return;
+    if (ready.data.provisional) { this.watchdog?.disarm(); return; }
+    this.watchWorker(worker, ready.data.port);
     this.options.onWorker?.({ kind: "ready", ready: ready.data });
     void this.checkWatch();
     if (this.settle) clearTimeout(this.settle);
@@ -184,6 +206,7 @@ export class Gateway {
   private async exited(worker: Worker, code: number | null, signal: NodeJS.Signals | null): Promise<void> {
     const wasReady = worker.state === "ready";
     worker.state = "stopped";
+    if (worker === this.worker) this.watchdog?.disarm();
     if (this.settle) clearTimeout(this.settle);
     if (this.stopping || worker !== this.worker) return;
     // selfdev: exit code 75 is the engine restarting itself on request (Restart the engine, branch.restart_engine), not
@@ -197,13 +220,42 @@ export class Gateway {
     this.restarts++;
     const verdict = await recordCrash(this.options.dataDir, this.config);
     this.tripped = this.tripped || verdict.tripped;
-    this.options.onWorker?.({ kind: "crash", code, signal, tripped: verdict.tripped });
-    this.note(`The engine stopped unexpectedly (${signal ?? `code ${code}`}); starting it again${verdict.delayMs ? ` in ${Math.round(verdict.delayMs / 1000)} seconds` : ""}.`);
+    this.options.onWorker?.({ kind: "crash", code, signal, tripped: verdict.tripped, ...(worker.endedBecause ? { why: worker.endedBecause } : {}) });
+    if (!worker.endedBecause) this.note(`The engine stopped unexpectedly (${signal ?? `code ${code}`}); starting it again${verdict.delayMs ? ` in ${Math.round(verdict.delayMs / 1000)} seconds` : ""}.`);
     const failing = verdict.tripped || (!wasReady && this.failedStarts >= 1);
     if (await this.maybeRollBack(failing)) return;
     if (!wasReady) await this.startFailed();
     worker.state = "waiting";
     this.relaunch = setTimeout(() => { this.relaunch = null; this.launch(); }, verdict.delayMs);
+  }
+
+  /**
+   * Owner's PC 2026-09-29: an engine that is up but answers nothing is ended, so it is started again like any engine that
+   * stopped, and the reason goes with its crash record. An answer also lets go of its address if a refused connection
+   * had marked it dead, since only a new engine's ready message cleared that before.
+   */
+  private watchWorker(worker: Worker, port: number): void {
+    this.watchdog?.disarm();
+    const settings = this.options.watchdog;
+    if (settings === false) return;
+    const timeoutMs = settings?.timeoutMs ?? watchdogDefaults.timeoutMs;
+    this.watchdog = new EngineWatchdog({
+      ...(settings?.everyMs ? { everyMs: settings.everyMs } : {}),
+      ...(settings?.unresponsiveMs ? { unresponsiveMs: settings.unresponsiveMs } : {}),
+      probe: () => engineAnswers(port, timeoutMs),
+      onAnswer: () => {
+        if (this.deadPort !== port) return;
+        this.deadPort = null;
+        for (const wake of this.waiters.keys()) wake(port);
+      },
+      onUnresponsive: (silentMs) => {
+        if (worker !== this.worker || worker.state !== "ready" || this.stopping) return;
+        worker.endedBecause = `The engine did not answer for ${Math.round(silentMs / 1000)} seconds, so it was stopped and started again.`;
+        this.note(worker.endedBecause);
+        worker.child.kill("SIGKILL");
+      },
+    });
+    this.watchdog.arm();
   }
 
   /** Two failed starts in a row with settings that were never known to work: put the good ones back. */
@@ -336,13 +388,13 @@ export class Gateway {
    * Passes one request to the worker. A worker that has just died refuses the connection before its
    * exit is noticed; a request with no body is then held for the next worker rather than failed.
    */
-  private async forward(request: IncomingMessage, response: ServerResponse, path: string, retry: boolean): Promise<void> {
+  private async forward(request: IncomingMessage, response: ServerResponse, path: string, retry: boolean, fresh = false): Promise<void> {
     const port = await this.waitForWorker(this.config.holdSeconds * 1000, previewRequest(request.method, path));
     if (port === null) return json(response, 503, { error: "Branch is starting its engine again. Try again in a moment." });
     const closing = request.method === "POST" && path === "/api/deployment/close";
     const mark = this.markOf(request);
     const upstream = httpRequest({ host: "127.0.0.1", port, method: request.method, path: request.url,
-      headers: this.forwardedHeaders(request, port) }, (reply) => {
+      headers: this.forwardedHeaders(request, port), ...(fresh ? { agent: false } : {}) }, (reply) => {
       const headers = { ...reply.headers };
       delete headers[answerHeader];
       if (mark) headers[answerHeader] = mark;
@@ -355,7 +407,14 @@ export class Gateway {
       if (closing && (reply.statusCode ?? 500) < 300) reply.once("end", () => { if (this.options.quit) this.options.quit(); else void this.stop(); });
     });
     upstream.once("error", (error: NodeJS.ErrnoException) => {
-      if (retry && ["ECONNREFUSED", "ECONNRESET"].includes(error.code ?? "") && !response.headersSent && !hasBody(request)) {
+      const code = error.code ?? "";
+      if (retry && ["ECONNREFUSED", "ECONNRESET"].includes(code) && !response.headersSent && !hasBody(request)) {
+        // A reset on a reused connection is most often a kept-alive connection the engine closed just as it was reused, by
+        // an engine that is still up: it is asked again on a fresh connection, and its address is not marked dead for it
+        // (owner's PC 2026-09-29: one reset held every request for hours, since only a new engine's ready message cleared
+        // the mark). A refusal, or a reset of a fresh connection, means the engine has gone: the request waits for the next
+        // one, and the watchdog lets go of the mark if this engine answers after all.
+        if (code === "ECONNRESET" && !fresh) return void this.forward(request, response, path, true, true);
         this.deadPort = port;
         return void this.forward(request, response, path, false);
       }
@@ -389,12 +448,16 @@ export class Gateway {
 
   /* ---------- stopping ---------- */
 
-  async stop(): Promise<void> {
+  /** Stable entry used by the retained owner's release wrapper, even after implementation replacement. */
+  stop(): Promise<void> { return this.stopRetained(); }
+
+  async stopRetained(): Promise<void> {
     if (this.stopping) return;
     this.stopping = true;
     if (this.relaunch) clearTimeout(this.relaunch);
     if (this.settle) clearTimeout(this.settle);
     if (this.watchTimer) clearTimeout(this.watchTimer);
+    this.watchdog?.disarm();
     for (const wake of this.waiters.keys()) wake(null);
     for (const socket of this.tunnels) socket.destroy();
     await this.stopWorker();

@@ -87,6 +87,19 @@ export const PacingSettingsSchema = z.object({
   mode: switchMode.default("on"),
 }).strict();
 
+/** Owner-selected stop-next-round estimates, counted from activation and reset each UTC month. */
+export const CostThresholdSettingsSchema = z.object({
+  mode: switchMode.default("off"),
+  activatedAt: z.string().datetime().nullable().default(null),
+  rules: z.array(z.object({
+    /** Catalogue service id; a custom connection uses its preset id. */
+    provider: z.string().trim().min(1).max(64),
+    model: z.string().trim().min(1).max(256).nullable().default(null),
+    maxMonthlyDollars: z.number().min(0.001).max(100000),
+    fallbackPreset: presetId.nullable().default(null),
+  }).strict()).max(32).default([]),
+}).strict();
+
 /** R17-051: one mixture: several connections answer, and one of them writes the final answer. */
 export const MixtureSchema = z.object({
   id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).min(1).max(40),
@@ -110,6 +123,7 @@ export const savingsCards = {
   keepAlive: KeepAliveSettingsSchema,
   mixtures: MixtureSettingsSchema,
   pacing: PacingSettingsSchema,
+  costThresholds: CostThresholdSettingsSchema,
 } as const;
 export type SavingsCard = keyof typeof savingsCards;
 export type SavingsValues = { [K in SavingsCard]: z.infer<(typeof savingsCards)[K]> };
@@ -137,7 +151,12 @@ export function readSavings<K extends SavingsCard>(store: Reader, owner: string,
 /** Saves one card; fields left out keep what was there. */
 export function saveSavings<K extends SavingsCard>(store: Store, owner: string, card: K, input: unknown): SavingsValues[K] {
   const schema = savingsCards[card] as unknown as z.ZodType<SavingsValues[K]>;
-  const next = schema.parse({ ...readSavings(store, owner, card), ...(input && typeof input === "object" ? input : {}) });
+  const current = readSavings(store, owner, card);
+  const next = schema.parse({ ...current, ...(input && typeof input === "object" ? input : {}) });
+  if (card === "costThresholds") {
+    const before = current as SavingsValues["costThresholds"], after = next as SavingsValues["costThresholds"];
+    after.activatedAt = after.mode === "on" && before.mode !== "on" ? new Date().toISOString() : before.activatedAt;
+  }
   store.save("settings", owner, keyOf(card), next as Record<string, unknown>);
   markChosen(store, owner, keyOf(card), sentKeys(input));
   return next;

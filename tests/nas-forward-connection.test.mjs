@@ -4,6 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { catalogEntry, resolveBaseUrl } from "../dist/provider-catalog.js";
 import { presetRunsLocally } from "../dist/models.js";
+import { embeddingConnection, embeddingsFor } from "../dist/embeddings.js";
 import { ownModelOrigin } from "../dist/local-connection-policy.js";
 
 const nas = () => catalogEntry("nas-ssh");
@@ -28,3 +29,21 @@ test("MODEL-087: only the forward's own 127.0.0.1 origin gets the model-server a
   assert.equal(ownModelOrigin(nas(), "http://192.168.1.20:18080/v1"), null);
   assert.equal(ownModelOrigin(nas(), "https://127.0.0.1:18080/v1"), null);
 });
+
+for (const endpoint of ["http://127.0.0.1:18080/v1", "http://127.0.0.1:11434/v1"]) {
+  test(`MODEL-087: NAS embedding privacy retains the remote preset at ${endpoint}`, () => {
+    const provider = { ...sharing(endpoint), embeddings: () => ({ endpoint, apiKey: "fixture-only" }) };
+    const preset = { id: "nas", name: "NAS", model: "qwen", catalogId: "nas-ssh", provider };
+    const models = { plan: () => ({ candidates: [preset] }) };
+    const connection = embeddingConnection(models, "owner");
+    assert.ok(connection);
+    assert.equal(connection.local, false, "a loopback forward cannot claim that passages stay on this computer");
+    assert.equal(connection.shape, "openai", "a NAS port matching Ollama does not change the remote protocol");
+    assert.equal(connection.model, "text-embedding-3-small");
+    assert.equal(embeddingsFor(connection, () => { throw new Error("fixture must not contact a model"); }).local, false);
+    const ordinary = embeddingConnection({ plan: () => ({ candidates: [{ ...preset, catalogId: undefined }] }) }, "owner");
+    assert.equal(ordinary.local, true, "ordinary local embedding routing remains available");
+    assert.equal(ordinary.shape, endpoint.includes(":11434/") ? "ollama" : "openai");
+    assert.equal(embeddingConnection({ plan: () => ({ candidates: [] }) }, "owner"), null);
+  });
+}
