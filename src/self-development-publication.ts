@@ -4,7 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 export interface PublicationIntent {
   cwd: string; workspace: string; remote: string; pushRepo: string; pushAddress: string; repository: string;
   branch: string; base: string; sha: string; walked: string; contractHash: string;
-  files: string[]; runId?: string | undefined; adapter: "saved" | "computer";
+  files: string[]; runId?: string | undefined; receiptRunId?: string | undefined; adapter: "saved" | "computer";
   opening: { repo: string; title: string; body: string; base: string; head: string; draft: true; changes?: string[]; issue?: string };
 }
 export interface PublicationEntry extends PublicationIntent {
@@ -39,10 +39,13 @@ export function publicationFailure(error: unknown): { retry: boolean; reason: st
 /** Durable outbox. Claims expire after a bounded attempt; uncertain outcomes are reconciled on replay. */
 export class PublicationQueue {
   constructor(private readonly db: DatabaseSync, private readonly owner: string, private readonly io: PublicationIO,
-    private readonly now: () => number = Date.now) {
+    private readonly now: () => number = Date.now,
+    private readonly observe?: (entry: PublicationEntry) => void) {
     db.exec(`CREATE TABLE IF NOT EXISTS self_development_publications (
       id TEXT NOT NULL, owner TEXT NOT NULL, data TEXT NOT NULL, due INTEGER NOT NULL,
-      state TEXT NOT NULL, PRIMARY KEY(id,owner))`);
+      state TEXT NOT NULL, PRIMARY KEY(id,owner));
+      CREATE TABLE IF NOT EXISTS self_development_publication_receipts (
+        id TEXT NOT NULL, owner TEXT NOT NULL, revision TEXT NOT NULL, PRIMARY KEY(id,owner))`);
     if (!running.has(db)) running.set(db, new Map());
   }
   enqueue(intent: PublicationIntent): PublicationEntry {
@@ -50,7 +53,18 @@ export class PublicationQueue {
     const entry: PublicationEntry = { ...intent, id, state: "waiting", phase: "push", attempts: 0, nextAttemptAt: this.now(), reason: null };
     this.db.prepare("INSERT OR IGNORE INTO self_development_publications VALUES(?,?,?,?,?)")
       .run(id, this.owner, JSON.stringify(entry), entry.nextAttemptAt, entry.state);
-    return this.get(id)!;
+    const saved = this.get(id)!;
+    this.notify(saved);
+    return saved;
+  }
+  private notify(entry: PublicationEntry): void {
+    if (!this.observe) return;
+    // Evidence may be unavailable during shutdown; drain replays persisted state after restart.
+    try {
+      this.observe(entry);
+      this.db.prepare("INSERT OR REPLACE INTO self_development_publication_receipts VALUES(?,?,?)")
+        .run(entry.id, this.owner, `${entry.state}:${entry.phase}:${entry.attempts}`);
+    } catch { /* no checkpoint: the durable state will be observed again */ }
   }
   get(id: string): PublicationEntry | null {
     const row = this.db.prepare("SELECT data FROM self_development_publications WHERE id=? AND owner=?").get(id, this.owner);
@@ -80,15 +94,17 @@ export class PublicationQueue {
       if (this.get(id)?.state !== "blocked") return this.get(id);
       return this.save({ ...entry, reason: publicationFailure(error).reason });
     }
-    const ready = { ...entry, state: "waiting", attempts: 0, nextAttemptAt: this.now(), reason: null };
+    const ready: PublicationEntry = { ...entry, state: "waiting", attempts: 0, nextAttemptAt: this.now(), reason: null };
     const changed = this.db.prepare("UPDATE self_development_publications SET data=?,due=?,state='waiting' WHERE id=? AND owner=? AND state='blocked'")
       .run(JSON.stringify(ready), ready.nextAttemptAt, id, this.owner);
     if (!changed.changes) return this.get(id);
+    this.notify(ready);
     return this.attempt(id, signal);
   }
   private save(entry: PublicationEntry): PublicationEntry {
     this.db.prepare("UPDATE self_development_publications SET data=?,due=?,state=? WHERE id=? AND owner=?")
       .run(JSON.stringify(entry), entry.nextAttemptAt, entry.state, entry.id, this.owner);
+    this.notify(entry);
     return entry;
   }
   async attempt(id: string, signal: AbortSignal): Promise<PublicationEntry | null> {
@@ -129,6 +145,14 @@ export class PublicationQueue {
         : stopping ? "Publication paused while Branch stopped. Its remote outcome will be checked before retrying." : failure.reason });
   }
   async drain(signal: AbortSignal): Promise<void> {
+    // Include terminal entries: a crash between the saved remote outcome and its task receipt
+    // must not lose the link. Observers deduplicate by the durable publication identity.
+    const unobserved = this.db.prepare(`SELECT p.data FROM self_development_publications p
+      LEFT JOIN self_development_publication_receipts r ON r.id=p.id AND r.owner=p.owner
+      WHERE p.owner=? AND (r.revision IS NULL OR r.revision !=
+        p.state || ':' || json_extract(p.data,'$.phase') || ':' || json_extract(p.data,'$.attempts'))
+      ORDER BY p.due,p.id LIMIT 100`).all(this.owner);
+    for (const row of unobserved) { if (signal.aborted) return; this.notify(JSON.parse(String(row.data)) as PublicationEntry); }
     const due = this.db.prepare("SELECT id FROM self_development_publications WHERE owner=? AND state IN ('waiting','sending') AND due<=? ORDER BY due LIMIT 100")
       .all(this.owner, this.now());
     for (const entry of due) { if (signal.aborted) break; await this.attempt(String(entry.id), signal); }

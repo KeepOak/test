@@ -10,6 +10,7 @@ import { carryable } from "../carry-on.js"; // QA R1 follow-up
 type WaitingQuestion = ReturnType<Runtime["waitingApprovals"]>[number];
 import type { PolicyRemember } from "../policy.js";
 import { Deliveries } from "./deliveries.js";
+import { deliveryReceipt, recentDeliveryReceipts, type DeliveryReceipt } from "./delivery-receipts.js";
 import { audit } from "../audit.js";
 import { ArtifactTooLarge, maxArtifactBytes, maxArtifactName } from "../artifacts.js";
 import { decide, groupAllowed, readSenderAllowlist, saveSenderAllowlist, type SenderAllowlist } from "./allowlist.js";
@@ -665,6 +666,7 @@ export class ChannelRouter {
       pending: this.pairs(owner).filter((p) => p.status === "pending"),
       approved: this.pairs(owner).filter((p) => p.status === "approved"),
       chats: this.chats(owner),
+      deliveryReceipts: recentDeliveryReceipts(this.deliveries.list()),
       live: this.switches(),
       intake: this.intake(), // Settings › Chat apps: what the Trunk sees, staying connected
       watchdogLog: this.watchdogLog.map((row) => ({ ...row })),
@@ -726,7 +728,7 @@ export class ChannelRouter {
    * Queues text for a chat and sends it if the channel is up. The key makes a repeat call a no-op,
    * so a task finished while the channel was down is delivered once, in order, after reconnect.
    */
-  async deliver(channel: string, chatId: string, text: string, key = `delivery:${Date.now()}:${randomInt(1e9)}`, replyTo?: string): Promise<{ messageId?: string | undefined; queued: number; sent: boolean }> {
+  async deliver(channel: string, chatId: string, text: string, key = `delivery:${Date.now()}:${randomInt(1e9)}`, replyTo?: string): Promise<{ messageId?: string | undefined; queued: number; sent: boolean; outcome: DeliveryReceipt["outcome"]; delivered: number; failed: number }> {
     // CHAT-190: "home" is the chat the owner chose with /sethome, read now, so moving home moves every result sent there.
     const home = resolveHome(this.store, this.runtime.owner, channel, chatId);
     if (!home) throw new Error(noHome);
@@ -737,12 +739,14 @@ export class ChannelRouter {
     if (checked.blocked) throw new Error(checked.reason ?? "The message was held back before it was sent");
     this.deliveries.enqueue(channel, chatId, checked.text, key, replyTo, target.adapter.maxTextLength);
     await this.flush();
-    const now = this.deliveries.list().filter((d) => d.key === key);
+    const now = this.deliveries.list().filter((d) => d.key === key && d.channel === channel && d.chatId === chatId);
+    const receipt = deliveryReceipt(now);
     const first = now.find((d) => d.seq === 0);
     if (first?.status === "dead") throw new Error(`Could not deliver to ${channel}: ${first.lastError ?? "unknown error"}`);
     // PR #289 review 2: `sent` is true once every chunk reached the chat, whether or not the app returns a message id.
     return { messageId: first?.messageId ?? undefined, queued: now.filter((d) => d.status === "pending").length,
-      sent: now.length > 0 && now.every((d) => d.status === "sent") };
+      sent: now.length > 0 && now.every((d) => d.status === "sent"),
+      outcome: receipt?.outcome ?? "queued", delivered: receipt?.delivered ?? 0, failed: receipt?.failed ?? 0 };
   }
   /** Points a chat at an existing conversation so both surfaces share one ordered history. */
   link(owner: string, input: unknown) {

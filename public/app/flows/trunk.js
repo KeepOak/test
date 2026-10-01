@@ -223,7 +223,11 @@ async function loadKeys(id) {
 }
 const accountName = (pool, a) => poolById(pool)?.accounts?.find((x) => x.id === a.id)?.label || a.label || a.id;
 /* Whether this connection is the Trunk's own model: a pool is named after its connection (a ChatGPT pool holds its models). */
-const usesPool = (tr, pool) => !!tr.model && (tr.model === pool.id || (pool.id === "chatgpt" && tr.model.startsWith("chatgpt")));
+const usesPool = (tr, pool) => {
+  if (!tr.model) return false;
+  const preset = E.state?.models?.presets?.find((one) => one.id === tr.model);
+  return (preset?.accountPool ?? tr.model) === pool.id;
+};
 function poolRow(tr, pool, keys) {
   const picked = keys.accounts[pool.id] ?? "", known = pool.accounts.some((a) => a.id === picked);
   const none = keys.copyFromOwner ? t("window.flows.trunk.acc-yours") : t("window.flows.trunk.acc-none");

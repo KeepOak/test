@@ -29,7 +29,7 @@ const OPENED = new Set();
  * when the first steps have no block to go in yet.
  */
 export function liveFollower({ block, scroll, onAsk = () => {}, onGone = () => {}, onShow = onGone }) {
-  const L = { runId: null, snap: null, ctl: null, scope: null, all: false, frame: 0, block, scroll, onAsk, onGone, onShow, stop: () => {} };
+  const L = { runId: null, snap: null, ctl: null, scope: null, reconnecting: false, all: false, frame: 0, block, scroll, onAsk, onGone, onShow, stop: () => {} };
   FOLLOWERS.set(block, L);
   const me = {
     follow(runId) {
@@ -43,9 +43,9 @@ export function liveFollower({ block, scroll, onAsk = () => {}, onGone = () => {
     stop() {
       L.ctl?.abort();
       if (L.frame) cancelAnimationFrame(L.frame);
-      Object.assign(L, { runId: null, snap: null, ctl: null, scope: null, all: false, frame: 0 });
+      Object.assign(L, { runId: null, snap: null, ctl: null, scope: null, reconnecting: false, all: false, frame: 0 });
     },
-    shown: () => Boolean(L.snap?.steps?.length),
+    shown: () => shownOf(L),
     block: () => `<div class="steps live-steps" id="${esc(L.block)}" aria-live="polite">${lines(L)}</div>`,
     runId: () => L.runId,
     set(hooks) { Object.assign(L, hooks); },
@@ -64,25 +64,37 @@ async function follow(L, runId, signal) {
     let ended = false;
     try {
       await streamOnce(`runs/${encodeURIComponent(runId)}/live`, (kind, data) => {
+        if (signal.aborted || L.runId !== runId) return;
         if (kind === "steps") take(L, data);
         else if (kind === "end") ended = data?.reason === "profile" ? "moved" : true;
       }, signal);
       wait = 300;
     } catch (error) {
-      if (error.name === "AbortError") return;
+      if (signal.aborted || L.runId !== runId || error.name === "AbortError") return;
       // Refused for good (not this person's task, not theirs to read): nothing more to follow, and the last list goes
       // with it, so no step is left spinning. Anything else (locked for now, the engine restarting, the network): try
       // again, a little later.
       if ([400, 401, 403, 404].includes(error.status)) { gone(L, runId); return; }
       wait = Math.min(wait * 2, 5000);
     }
+    if (signal.aborted || L.runId !== runId) return;
     if (ended === "moved") gone(L, runId); // the window moved to somebody else: nothing of this task stays drawn
-    if (ended) return;
+    if (ended) { reconnecting(L, runId, false); return; }
+    reconnecting(L, runId, true);
     await pause(wait);
   }
 }
+/* Connection state describes the updates only; the last snapshot stays available while the stream retries. */
+function reconnecting(L, runId, value) {
+  if (L.runId !== runId || L.reconnecting === value) return;
+  L.reconnecting = value;
+  if (!L.frame) L.frame = requestAnimationFrame(() => draw(L));
+}
+/* Before the first step, the thinking line or dots show unless task updates need to reconnect. */
+const shownOf = (L) => L.reconnecting || Boolean(L.snap?.steps?.length);
 function gone(L, runId) {
-  if (L.runId !== runId || !L.snap) return;
+  if (L.runId !== runId) return;
+  L.reconnecting = false;
   L.snap = null;
   L.onGone();
 }
@@ -90,6 +102,7 @@ function take(L, snap) {
   if (snap?.runId !== L.runId) return;
   const asked = waitingAsk(snap) && !waitingAsk(L.snap);
   L.snap = snap;
+  L.reconnecting = false;
   if (asked) L.onAsk();
   if (!L.frame) L.frame = requestAnimationFrame(() => draw(L));
 }
@@ -101,7 +114,8 @@ function draw(L) {
   if (L.scope !== privateContext()) { L.stop(); block?.replaceChildren(); L.onGone(); return; }
   // The first steps have no block to go in yet: the view is drawn again with it, rather than waiting for something
   // else to redraw (on a slow machine nothing may, and the steps never showed).
-  if (!block) { if (L.snap?.steps?.length) L.onShow(); return; }
+  if (!block) { if (shownOf(L)) L.onShow(); return; }
+  if (!shownOf(L)) { L.onGone(); return; }
   const box = block.closest(L.scroll) ?? $(L.scroll);
   if (selectionHeld(block)) return;
   const atEnd = box && !selectionHeld(box) && box.scrollHeight - box.scrollTop - box.clientHeight < 40;
@@ -170,7 +184,8 @@ function lines(L) {
   const shown = cut ? steps.slice(-SHOWN) : steps;
   const all = cut ? `<button type="button" class="btn ghost sm ls-all" data-act="live-all" data-v="${esc(L.block)}">${esc(t("window.chat.live.show-all", { count: L.snap.total ?? steps.length }))}</button>` : "";
   const running = L.snap?.status === "running" ? liveHead(L.snap.runId, L.snap.startedAt) : "";
-  return `${running}${all}<ol>${shown.map(line).join("")}</ol>`;
+  const connection = L.reconnecting ? `<p class="ls-time" role="status">${esc(t("window.chat.live.reconnecting-updates"))}</p>` : "";
+  return `${connection}${running}${all}<ol>${shown.map(line).join("")}</ol>`;
 }
 
 /* The chat hands in what to do when a question appears (read the waiting questions, so its card shows). */

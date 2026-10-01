@@ -103,7 +103,7 @@ test("every line that carries its words' key says, in en.json's words, exactly t
   assert.equal(moved.length, 6);
   for (const line of moved) { seen.add(line.say.key); assert.equal(english(line.say), line.sentence); }
   // Every key the engine may send was sent here, so none of them is left unchecked ("Running …" is below).
-  const keys = new Set(Object.keys(en).filter((k) => k.startsWith("window.chat.live.") && !/\.(show-all|worked|worked-one|working|running)$/.test(k))
+  const keys = new Set(Object.keys(en).filter((k) => k.startsWith("window.chat.live.") && !/\.(show-all|worked|worked-one|working|running|reconnecting-updates)$/.test(k))
     .map((k) => k.replace(/\.(one|other)$/, "")));
   assert.deepEqual([...keys].filter((k) => !seen.has(k)), [], "every live-step key was produced and checked");
   assert.equal(english({ key: "window.chat.live.running", values: { command: "npm test" } }), "Running npm test");
@@ -143,5 +143,36 @@ test("the window says those lines in German, Spanish and French, and keeps the e
   const [fr] = await sayIn("fr", cases.slice(2, 3));
   assert.equal(fr, "1 résultat trouvé");
   assert.deepEqual(await sayIn("en", cases), cases.map(([, english]) => english), "English is the engine's own words");
+  assert.deepEqual(errors, []);
+});
+
+test("while task updates cannot be reached the live block says it is reconnecting, and keeps trying", async (t) => {
+  const { app, dataDir } = await branch(t);
+  const server = await startServer(app, { dataDir, port: 0 });
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await server.close(); });
+  const page = await browser.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(server.url, { waitUntil: "networkidle" });
+  const seen = await page.evaluate(async () => {
+    const words = await import("/i18n.js");
+    await words.initLanguage();
+    let asked = 0;
+    const real = window.fetch;
+    window.fetch = (url, ...rest) => String(url).includes("/live") ? (asked++, Promise.reject(new TypeError("Failed to fetch"))) : real(url, ...rest);
+    const { liveFollower } = await import("/app/chat/livesteps.js");
+    document.body.insertAdjacentHTML("beforeend", '<div id="probe-scroll"><div id="probe-steps"></div></div>');
+    const follower = liveFollower({ block: "probe-steps", scroll: "#probe-scroll" });
+    follower.follow("run-that-cannot-be-reached");
+    for (let i = 0; i < 50 && !document.getElementById("probe-steps").textContent; i++) await new Promise((done) => setTimeout(done, 100));
+    const result = { text: document.getElementById("probe-steps").textContent, shown: follower.shown(), asked };
+    follower.forget();
+    window.fetch = real;
+    return result;
+  });
+  assert.match(seen.text, /Reconnecting to task updates/);
+  assert.equal(seen.shown, true, "the block shows even before the first step");
+  assert.ok(seen.asked >= 1);
   assert.deepEqual(errors, []);
 });
