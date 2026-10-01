@@ -62,6 +62,8 @@ export class DiscordAdapter implements ChannelAdapter {
   private lastThreadAt = 0;
   /** Called only after the router has checked group activation, pairing, sender and rate policy. */
   async prepareGroup(message: InboundMessage): Promise<InboundMessage> {
+    const stop = this.threadStop;
+    if (stop.signal.aborted) throw new Error("Discord thread source changed or stopped.");
     if (message.chatKind !== "group" || message.caughtUp || message.edited || this.threadSources.has(message.chatId)) return message;
     if (!/^\d{17,20}$/.test(message.chatId) || !/^\d{17,20}$/.test(message.messageId)) throw new Error("Discord thread source identity is invalid.");
     const key = `${message.chatId}:${message.messageId}`;
@@ -69,24 +71,27 @@ export class DiscordAdapter implements ChannelAdapter {
     if (current || this.threadedMessages.has(key)) throw new Error("This Discord message already has a pending or completed thread dispatch.");
     if (this.threadWork.size >= 2 || Date.now() - this.lastThreadAt < 2000) throw new Error("Discord thread creation is rate limited; try again.");
     this.lastThreadAt = Date.now();
-    const work = this.createBoundThread(message);
+    const work = this.createBoundThread(message, stop);
     this.threadWork.set(key, work);
     try {
       const bound = await work;
+      if (stop !== this.threadStop || stop.signal.aborted) throw new Error("Discord thread source changed or stopped.");
       if (this.threadedMessages.size >= 1000) this.threadedMessages.delete(this.threadedMessages.values().next().value!);
       this.threadedMessages.add(key);
       return bound;
     } finally { this.threadWork.delete(key); }
   }
-  private async createBoundThread(message: InboundMessage): Promise<InboundMessage> {
+  private async createBoundThread(message: InboundMessage, stop: AbortController): Promise<InboundMessage> {
+    const signal = AbortSignal.any([stop.signal, AbortSignal.timeout(20_000)]);
     const response = await this.fetch(`${this.base}/channels/${message.chatId}/messages/${message.messageId}/threads`, {
       method: "POST", headers: { ...this.headers(), "content-type": "application/json" },
       body: JSON.stringify({ name: "Branch conversation", auto_archive_duration: 1440 }),
-      signal: AbortSignal.any([this.threadStop.signal, AbortSignal.timeout(20_000)]) });
+      signal });
+    if (stop !== this.threadStop || signal.aborted) throw new Error("Discord thread source changed or stopped.");
     this.noteLimits(response);
     if (!response.ok) throw new Error(`Discord refused thread creation (${response.status}); no response was sent to another channel.`);
     const thread = z.object({ id: z.string().regex(/^\d{17,20}$/), parent_id: z.string() }).passthrough().parse(await response.json());
-    if (thread.parent_id !== message.chatId || this.threadStop.signal.aborted) throw new Error("Discord thread source changed or stopped.");
+    if (thread.parent_id !== message.chatId || stop !== this.threadStop || signal.aborted) throw new Error("Discord thread source changed or stopped.");
     if (this.threadSources.size >= 1000) this.threadSources.delete(this.threadSources.keys().next().value!);
     this.threadSources.set(thread.id, message.chatId);
     return { ...message, chatId: thread.id, addressed: true };
