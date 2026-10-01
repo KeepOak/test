@@ -286,10 +286,13 @@ function restarting(first: Awaited<ReturnType<typeof openMcp>>, reopen: () => Pr
   const check = async (signal?: AbortSignal) => {
     if (closed || !current.alive()) throw new Error('MCP connection is not open. Use a tool to connect it before checking.');
     signal?.throwIfAborted();
-    if (!("check" in current) || typeof current.check !== "function")
+    const checking = current;
+    if (!("check" in checking) || typeof checking.check !== "function")
       throw new Error('This MCP transport does not support a live connection check.');
-    await current.check(signal);
+    await checking.check(signal);
     signal?.throwIfAborted();
+    if (closed || current !== checking || !checking.alive())
+      throw new Error('The checked MCP connection closed or changed. Check the current connection again.');
   };
   return { call, check, close: async () => { closed = true; await current.close(); } };
 }
