@@ -1,10 +1,11 @@
 import { esc } from "../core/dom.js";
-import { ownerHere, E } from "../core/state.js";
+import { ownerHere, activeId, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { openDlg, closeDlg, dialog, toast } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 
+const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
 /** A request from chat cannot open a pairing door. Consent and codes remain local. */
 export function initChatPairing(start) {
   let current = null, frame = null, busy = false, stopped = false;
@@ -20,11 +21,13 @@ export function initChatPairing(start) {
     start(proposal.kind, proposal.id);
   });
   async function poll() {
-    if (busy || stopped || !E.loaded || !ownerHere() || document.hidden || dialog()) return;
+    if (busy || stopped || !E.loaded || !ownerHere() || locked() || document.hidden || dialog()) return;
     busy = true;
+    const profile = activeId();
     try {
       const answer = await api("devices/chat-pairing");
-      if (!ownerHere() || dialog()) return;
+      // App lock (only a reload undoes it) or another profile while the list was read: no consent is shown.
+      if (!ownerHere() || locked() || activeId() !== profile || dialog()) return;
       const pending = answer.proposals ?? [];
       for (const id of seen) if (!pending.some((p) => p.id === id)) seen.delete(id);
       current = pending.find((p) => !seen.has(p.id));

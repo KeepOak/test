@@ -241,7 +241,12 @@ export async function devicesApi(deps: DevicesHttpDeps, path: string): Promise<u
   if (method !== "POST") return undefined;
   if (path === "/api/devices/mode") return { mode: devices.setMode(await deps.readBody()) };
   if (path === "/api/devices/invite") {
-    const { phone, proposalId } = z.object({ phone: z.boolean().optional(), proposalId: z.string().regex(/^[a-f0-9]{32}$/).optional() }).strict().parse((await deps.readBody()) ?? {});
+    const scope = deps.store.profiles.scope();
+    const body = await deps.readBody();
+    // The owner asked; a household switch while the body arrived consumes no request and makes no invitation.
+    if (!deps.store.profiles.isOwner() || deps.store.profiles.scope() !== scope)
+      throw new DevicesHttpError(403, "Your devices belong to the owner. Switch back to the owner's profile to use them.");
+    const { phone, proposalId } = z.object({ phone: z.boolean().optional(), proposalId: z.string().regex(/^[a-f0-9]{32}$/).optional() }).strict().parse(body ?? {});
     // B6: a phone invitation hands the window's key to the phone let in, so only this computer's window makes one.
     if (phone === true && deps.viaDoor !== false) throw new DevicesHttpError(403, phoneInviteHereOnly);
     if (proposalId) {
