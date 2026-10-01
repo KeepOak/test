@@ -458,6 +458,30 @@ test("R17-036: a helper's copy by default is skipped in a project with no Git co
     "a copy the lead required is never quietly swapped for the shared folder");
 });
 
+test("R17-036: a helper inside a borrowed copy with no Git commit keeps that copy's lease and marker, never the shared folder", async (t) => {
+  const { app, on, context, workspace } = await fixture(t);
+  on("worktrees"); // perHelper by default; the copy below has no readable Git commit
+  const started = (task) => {
+    app.store.event(task.id, "run.started", { source: "owner", parentRunId: null,
+      permissions: app.registry.permissions(), deadlineMs: 30_000, depth: 0, delegates: false });
+    return task;
+  };
+  const scope = ".branch-worktrees/helper-borrowed";
+  await mkdir(join(workspace, scope), { recursive: true });
+  const helper = started(app.store.createRun(app.runtime.owner, "helper"));
+  const place = await inWorktree(scope, () => app.coding.placeTask(helper, context(), context()));
+  assert.equal(place?.scope, scope, "the helper stays in the copy it was started from");
+  const kinds = app.store.events(helper.id).map((event) => event.kind);
+  assert.ok(app.store.events(helper.id).some((event) => event.kind === "worktree.inherited" && event.data.path === scope && event.data.borrowed === true),
+    "the borrowed copy is recorded durably");
+  assert.equal(kinds.includes("worktree.shared"), false, "a scoped helper is never recorded as sharing the root folder");
+  assert.equal(app.coding.worktrees["helperSources"].get(helper.id), scope, "the copy's live lease is held while the helper works");
+  await assert.rejects(app.coding.placeTask(helper, context(), undefined), /borrowed project copy/,
+    "a later continuation refuses rather than falling back to the shared workspace");
+  await place.release();
+  assert.equal(app.coding.worktrees["helperSources"].has(helper.id), false);
+});
+
 test("R17-043: the project's review checks run as read-only helpers against the changes", needsGit, async (t) => {
   const asked = [];
   const provider = scripted((request) => {

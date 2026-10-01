@@ -352,7 +352,11 @@ export class WorktreePlaces {
     const head = await this.deps.run(cwd, ["rev-parse", "HEAD"], context.signal).catch(() => null);
     if (!head || head.status !== "completed" || head.exitCode !== 0 || !head.stdout.trim()) {
       context.signal.throwIfAborted();
-      if (!required) { this.deps.note(run.id, "worktree.shared", { reason: "no-git-commit" }); return null; }
+      if (!required) {
+        // Inside a copy, the helper borrows that copy (its lease and durable marker), never the shared folder.
+        if (worktreeScope()) return this.inheritedPlace(run);
+        this.deps.note(run.id, "worktree.shared", { reason: "no-git-commit" }); return null;
+      }
       const reason = "The helper needs a separate project copy, but the project has no readable Git commit. The helper was not started in the shared project.";
       this.deps.note(run.id, "worktree.failed", { reason });
       throw new Error(reason);
