@@ -552,8 +552,10 @@ export const ROUTES = {
   "/api/personal/google/events": "other POST",
   "/api/personal/home": "secret-read",
   "/api/personal/home/states": "other POST",
+  "/api/personal/home/test": "owner POST", // RES-408: one read of Home Assistant's GET /api/
   "/api/personal/mail": "secret-read",
   "/api/personal/mail/search": "other POST",
+  "/api/personal/mail/test": "owner POST", // RES-408: one read-only EXAMINE of the inbox
   "/api/personal/microsoft/events": "other POST",
   "/api/personal/signin/": "prefix",
   "/api/personal/signin/google": "secret-read",
@@ -1049,6 +1051,10 @@ export const ROUTES = {
   "/api/registry/updates": "look",
   // eng-connectors: What's new for the installed version.
   "/api/release-notes": "look",
+  // RES-408: which issue-tracker accounts are set up, and one authenticated read to check each; the owner's alone.
+  "/api/connectors/accounts": "look",
+  "/api/connectors/accounts/github/test": "owner POST",
+  "/api/connectors/accounts/linear/test": "owner POST",
   // eng-connectors: flagged replies; keeping, removing and exporting (a POST, so a key never reads it out) are the owner's.
   "/api/reply-flags": "owner POST",
   "/api/reply-flags/": "prefix",
@@ -1132,6 +1138,7 @@ export const ROUTES = {
   "/api/codex-models": "owner POST", // QA 2026-09-28: which model Codex answers with
   "/api/codex-models/check": "owner POST", // runs one tiny request per model Codex takes
   "/api/helper-defaults": "owner POST", // models-ui: each specialist's own model and account
+  "/api/mcp/servers/sample/test": "owner POST",
   "/api/secrets": "owner POST",
   "/api/secrets/audit": "look",
   "/api/secrets/default": "look",
@@ -1330,6 +1337,7 @@ export const ROUTES = {
   "/api/voice/command": "task POST",
   "/api/voice/engines": "owner POST",
   "/api/voice/live": "owner POST", // phase2/rooms: its tools run as the owner
+  "/api/voice/piper/files": "owner POST", // UP-RESEARCH-063: names in one folder the owner picks, for the Piper picker
   "/api/voice/plan": "look",
   "/api/voice/settings": "owner POST",
   "/api/voice/speak": "task POST",
