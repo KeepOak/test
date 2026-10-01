@@ -10,6 +10,8 @@ import { $, esc, renderNow } from "../core/dom.js";
 import { ic, openPop, closePop, mi, toast } from "../core/ui.js";
 import { S, E, refresh, defaultTrunk } from "../core/state.js";
 import { api } from "../core/api.js";
+import { sessionPrincipal, sessionAuthority } from "../core/session-pages.js";
+import { newConversationBinding, newConversationProject } from "./chat.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { plusMore } from "./media.js";
@@ -20,7 +22,7 @@ import { openSkills } from "./messages.js"; // parity B1: Use a skill opens the 
 import { attachedChips, initAttach, pickFiles, removeFile, readyUploads } from "./attach.js"; // attach-anything
 import { initPractice, loadPractice, practiceMenu, practiceNext } from "./practice-next.js";
 
-const Q = { temporary: false, who: null, whoFor: null, pending: null, error: null };
+const Q = { choosing: false, temporary: false, who: null, whoFor: null, pending: null, error: null };
 
 function menu() {
   return mi("attach", "clip", t("window.chat.plus.attach")) + mi("add-folder", "folder", t("window.chat.plus.folder")) + mi("shot", "camera", t("window.chat.plus.screenshot")) + "<hr>"
@@ -45,7 +47,17 @@ function roomWho(w) {
 function whoRows() {
   const w = Q.whoFor === S.chat ? Q.who : null;
   if (S.chat && w?.kind === "room") return roomWho(w);
-  if (!S.chat || !w || (w.kind !== "plain" && w.kind !== "trunk")) return "";
+  if (!S.chat) {
+    // The existing conversation-start route binds an empty conversation to a Trunk before its first send.
+    // Temporary conversations use /run instead, so keep that separate engine-supported path.
+    if (Q.temporary || (E.trunkModes?.trunks ?? "on") === "off" || (E.trunkModes?.conversations ?? "off") === "off") return "";
+    const home = defaultTrunk();
+    const trunks = (E.trunks ?? []).filter(tr => !tr.hidden && tr.id !== home?.id);
+    return `<hr><div class="ph">${t("window.chat.plus.who")}</div>`
+      + (home ? radio("", home.name, t("look.badge.default"), true, Q.choosing) : "")
+      + trunks.map(tr => radio(tr.id, tr.name, "", false, Q.choosing)).join("");
+  }
+  if (!w || (w.kind !== "plain" && w.kind !== "trunk")) return "";
   const now = w.trunk?.id ?? "", off = (E.trunkModes?.conversations ?? "off") === "off";
   const home = defaultTrunk();
   return `<hr><div class="ph">${t("window.chat.plus.who")}</div>` + (home ? radio("", home.name, t("look.badge.default"), now === home.id || now === "") : "")
@@ -102,7 +114,39 @@ export async function readyWho() {
 async function chooseWho(el) {
   const sid = S.chat;
   closePop();
-  if (!sid) return;
+  if (!sid) {
+    const trunkId = el.dataset.v;
+    if (!trunkId || Q.temporary || Q.choosing || (E.trunkModes?.trunks ?? "on") === "off"
+        || (E.trunkModes?.conversations ?? "off") === "off") return;
+    if (!(E.trunks ?? []).some(tr => tr.id === trunkId && !tr.hidden)) return;
+    const view = S.view, box = $("#prompt"), principal = sessionPrincipal(E.profiles);
+    const binding = newConversationBinding(), home = E.defaultTrunkId, project = newConversationProject();
+    const authority = sessionAuthority(E.profiles, $("#app"));
+    const authorized = (profiles = E.profiles) => authority.current(profiles) && S.signedIn && !$("#app")?.classList.contains("locked-b17");
+    const stillHere = () => authorized() && !S.chat && S.view === view && $("#prompt") === box && !Q.temporary
+      && S.signedIn && !$("#app")?.classList.contains("locked-b17")
+      && sessionPrincipal(E.profiles) === principal && newConversationBinding() === binding
+      && E.defaultTrunkId === home && el.dataset.v === trunkId
+      && (E.trunkModes?.trunks ?? "on") !== "off" && (E.trunkModes?.conversations ?? "off") !== "off"
+      && (E.trunks ?? []).some(tr => tr.id === trunkId && !tr.hidden);
+    if (!stillHere()) { authority.close(); return; }
+    Q.choosing = true;
+    try {
+      const { openConversation } = await import("./chat.js");
+      if (!stillHere()) return;
+      const created = await api("trunks/conversations", { trunkId, ...(project ? { project } : {}) });
+      // A send or navigation while the request ran owns the current screen. Never replace it.
+      if (!stillHere()) return;
+      S.drafts[created.sessionId] = box?.value ?? S.drafts.new ?? "";
+      delete S.drafts.new;
+      const opened = await openConversation(created.sessionId, authorized);
+      const completedHere = (profiles = E.profiles) => authorized(profiles) && S.chat === created.sessionId && S.view === view;
+      if (opened === false || !completedHere()) return;
+      await refresh(completedHere).catch(error => { if (completedHere()) toast(error.message); });
+    } catch (error) { if (stillHere()) toast(error.message); }
+    finally { authority.close(); Q.choosing = false; }
+    return;
+  }
   try { Q.who = await api(`trunks/conversations/${encodeURIComponent(sid)}`, { trunkId: el.dataset.v || null }); } catch (error) { toast(error.message); return; }
   Q.whoFor = sid;
   await refresh().catch((error) => toast(error.message));

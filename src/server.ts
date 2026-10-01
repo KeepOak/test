@@ -1606,7 +1606,7 @@ async function api(
   // conversation. Its tools run as the owner, so it is the owner's alone (src/short-lived-keys.ts no
   // longer lets a key or a household person reach it).
   if (path === "/api/voice/live"
-    || path === "/api/voice/settings" || path === "/api/voice/plan" || path === "/api/voice/voices"
+    || path === "/api/voice/settings" || path === "/api/voice/plan" || path === "/api/voice/voices" || path === "/api/voice/piper/files"
       || path.startsWith("/api/models/profiles") || path === "/api/models/switch" || path === "/api/models/probe"
       || path === "/api/models/gemini-signin")
     return voiceApi(voiceDeps(app), request.method ?? "GET", path, () => readBody(request));
@@ -4573,7 +4573,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         if (handlesPersonalPath(path)) {
           app.store.profiles.requireOwner("Your personal connectors");
           const answer = await personalApi({ personal: app.personal, runtime: app.runtime, method: request.method ?? "GET",
-            readBody: () => readBody(request, 4 * 1024 * 1024) }, path).catch((error: unknown) => {
+            sessionLock: app.sessionLock, request, readBody: () => readBody(request, 4 * 1024 * 1024) }, path).catch((error: unknown) => {
             throw error instanceof PersonalHttpError ? new HttpError(error.status, error.message) : error;
           });
           send(response, 200, answer);
@@ -5548,6 +5548,7 @@ function voiceDeps(app: Branch) {
   return {
     store: app.store, models: app.runtime.models, owner: app.runtime.owner,
     voice: app.voice, policy: app.web.policy, fetch: app.web.policy.guard(globalThis.fetch),
+    localFilesRefusal: () => app.sessionLock.locked() ? "Unlock Branch before browsing installed Piper files." : null,
     // Wave 7: the Gemini card's "Sign in with Google" needs the workspace's OAuth connections.
     oauth: app.oauth,
     liveRefusal: (sessionId: string) => liveRefusalFor(app, sessionId), // phase2/rooms
