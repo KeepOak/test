@@ -126,7 +126,7 @@ export class McpConnections {
       throw new Error("This MCP session is not open. Use one of its tools before checking it.");
     await connection.check(signal);
     signal?.throwIfAborted();
-    if (this.entries.get(id)?.connection !== connection || entry.closed)
+    if (this.entries.get(id)?.connection !== connection || entry.closed || dead(connection))
       throw new Error("This MCP session closed during the check.");
   }
   private async open(id: string): Promise<McpConnection> {

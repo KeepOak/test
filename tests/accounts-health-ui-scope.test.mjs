@@ -106,6 +106,19 @@ for (const operation of ["connector", "connection"]) for (const failure of [fals
     if (!failure) assert.equal(operation === "connector" ? f.handlers.M.connectorHealth.home.ok : f.handlers.M.signin.google.status.marker, operation === "connector" ? true : "old-result");
   });
 }
+test("a successful own token refresh publishes the changed expiry and clears its checking state once", async () => {
+  const f = fixture();
+  f.handlers.M.signin.google.status.expiresAt = "2026-09-30T10:00:00.000Z";
+  f.handlers.M.signin.google.status.scope = "read-only";
+  const pending = f.handlers.testConnection("google"); await f.waitRequests(1);
+  assert.equal(f.handlers.M.checking.google, true);
+  f.requests[0].resolve({ status: { signedIn: true, expiresAt: "2026-10-01T10:00:00.000Z", scope: "read-only", health: { ok: true } } });
+  await pending;
+  assert.equal(f.handlers.M.signin.google.status.expiresAt, "2026-10-01T10:00:00.000Z");
+  assert.equal(f.handlers.M.checking.google, false);
+  assert.equal(f.renders(), 2, "one admission draw and one accepted-result draw");
+  assert.deepEqual(f.toasts, []);
+});
 for (const failure of [false, true]) test(`Accounts current load ${failure ? "service errors" : "success"} finishes its bounded reads`, async () => {
   const f = fixture(), pending = f.handlers.loadMore(); await f.waitRequests(3);
   for (const request of f.requests.slice()) release(request, failure);

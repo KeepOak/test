@@ -144,11 +144,18 @@ async function testConnection(id) {
   const sameScope = accountFence(`signin:${id}`), sameConnection = connectionBinding(id), epoch = connectionEpochs.get(id) ?? 0;
   const fresh = () => sameScope() && sameConnection() && (connectionEpochs.get(id) ?? 0) === epoch;
   if (!fresh()) return;
+  let published = false;
   try {
     const checked = await api(`personal/signin/${id}/test`, {});
-    if (fresh() && M.signin[id]) M.signin[id].status = checked.status;
+    if (fresh() && M.signin[id]) {
+      // A permitted token refresh changes expiry. Publish its result and finish this same operation atomically.
+      M.signin[id].status = checked.status;
+      M.checking[id] = false;
+      published = true;
+      renderNow();
+    }
   } catch (error) { if (fresh()) toast(error.message); }
-  finally { if (fresh()) { M.checking[id] = false; renderNow(); } }
+  finally { if (!published && fresh()) { M.checking[id] = false; renderNow(); } }
 }
 
 /* The two sections, drawn at the foot of Settings › Accounts; the owner's alone. */
