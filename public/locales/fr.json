@@ -6637,6 +6637,8 @@
   "voiceView.title": "Parler en direct",
   "voiceView.unmute": "Rétablir le micro",
   "voiceView.you": "Vous",
+  "weather.confirm-city": "Envoyer {city}, {country} à Open-Meteo pour une prévision sur trois jours ?",
+  "weather.confirm-enable": "Activer pour un usage non commercial uniquement ? Les demandes de ville vont à Open-Meteo. Ses journaux peuvent garder les coordonnées 90 jours. Les données sont sous CC BY 4.0 ; gardez l'attribution. Cela n'active ni accès payant ni position précise.",
   "window.applock.after-min": "Après {count} min",
   "window.applock.anyone-can-open": "Toute personne devant cet ordinateur peut ouvrir Branch.",
   "window.applock.asks-every-open": "Demande votre code PIN à chaque ouverture.",

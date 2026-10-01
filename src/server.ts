@@ -1069,6 +1069,22 @@ async function api(
   listen: ListenState,
   gatewayPower?: NeverBreakExtras["gatewayPower"],
 ): Promise<unknown> {
+  if (path === "/api/weather" || path === "/api/weather/forecast") {
+    app.store.profiles.requireOwner("Weather location requests");
+    if (throughDoor(request) || startedWithShortLivedKey() || currentPerson() || app.sessionLock.locked())
+      throw new HttpError(403, "Use the unlocked owner's window for weather");
+    const weather = app.web.weather;
+    if (!weather) throw new HttpError(503, "Weather connector unavailable");
+    if (request.method === "GET" && path === "/api/weather") return { settings: weather.settings() };
+    if (request.method === "POST" && path === "/api/weather") {
+      const input = await readBody(request);
+      if (!app.store.profiles.isOwner() || app.sessionLock.locked()) throw new HttpError(403, "Owner window required");
+      return { settings: weather.configure(input) };
+    }
+    if (request.method === "POST" && path === "/api/weather/forecast")
+      return app.runtime.executeTool("weather.forecast", await readBody(request), { mode: "owner", source: "owner" });
+    throw new HttpError(405, "Use GET or POST for weather");
+  }
   // Batch 19 (wave 6): the record of what it was allowed to do, approval kinds, ask-first,
   // the practice workspace, how passages are ordered, plugin model connections, issue context.
   if (handlesMiscPath(path))
