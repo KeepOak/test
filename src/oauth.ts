@@ -68,9 +68,13 @@ function renewalKey(provider: OAuthProvider, tokens: OAuthTokens): string {
 }
 const sameCredential = (a: OAuthTokens, b: OAuthTokens): boolean =>
   a.refreshToken === b.refreshToken && a.accessToken === b.accessToken && a.obtainedAt === b.obtainedAt;
-/** The settings a sign-in belongs to: its connection, client and sign-in addresses (where a tenant lives). */
+/**
+ * The settings a sign-in belongs to: its connection, client, sign-in addresses (where a tenant lives) and the extra
+ * values the sign-in page is sent (a resource or audience among them), in a fixed order so their order never counts.
+ */
 const issuerOf = (provider: OAuthProvider): string => createHash("sha256")
-  .update(JSON.stringify([provider.id, provider.clientId, provider.authorizeUrl, provider.tokenUrl])).digest("hex").slice(0, 32);
+  .update(JSON.stringify([provider.id, provider.clientId, provider.authorizeUrl, provider.tokenUrl,
+    Object.entries(provider.extra ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))])).digest("hex").slice(0, 32);
 
 interface Flow {
   provider: OAuthProvider; verifier: string; state: string; redirectUri: string;
