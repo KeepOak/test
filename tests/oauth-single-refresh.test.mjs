@@ -18,7 +18,9 @@ function lockerWith(tokens) {
       kept.set(name, value);
       if (origin === undefined) origins.delete(name); else origins.set(name, origin);
     },
-    origin(_owner, _project, name) { return origins.get(name) ?? null; },
+    async resolveWithOrigin(_owner, _project, name) {
+      return kept.has(name) ? { value: kept.get(name), origin: origins.get(name) ?? null } : null;
+    },
     async resolve(_owner, _project, names) { return Object.fromEntries(names.filter((n) => kept.has(n)).map((n) => [n, kept.get(n)])); },
     kept,
   };
@@ -210,4 +212,43 @@ test("a renewed sign-in is stored in the form an older Branch reads, with its se
   await secrets.put("owner", "default", name, raw, {}, { origin: "label" });
   secrets.remove("owner", "default", name);
   assert.equal(db.prepare("SELECT count(*) AS n FROM locker_origin").get().n, 0, "the settings go with the tokens");
+});
+
+/* A read of the saved sign-in waits for the locker key while another provider's sign-in is saved; both waits end in the
+   same turn, the read first. The tokens and the settings stamp the read decides with must come from one save, so the
+   other provider's call is never handed the first provider's key. */
+test("a read held at the locker key never pairs one provider's tokens with another's settings stamp", async () => {
+  const name = oauthSecretName("svc"), otherClient = { ...provider, clientId: "client-2" };
+  const answer = (id) => async (_url, init) => new Response(JSON.stringify({
+    access_token: new URLSearchParams(String(init.body)).get("client_id") === "client" ? "for-first" : id,
+    refresh_token: "refresh-2", expires_in: 3600 }), { status: 200, headers: { "content-type": "application/json" } });
+  /* The second provider's settings stamp, from a renewal of its own in a separate locker. */
+  const elsewhere = new DatabaseSync(":memory:"), keysElsewhere = { async key() { return Buffer.alloc(32, 3); } };
+  const lockerElsewhere = new Locker(elsewhere, keysElsewhere), secretsElsewhere = new Secrets(elsewhere, lockerElsewhere);
+  await secretsElsewhere.put("owner", "default", name, JSON.stringify(expired("old", "refresh-1")));
+  await new OAuthConnections("owner", secretsElsewhere, policy, answer("for-second")).accessToken(otherClient);
+  const secondStamp = lockerElsewhere.origin("owner", "default", name);
+  assert.ok(secondStamp);
+
+  let holding = false;
+  const waits = [];
+  const keys = { async key() { if (holding) await new Promise((go) => waits.push(go)); return Buffer.alloc(32, 5); } };
+  const db = new DatabaseSync(":memory:"), locker = new Locker(db, keys), secrets = new Secrets(db, locker);
+  await secrets.put("owner", "default", name, JSON.stringify(expired("old", "refresh-1")));
+  const connections = new OAuthConnections("owner", secrets, policy, answer("for-second"));
+  assert.equal(await connections.accessToken(provider), "for-first", "the first provider's sign-in is saved and stamped");
+
+  holding = true;
+  const secondReads = connections.accessToken(otherClient).then((key) => key, (error) => error.message);
+  const secondKey = { accessToken: "second-key", refreshToken: "second-refresh", tokenType: "Bearer",
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(), scope: null, obtainedAt: new Date().toISOString() };
+  const secondSaves = secrets.put("owner", "default", name, JSON.stringify(secondKey), {}, { origin: secondStamp });
+  for (const end = Date.now() + 2000; waits.length < 2 && Date.now() < end;) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(waits.length, 2, "the read and the save both wait for the locker key");
+  holding = false;
+  for (const go of waits.splice(0)) go();
+  await secondSaves;
+  assert.notEqual(await secondReads, "for-first", "the second provider is never handed the first provider's key");
+  await assert.rejects(connections.accessToken(provider), /other settings; sign in again/, "nor the first the second's");
+  assert.equal(await connections.accessToken(otherClient), "second-key");
 });
