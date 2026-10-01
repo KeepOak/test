@@ -170,9 +170,9 @@ port outside 1–65535 is refused. If the forward is closed, the connection cann
 
 This is a remote model: prompts and embedding inputs leave this computer. Catalogue metadata
 `remoteBehindLoopback: true` excludes it from local-only model routing even though the connection
-listens on loopback. A separately selected embedding connection must honor the same
-`presetRunsLocally` check; endpoint-only embedding selection needs that accompanying change
-before this entry is used for embeddings. No zero price is supplied; ordinary price overrides,
+listens on loopback. Embedding selection uses the same `presetRunsLocally` check and retains
+the connection's guarded transport; a loopback address alone does not make embeddings local.
+No zero price is supplied; ordinary price overrides,
 account constraints and pinned choices still apply. Only this connection's chosen origin gets
 the model-server allowance, with redirects refused and your host/path rules and emergency stop
 still applied. Web tools keep their ordinary network rules. A manually configured generic

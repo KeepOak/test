@@ -150,7 +150,8 @@ export const embeddingFetch = (endpoint: string, call: typeof fetch): typeof fet
  * owner's network rules first.
  */
 export function embeddingsFor(connection: EmbeddingConnection, call: typeof fetch = globalThis.fetch): Embeddings | null {
-  const reach = connection.fetchImpl ?? embeddingFetch(connection.endpoint, call);
+  // A remote model behind loopback must retain the guarded remote transport.
+  const reach = connection.fetchImpl ?? (connection.local ? embeddingFetch(connection.endpoint, call) : call);
   try {
     if (connection.shape === "gemini") return new GeminiEmbeddings(connection, connection.local, reach);
     if (connection.shape === "ollama") return new OllamaEmbeddings(connection, connection.model, reach);
