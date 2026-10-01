@@ -705,3 +705,40 @@ test("RES-180: a timed wait that falls due carries on by itself, after a restart
   assert.deepEqual(done.state.map((step) => step.status), ["done", "done"]);
   assert.equal(provider.requests.length, 1, "two overlapping beats ran the step once");
 });
+
+test("RES-180: a wait whose project was removed meanwhile is not carried on in another project", async (t) => {
+  const { app, provider } = await fixture(t);
+  app.store.projects.save("local", { id: "garden", name: "The garden" });
+  app.store.projects.setActive("local", { active: "garden" });
+  const made = app.workflows.create("local", { name: "Later", steps: [
+    { name: "Wait an hour", kind: "wait", waitMinutes: 60 }, { name: "Do it", kind: "prompt", prompt: "do it" }] });
+  assert.equal((await app.workflows.run("local", made.id)).status, "waiting_time");
+  app.store.projects.remove("local", "garden");
+  const saved = app.store.get("workflows", "local", made.id);
+  app.store.save("workflows", "local", made.id, { ...saved.data, waitingUntil: new Date(Date.now() - 1000).toISOString() });
+  await assert.rejects(app.workflows.run("local", made.id), /project/i, "carrying it on by hand is refused too");
+  assert.equal(app.workflows.view("local", made.id).status, "waiting_time", "a refused carry-on leaves it as it stopped");
+  await app.workflows.tick(new Date());
+  assert.equal(app.workflows.view("local", made.id).status, "failed", "the clock stops it rather than running it in Default");
+  assert.equal(provider.requests.length, 0, "no step ran in another project");
+});
+
+test("RES-180: Pause pressed while a step works holds once that step finishes", async (t) => {
+  const { app, provider } = await fixture(t);
+  const made = app.workflows.create("local", { name: "Two steps", steps: [
+    { name: "One", kind: "prompt", prompt: "one" }, { name: "Two", kind: "prompt", prompt: "two" }] });
+  let release;
+  provider.hold = new Promise((resolve) => { release = resolve; });
+  const running = app.workflows.run("local", made.id);
+  while (provider.requests.length < 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(app.workflows.pause("local", made.id).status, "paused");
+  release();
+  const after = await running;
+  assert.equal(after.status, "paused", "the step's finish does not undo the Pause");
+  assert.deepEqual(after.state.map((step) => step.status), ["done"], "the finished step stays finished");
+  assert.equal(provider.requests.length, 1, "nothing after the paused step started");
+  provider.hold = null;
+  const carried = await app.workflows.resume("local", made.id);
+  assert.equal(carried.status, "completed");
+  assert.equal(provider.requests.length, 2);
+});

@@ -344,6 +344,10 @@ export class Workflows {
     const fresh = ["idle", "completed", "failed"].includes(current.status);
     const savedProject = this.store.get("workflows", owner, id)?.data.project;
     const project = fresh ? this.store.projects.active(owner).id : typeof savedProject === "string" ? savedProject : defaultProjectId;
+    // A project removed while the workflow stopped would read as Default inside `underProject`, so the rest
+    // is refused rather than carried on with another project's folder and secrets.
+    if (!this.store.projects.list(owner).some((saved) => saved.id === project))
+      throw new Error("The project this workflow was working in has been removed, so it was not carried on");
     const limit = this.limitFor(owner, id, fresh, within); // mac7/lockdown-fix
     const held = this.heldSource(owner, id, fresh, source); // mac7/outside-resume
     const startedBy = this.startedBy(owner, id); // Q114/Q119
@@ -357,9 +361,17 @@ export class Workflows {
         if (startedBy && !this.runtime.trunkKeysFor(startedBy))
           return this.setStatus(owner, id, { status: "failed", cursor: index, error: goneTrunk });
         const outcome = await this.step(owner, id, index, current.steps[index]!, current, held, chain, limit);
-        if (outcome.halt) return this.setStatus(owner, id, { cursor: outcome.cursor ?? index, ...outcome.patch });
+        // A Pause pressed while the step worked holds: the step's result is kept and nothing after it starts.
+        // Only a failure, which Pause cannot hold, replaces it.
+        const paused = this.view(owner, id).status === "paused";
+        if (outcome.halt) {
+          const stopped = outcome.patch?.status;
+          const hold = paused && stopped !== "failed" ? { status: "paused", pausedFrom: stopped ?? "running" } : {};
+          return this.setStatus(owner, id, { cursor: outcome.cursor ?? index, ...outcome.patch, ...hold });
+        }
         // Take the saved view back, so a later step sees what the last one wrote (a wait's moment).
         current = this.setStatus(owner, id, { cursor: outcome.cursor ?? index + 1, ...outcome.patch });
+        if (paused) return current;
         index = current.cursor - 1;
       }
       return this.setStatus(owner, id, { status: "completed", cursor: current.steps.length, waitingUntil: null });
