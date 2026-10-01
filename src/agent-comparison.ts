@@ -8,6 +8,8 @@ import { startedWithShortLivedKey } from "./key-context.js";
 import { currentTaskRun } from "./task-scope.js";
 import { currentPerson, throughPairedDoor } from "./people/context.js";
 import { lockdownActive } from "./lockdown.js";
+import { unwrapProvider } from "./accounts/pool-provider.js";
+import { CliAgentProvider } from "./providers/cli-agent.js";
 
 const agents = ["Branch", "Hermes", "OpenClaw"] as const;
 const repositories = { Branch: "KeepOak/Branch-Agent", Hermes: "NousResearch/hermes-agent", OpenClaw: "openclaw/openclaw" };
@@ -50,7 +52,9 @@ export async function startComparison(deps: Deps, input: unknown) {
   authorize(deps);
   const request = Start.parse(input);
   if (!comparisonOverview(deps).enabled) throw new HttpError(409, "Enable comparisons before starting one.");
-  if (!deps.runtime.models.presets.has(request.preset)) throw new HttpError(400, "Choose an existing model preset explicitly.");
+  const preset = deps.runtime.models.presets.get(request.preset);
+  if (!preset) throw new HttpError(400, "Choose an existing model preset explicitly.");
+  if (unwrapProvider(preset.provider) instanceof CliAgentProvider) throw new HttpError(400, "An installed coding assistant keeps its own tools; choose a model connection without tools.");
   if (agents.some((agent) => !request.sources.some((source) => source.agent === agent))) throw new HttpError(400, "Pin at least one source for each agent.");
   if (new Set(request.sources.map((source) => `${source.agent}:${source.commit}:${source.path}`)).size !== request.sources.length) throw new HttpError(400, "Choose distinct source files.");
   if (busy.has(deps.runtime)) throw new HttpError(409, "A comparison is already running.");

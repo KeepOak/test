@@ -3765,6 +3765,9 @@ ${run.output.slice(0, 6000)}`;
     if (this.staysHere.has(run.id) && !presetRunsLocally(preset)) preset = this.keptHere(run, preset);
     if (context.dryRun && unwrapProvider(preset.provider) instanceof CliAgentProvider)
       throw new Error("Practice cannot use an installed coding assistant because its own tools run outside Branch's simulation. Pick another model connection for this practice task.");
+    // An isolated comparison promises a tool-free model turn; an installed coding assistant keeps its own tools, hooks and MCP.
+    if (this.fixedModelRuns.has(run.id) && unwrapProvider(preset.provider) instanceof CliAgentProvider)
+      throw new Error("An isolated comparison cannot use an installed coding assistant because it keeps its own tools. Pick another model connection.");
     context.budget.step(context.signal);
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
