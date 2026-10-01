@@ -5,7 +5,7 @@ import { basename, delimiter, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { performance } from "node:perf_hooks";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
-import { codexTransportEnvironment } from "../providers/codex-environment.js";
+import { codexChildEnvironment, codexTransportEnvironment } from "../providers/codex-environment.js";
 import { cleanChildEnvironment } from "../child-env.js";
 import { agentPromptFrom } from "../providers/cli-agent.js";
 import { startCall } from "../windows-command.js";
@@ -35,7 +35,8 @@ export type StartAppServer = (command: string, env?: NodeJS.ProcessEnv) => AppSe
 
 /** Branch's short allowlist plus Codex's configured account folder and network transport. */
 export function codexEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return { ...cleanChildEnvironment(source), ...codexTransportEnvironment(source) };
+  const effective = codexChildEnvironment(source);
+  return { ...cleanChildEnvironment(effective), ...codexTransportEnvironment(effective) };
 }
 
 /**
@@ -70,6 +71,7 @@ export function codexBinary(command: string, env: NodeJS.ProcessEnv, platform: N
 }
 
 export const startCodexAppServer: StartAppServer = (command, env = codexEnvironment()) => {
+  env = codexChildEnvironment(env);
   assertRealAgentAllowed(command, env);
   // Started as the npm launcher would start it, with what the launcher adds to its environment, but without the launcher.
   const binary = codexBinary(command, env);
@@ -412,7 +414,7 @@ export function warmCodexTurn(command: string, start: StartAppServer, request: C
   const started = performance.now();
   let byKey = warmCodex.get(start);
   if (!byKey) warmCodex.set(start, byKey = new Map());
-  const env = thread.env ?? codexEnvironment();
+  const env = codexChildEnvironment(thread.env ?? codexEnvironment());
   // A child retains its initial account and transport environment. Never borrow it after
   // either the fallback account home or configured proxy/CA transport has changed.
   const transport = Object.entries(codexTransportEnvironment(env)).sort(([a], [b]) => a.localeCompare(b));

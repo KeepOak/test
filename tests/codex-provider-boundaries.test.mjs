@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexTransportEnvironment } from "../dist/providers/codex-environment.js";
+import { codexChildEnvironment, codexTransportEnvironment } from "../dist/providers/codex-environment.js";
 import { codexEnvironment, closeWarmCodex, warmCodexTurn } from "../dist/asks/codex-app-server.js";
 import { CliAgentProvider, cliAgentCatalog, codexArgs, runCliAgent, strippedEnvironment } from "../dist/providers/cli-agent.js";
 import { discardTemp } from "./temp-dir.mjs";
@@ -70,7 +70,7 @@ function server() {
 test("Codex transport copies only configured names, preserving no-proxy and CA verification", () => {
   assert.deepEqual(codexTransportEnvironment({ ...transport, ...excluded }), transport);
   assert.deepEqual(codexTransportEnvironment({}), {});
-  assert.deepEqual(codexEnvironment({ PATH: "/bin", HOME: "/h", ...transport, ...excluded }), { PATH: "/bin", HOME: "/h", ...transport });
+  assert.deepEqual(codexEnvironment({ PATH: "/bin", HOME: "/h", ...processTransport, ...excluded }), { PATH: "/bin", HOME: "/h", ...processTransport });
 });
 
 test("primary app-server uses the explicit CODEX_HOME and never reuses another home's child", async (t) => {
@@ -211,4 +211,30 @@ test("warm children separate fallback homes and changed configured transport", a
     assert.equal(fake.starts.length, before + 1, "changed account/transport starts with the actual new environment");
     assert.deepEqual(fake.starts.at(-1).env, env);
   }
+});
+test("Windows actual child environment and warm identity use the same case-insensitive names", async (t) => {
+  const source = { Home: "/a", codex_home: "/account", Http_Proxy: "http://proxy.test", no_proxy: "" };
+  assert.deepEqual(codexChildEnvironment(source, "win32"), { HOME: "/a", CODEX_HOME: "/account", HTTP_PROXY: "http://proxy.test", NO_PROXY: "" });
+  assert.deepEqual(codexChildEnvironment({ HOME: "/a", Home: "/b" }, "linux"), { HOME: "/a", Home: "/b" });
+  assert.throws(() => codexChildEnvironment({ HOME: "/a", Home: "/b" }, "win32"), /conflicting.*aliases/);
+  if (process.platform !== "win32") return;
+  t.after(closeWarmCodex);
+  const fake = server();
+  const turn = (env) => warmCodexTurn("fixture", fake.start, request(), { env }, 5000);
+  await turn(source);
+  assert.deepEqual(fake.starts.at(-1).env, codexChildEnvironment(source));
+  await turn({ HOME: "/a", CODEX_HOME: "/account", HTTP_PROXY: "http://proxy.test", NO_PROXY: "" });
+  assert.equal(fake.starts.length, 1, "equivalent casing reuses the same actual child");
+  for (const env of [{ ...source, Home: "/b" }, { ...source, codex_home: "/other" },
+    { ...source, Http_Proxy: "http://other.test" }, { ...source, no_proxy: "localhost" }]) {
+    const before = fake.starts.length;
+    await turn(env);
+    assert.equal(fake.starts.length, before + 1);
+    assert.deepEqual(fake.starts.at(-1).env, codexChildEnvironment(env));
+  }
+  const before = fake.starts.length;
+  assert.throws(() => turn({ HOME: "/a", Home: "/b" }), /conflicting.*aliases/);
+  assert.equal(fake.starts.length, before, "conflicting aliases start nothing");
+  assert.deepEqual(codexEnvironment({ Home: "/a", UserProfile: "/profile", Http_Proxy: "http://proxy.test", no_proxy: "" }),
+    { HOME: "/a", USERPROFILE: "/profile", HTTP_PROXY: "http://proxy.test", NO_PROXY: "" });
 });

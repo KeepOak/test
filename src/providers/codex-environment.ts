@@ -13,3 +13,18 @@ export function codexTransportEnvironment(source: NodeJS.ProcessEnv = process.en
   for (const name of allowed) if (source[name] !== undefined) out[name] = source[name];
   return out;
 }
+
+/** Windows child environment names share one identity. Refuse conflicting aliases instead of
+ * guessing which account or transport value the child would receive. POSIX keeps distinct names. */
+export function codexChildEnvironment(source: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
+  if (platform !== "win32") return { ...source };
+  const out: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (value === undefined) continue;
+    const key = name.toUpperCase();
+    if (out[key] !== undefined && out[key] !== value)
+      throw new Error("Codex's Windows environment contains conflicting account or transport variable aliases. Reconcile their values before continuing.");
+    out[key] = value;
+  }
+  return out;
+}
