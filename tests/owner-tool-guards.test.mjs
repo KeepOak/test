@@ -52,6 +52,11 @@ const GUARDS = [
   // TRUNK-106: tying a private saved fact to a local picture is the owner's own memory.
   { file: "src/memory-images.ts", tool: "memory.image", args: { id: "no-such-fact" } },
   { file: "src/channels/connectors.ts", tool: "channels.broadcast", args: { text: "hello" } },
+  // CHAT-023: listing, editing or deleting Branch's own sent chat messages is the owner's.
+  { file: "src/channels/message-actions.ts", tool: "channels.own_messages", args: { channel: "telegram", chatId: "1" } },
+  { file: "src/channels/message-actions.ts", tool: "channels.delete_message", args: { channel: "telegram", chatId: "1", messageId: "5" } },
+  // router.ts checks the owner again (requireMessageActionOwner) before it touches the message.
+  { file: "src/channels/router.ts", tool: "channels.edit_message", args: { channel: "telegram", chatId: "1", messageId: "5", text: "fixed" } },
   { file: "src/channels/connectors.ts", tool: "channels.digest", args: { channel: "telegram", chatId: "1" } },
   // Choosing the chat the morning brief goes to is choosing where the owner's messages go.
   { file: "src/brief.ts", tool: "brief.configure", args: { deliverTo: { channel: "telegram", chatId: "1" } } },
@@ -109,6 +114,7 @@ const NOT_TOOL_GUARDS = {
   "src/self-development-requests.ts": "its requireOwner (ownerHere) guards the owner's chat-request routes in Inbox, and installed() is a read-only proof that only refuses, never grants, when the window is on someone else; the tool path, fileOwnerTask (seasons.request_setting), is gated by ownerOnly(context), which judges by the task's recorded origin (runOrigin: person, key, lent door) and refuses Trunks and short-lived keys",
   "src/media.ts": "its isOwner check only refuses: a ChatGPT sign-in picture also needs the window on the owner, and the task's own origin (runOrigin, currentPerson, the run's owner) is checked as well, so a household person's task is refused whichever profile the window shows",
   "src/coding/project-tests.ts": "the isOwner check refuses `--allow-tests` when a run starts; during the task allowedForThisRun judges by the task's own recorded origin (runOrigin, taskPerson), not the window",
+  "src/mcp-server.ts": "its requireOwner calls are owner-local request and disclosure checks on the stateless MCP read preview (before and after the read); that path answers only discovery, resource and prompt reads, refuses tools/call and registers no tool",
 };
 
 async function fixture(t) {

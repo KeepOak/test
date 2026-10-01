@@ -1,3 +1,7 @@
+import type { CopyIdentity } from "./coding/worktrees.js";
+import { realpath } from "node:fs/promises";
+import { resumeAuthority, type ResumeAuthority } from "./resume-authority.js";
+import { recordedRecoveryPerson } from "./never-break/recorded-person.js";
 import { randomUUID } from "node:crypto";
 import { assertContinuitySession } from "./reach/continuity-store.js";
 import type { TasteLearning } from "./taste/learning.js";
@@ -23,10 +27,12 @@ import { unwrapProvider } from "./accounts/pool-provider.js";
 import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
 import { chatPersonalityForRun } from "./channels/personality-settings.js";
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
+import { ownMessageHold } from "./channels/message-actions.js"; // CHAT-023: edits and deletions of sent messages ask once
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
 import { asPerson, currentPerson, throughPairedDoor } from "./people/context.js"; // bucket 19
 import { currentCaller } from "./caller.js"; // owner-selected Full Access keeps its local caller
+import { TrunkSchema } from "./trunks/record.js";
 import type { TrunkRunShape } from "./trunks/shape.js"; // R17-A (Trunks)
 import { StartsElsewhereError } from "./trunks/starts-in.js"; // Q44
 import { diagnose } from "./diagnostic-log.js"; // Q44: a queued message that cannot start is logged
@@ -179,7 +185,7 @@ import { heldMode, policyForMode, readConversationMode, saveConversationMode, ty
 import { type AnswerShape, askInShape, shapeInstructions, type ShapedAnswer } from "./answer-shape.js";
 import { advisorInstructions, advisorQuestion, adviceLine, readAdvice, secondOpinionSettings, type Advice } from "./second-opinion.js";
 import { styleShape, takeScratch, type SpecialistStyle } from "./specialist-styles.js";
-import { Deferrals, deferredCall } from "./deferred.js";
+import { Deferrals, deferredCall, deferredFollowUp, deferredOutcome, type DeferredAction } from "./deferred.js";
 import { switchedToolTiers } from "./feature-switches.js";
 import { troubleshootInTask } from "./troubleshoot.js"; // w911 (A0374) hook: the debugging loop.
 import { RequestCache, type CacheKeyParts } from "./request-cache.js";
@@ -241,6 +247,7 @@ export interface DelegateOptions extends HelperSelection { timeoutMs?: number; r
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
+  deferredFrom?: string;
   /** mac7/outside-review: the tools the task that queued it had; the task reading it gets no more. */
   permissions?: string[] }
 /** mac7/outside-review: what a queued message keeps of the task that queued it (see FollowUp). */
@@ -267,7 +274,7 @@ export const unkeyedAlwaysRefusal = "This request does not say what it is target
  * is the registry's `noStandingTarget` (Q76).
  */
 const keyedOnDeclaredTargets: ReadonlySet<string> = new Set(["browser.flow"]);
-export interface FollowUpCarry { originFrom?: string | undefined; permissions?: readonly string[] | null | undefined }
+export interface FollowUpCarry { deferredFrom?: string | undefined; originFrom?: string | undefined; permissions?: readonly string[] | null | undefined }
 export interface BackgroundResult { childRunId: string; parentRunId: string; status: string; output: string; finishedAt: string;
   /** workbench (SELF-303): a helper the lead started with helpers.start, whose finishing wakes the lead's conversation. */
   tellsLead?: boolean }
@@ -629,6 +636,8 @@ export interface RunOptions {
    * step's answer). When that task came from outside, this one is held as it was.
    */
   originFrom?: string;
+  /** Internal: a deferred answer must recover its saved effective scope before starting. */
+  deferredFrom?: string;
   /** bucket 19 (integration review): whose conversation this is, when a person's own one is lent to the assistant. */
   lentTo?: string;
   /** Practice run: tools that would change something report what they would have done. */
@@ -877,16 +886,23 @@ export class Runtime {
    * The answer to a tool call that was handed over earlier. It is written down and then put to the
    * conversation as an ordinary follow-up message, so the assistant picks the thread back up.
    */
-  settleDeferred(id: string, outcome: string): { id: string; sessionId: string; queued: number } {
+  settleDeferred(id: string, outcome?: string, action?: DeferredAction): { id: string; sessionId: string; queued: number } {
     const waiting = this.deferrals.get(id);
-    // Q44: refused before the step is marked answered; one already answered is told so first, by settle.
-    if (waiting && !waiting.settledAt) this.queueGuard(waiting.sessionId);
-    const entry = this.deferrals.settle(id, outcome);
-    if (entry.runId) this.store.event(entry.runId, "tool.deferred_settled", { id: entry.id, tool: entry.tool });
+    if (!waiting) throw new Error("There is no handed-over job with that number");
+    if (waiting.settledAt) throw new Error("That job has already been answered");
+    const answer = deferredOutcome(waiting, outcome, action);
+    if (!this.store.ownsSession(this.owner, waiting.sessionId)) throw new Error("Session not found");
+    // Q44: a refused continuation must leave the step unanswered.
+    this.queueGuard(waiting.sessionId);
+    // Validate before settling: an unavailable scope leaves the handoff unanswered.
+    const scope = this.deferredScope(waiting.runId, waiting.sessionId);
+    this.checkDeferredCredentials(scope.credentials, this.trunkShape({ prompt: "", sessionId: waiting.sessionId }));
+    const entry = this.deferrals.settle(id, answer);
+    if (entry.runId) this.store.event(entry.runId, "tool.deferred_settled", { id: entry.id, tool: entry.tool, kind: entry.kind, ...(action ? { action } : {}) });
     // mac7/outside-resume: the answer carries the task that handed the step over on, as that task.
     const queued = this.followUp(entry.sessionId,
-      `The "${entry.tool}" step you handed over earlier has finished${entry.description ? ` (${entry.description})` : ""}. What came of it: ${entry.outcome}`,
-      null, { originFrom: entry.runId || undefined });
+      deferredFollowUp(entry, action),
+      null, { originFrom: entry.runId, deferredFrom: entry.runId, permissions: scope.permissions });
     return { id: entry.id, sessionId: entry.sessionId, queued: queued.queued };
   }
   /** The default preset's provider; individual runs may select another preset. */
@@ -950,6 +966,46 @@ export class Runtime {
   activeRunSignal(id: string): AbortSignal | null {
     const controller = this.controllers.get(id);
     return controller && !controller.signal.aborted && !this.pausing.get(id)?.signal.aborted ? controller.signal : null;
+  }
+  /** Register interrupted journal recovery with the same Stop, Pause and shutdown controls as live work. */
+  beginInterruptedRecovery(id: string): { signal: AbortSignal; cancelled(): boolean; release(): void } {
+    const run = this.store.run(id);
+    recordedRecoveryPerson(this.store, id, this.owner);
+    if (!this.accepting || !run || run.status !== "interrupted"
+      || this.controllers.has(id) || this.pausing.get(id)?.signal.aborted || this.activeSessions.has(run.sessionId))
+      throw new Error("This interrupted task cannot start automatic recovery while stopped, paused or already active.");
+    const events = this.store.events(id);
+    if (events.some((event) => event.kind === "run.recovery_stopped" || event.kind === "run.pause_asked" || event.kind === "run.paused"))
+      throw new Error("This task was stopped or paused. Continue it explicitly when ready.");
+    const deadline = Number(events.find((event) => event.kind === "run.started")?.data.deadlineMs);
+    if (!Number.isFinite(deadline) || deadline <= 0) throw new Error("The interrupted task has no recorded recovery deadline.");
+    const controller = new AbortController(), pausing = new AbortController();
+    const paused = () => controller.abort(pausing.signal.reason);
+    pausing.signal.addEventListener("abort", paused, { once: true });
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(new Error("Interrupted recovery reached its deadline")); }, Math.min(deadline, 120_000));
+    this.controllers.set(id, controller);
+    this.pausing.set(id, pausing);
+    this.activeSessions.add(run.sessionId);
+    let finished!: () => void;
+    const pending = new Promise<void>((resolve) => { finished = resolve; });
+    this.pending.add(pending);
+    let released = false;
+    return { signal: controller.signal,
+      cancelled: () => controller.signal.aborted && !pausing.signal.aborted && !timedOut && this.accepting,
+      release: () => {
+        if (released) return;
+        released = true;
+        clearTimeout(timer);
+        pausing.signal.removeEventListener("abort", paused);
+        if (this.controllers.get(id) === controller) {
+          this.controllers.delete(id);
+          if (this.pausing.get(id) === pausing) this.pausing.delete(id);
+          this.activeSessions.delete(run.sessionId);
+        }
+        this.pending.delete(pending);
+        finished();
+    } };
   }
   cancel(id: string): boolean {
     const controller = this.controllers.get(id);
@@ -1078,7 +1134,7 @@ export class Runtime {
    * so a person can steer a task that is still working without waiting for it to finish.
    */
   followUp(sessionId: string, prompt: string, windowPerson: string | null = null, carry: FollowUpCarry = {}): { id: string; position: number; queued: number } {
-    const { originFrom, permissions } = carry;
+    const { originFrom, deferredFrom, permissions } = carry;
     RunInputSchema.parse({ prompt, sessionId });
     // profile-audit: queued from the app window switched to a household profile, it runs as them.
     const person = currentPerson()?.profileId ?? windowPerson;
@@ -1091,6 +1147,7 @@ export class Runtime {
       ...(startedWithShortLivedKey() ? { shortLivedKey: true } : {}),
       ...(shortLivedKeyMark().keyId ? { shortLivedKeyId: shortLivedKeyMark().keyId } : {}),
       ...(person ? { personProfileId: person } : {}), ...(originFrom ? { originFrom } : {}),
+      ...(deferredFrom ? { deferredFrom } : {}),
       ...(permissions ? { permissions: [...permissions] } : {}) }];
     this.store.save("settings", this.owner, `followups:${sessionId}`, { items });
     this.drainFollowUps(sessionId);
@@ -1103,7 +1160,8 @@ export class Runtime {
     if (!next) return;
     this.store.save("settings", this.owner, `followups:${sessionId}`, { items: rest });
     const start = () => this.track(() => this.execute({ prompt: next.prompt, sessionId, onTextDelta: () => undefined,
-      ...(next.originFrom ? { originFrom: next.originFrom } : {}), ...(next.permissions ? { permissions: next.permissions } : {}) }));
+      ...(next.originFrom ? { originFrom: next.originFrom } : {}),
+      ...(next.deferredFrom ? { deferredFrom: next.deferredFrom } : {}), ...(next.permissions ? { permissions: next.permissions } : {}) }));
     const marked = () => (next.shortLivedKey ? underShortLivedKey(start, next.shortLivedKeyId ? { keyId: next.shortLivedKeyId } : {}) : start());
     // bucket 19: a message a household person queued runs as that person, held to their role.
     void (next.personProfileId ? asPerson({ profileId: next.personProfileId, keyId: "queued" }, marked) : marked())
@@ -1203,13 +1261,56 @@ export class Runtime {
    * Continues a task that was interrupted (for example by a restart) from its saved transcript.
    * Tool calls whose outcome was never recorded are marked unknown; nothing is replayed.
    */
-  async resume(runId: string): Promise<Run> {
+  /** A recovery handoff restricts continuation; it never supplies authority to execute. */
+  recoveryHandoff(runId: string, context: ToolContext, copy: CopyIdentity | null) {
+    const run = this.store.run(runId);
+    if (!run) throw new Error("The original task is unavailable.");
+    const saved = resumeAuthority(this.store, runId, this.owner, this.registry.permissions());
+    const permissions = saved.permissions.filter((permission) => !this.store.sessionTemporary(run.sessionId) || permission !== "memory.write");
+    if (permissions.length !== context.permissions.size || permissions.some((permission) => !context.permissions.has(permission))
+      || saved.agent !== context.agent || saved.depth !== context.depth || saved.delegates !== (context.delegates === true)
+      || saved.dryRun !== (context.dryRun === true) || saved.source !== (context.source ?? "owner") || (saved.ownCopy && !copy))
+      throw new Error("Normal continuation does not match the task's reconciled authority and retained copy. Automatic continuation was held.");
+    return { authority: { ...saved, permissions }, copy, workspace: context.workspace };
+  }
+
+  /** Exact recorded key ceilings only; legacy or changed Trunk scope remains held. */
+  recoveryTrunkContext(runId: string, context: ToolContext): ToolContext {
+    const saved = resumeAuthority(this.store, runId, this.owner, this.registry.permissions());
+    const ambient = currentAccountCall()?.trunk;
+    if (ambient && (!saved.trunkScope || (ambient.id !== undefined && ambient.id !== saved.trunkScope.id)
+      || JSON.stringify(ambient.keys) !== JSON.stringify(saved.trunkScope.keys)))
+      throw new Error("An existing account scope conflicts with the task's recorded recovery authority. Reconcile it before continuing.");
+    const { trunk: _ambientTrunk, trunkKeys: _ambientKeys, ...unmarked } = context;
+    if (!saved.trunkId) return unmarked;
+    const run = this.store.run(runId)!;
+    const shape = this.trunkShape({ prompt: "", sessionId: run.sessionId, source: saved.source });
+    const scope = saved.trunkScope;
+    if (!shape || !scope || shape.trunkId !== scope.id || shape.agent !== scope.agent || (shape.owners === true) !== scope.owners
+      || JSON.stringify(shape.keys) !== JSON.stringify(scope.keys))
+      throw new Error("The task's recorded Trunk identity or credential-key ceiling changed. Reconcile it before continuing.");
+    return { ...unmarked, trunkKeys: scope.keys, ...(scope.owners ? {} : { trunk: scope.id }) };
+  }
+
+  inRecoveryAccountScope<T>(context: ToolContext, work: () => Promise<T>): Promise<T> {
+    // Recovery never reuses an ambient mark, even for the same Trunk id: only
+    // the independently validated immutable credential ceiling applies.
+    const ambient = currentAccountCall()?.trunk;
+    return withAccountCall({ owner: this.owner, sessionId: this.modelAccountSession(context.runId), runId: context.runId,
+      ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: this.trunkSignIns(context.runId) && (!ambient || ambient.signIns === true),
+        ...(context.trunk ? { id: context.trunk } : {}) } } : {}) }, work);
+  }
+
+  async resume(runId: string, restriction?: ReturnType<Runtime["recoveryHandoff"]>, onAdmitted?: (run: Run) => void): Promise<Run> {
     const previous = this.store.run(runId);
     const origin = previous ? runOrigin(this.store, runId) : null;
     // bucket 19 (integration review): a person's own task, handed back to them at start, may carry on too.
     const lentTo = origin?.lentTo ?? null;
     if (!previous || !origin || (previous.owner !== this.owner && previous.owner !== lentTo)) throw new Error("Run not found");
     if (previous.status !== "interrupted") throw new Error("Only interrupted tasks can be continued");
+    if (!previous.project || !this.store.projects.list(previous.owner).some((project) => project.id === previous.project)
+      || this.store.sessionProject(previous.sessionId) !== previous.project)
+      throw new Error("The original task's project is missing or its conversation changed project. Reconcile it before continuing.");
     // A task from outside (a chat message, a trigger, a schedule, another program) carries on as it
     // started, with the same tools, never as the owner's own: execute reads that from the record
     // (carryOrigin, mac7/outside-resume), whoever pressed Continue.
@@ -1218,17 +1319,20 @@ export class Runtime {
     // A room turn or a Trunk's routine keeps its plain title (run.titled) when it carries on.
     const titled = this.store.events(runId).find((event) => event.kind === "run.titled")?.data.title;
     const again = { prompt: previous.prompt, sessionId: previous.sessionId, resumeFrom: previous.id,
+      // Creation names a child before potentially slow copy allocation. Admission
+      // is later: only a task whose placement guards passed can be called resumed.
+      ...(onAdmitted ? { onStarted: onAdmitted } : {}),
       ...(Number.isFinite(deadline) && deadline > 0 ? { timeoutMs: deadline } : {}),
       ...(typeof titled === "string" ? { title: titled } : {}) };
     const go = async () => {
-      if (!lentTo) return this.execute(again);
+      if (!lentTo) return this.execute(again, undefined, "", undefined, restriction);
       // Lent to the assistant for the resumed task, and handed back to the person after it.
       this.store.reassignSession(previous.sessionId, this.owner);
-      try { return await this.execute({ ...again, lentTo }); } finally { this.store.reassignSession(previous.sessionId, lentTo); }
+      try { return await this.execute({ ...again, lentTo }, undefined, "", undefined, restriction); } finally { this.store.reassignSession(previous.sessionId, lentTo); }
     };
     // bucket 19: a task a household person started carries on as that person, after a restart too.
     const person = origin.personProfileId;
-    return this.track(() => (person && !currentPerson() ? asPerson({ profileId: person, keyId: "resumed" }, go) : go()));
+    return this.track(() => underProject(previous.project!, () => (person && !currentPerson() ? asPerson({ profileId: person, keyId: "resumed" }, go) : go())));
   }
   /** A tool run outside a conversation; `options` says how it is gated (src/tool-gate.ts). */
   async executeTool(name: string, args: unknown, options: ToolGateOptions = {}): Promise<unknown> {
@@ -1271,6 +1375,7 @@ export class Runtime {
         status,
         // integrate/empty-completion: an operation that returns nothing still ran; `undefined` is not JSON.
         status === "completed" ? JSON.stringify(value) ?? "null" : errorText(failure),
+        "not-applicable",
       );
       if (status !== "completed") throw failure;
       if (settled.status !== "completed") throw new Error(settled.output);
@@ -1331,6 +1436,7 @@ export class Runtime {
       status,
       // mac7/empty-completion: `undefined` is not JSON, and a tool that returns nothing still ran.
       this.hideSecrets(status !== "completed" ? errorText(failure) : JSON.stringify(result) ?? "null"),
+      "not-applicable",
     );
     if (status !== "completed") throw failure;
     if (settled.status !== "completed") throw new Error(settled.output);
@@ -1678,9 +1784,27 @@ ${run.output.slice(0, 6000)}`;
     parent?: ToolContext,
     instructions = "",
     helper?: HelperConnection,
+    restriction?: ReturnType<Runtime["recoveryHandoff"]>,
   ): Promise<Run> {
+    if (options.deferredFrom) {
+      const saved = this.deferredScope(options.deferredFrom, options.sessionId);
+      options = { ...options, source: saved.source, originFrom: options.deferredFrom,
+        ...(saved.dryRun ? { dryRun: true } : {}) };
+    }
     options = this.carryOrigin(options, parent); // mac7/outside-resume
     if (!parent) options = this.replyToAsk(options); // Q050
+    const from = options.continuing?.runId ?? options.resumeFrom;
+    if (parent && from) throw new Error("A saved task continues through its original runtime lifecycle, not a new parent's context.");
+    const authority = from ? resumeAuthority(this.store, from, this.owner, this.registry.permissions()) : undefined;
+    if (authority) {
+      const previous = this.store.run(from!)!;
+      if (options.sessionId && options.sessionId !== previous.sessionId) throw new Error("A task continues only in its original conversation.");
+      if (!previous.project || this.store.sessionProject(previous.sessionId) !== previous.project
+        || !this.store.projects.list(previous.owner).some((project) => project.id === previous.project))
+        throw new Error("The original task's project is unavailable or differs from its conversation. Reconcile it before continuing.");
+      options = { ...options, sessionId: previous.sessionId, permissions: authority.permissions.filter((permission) => !options.permissions || options.permissions.includes(permission)),
+        ...(authority.dryRun ? { dryRun: true } : {}), source: authority.source };
+    }
     assertContinuitySession(this.store, this.owner,
       options.sessionId ?? this.store.run(options.resumeFrom ?? options.continuing?.runId ?? "")?.sessionId, parent?.runId, options.continuing?.runId);
     // An interrupted practice task keeps its simulation flag when resumed, even if availability was switched off.
@@ -1709,7 +1833,17 @@ ${run.output.slice(0, 6000)}`;
     }
     const budget = parent?.budget ?? new Budget(options.budget ?? knobs.taskBudget(this.store, this.owner)); // R17-S09
     // ── R17-A (Trunks): a Trunk's turn carries its own instructions, memory scope, tools and model. ──
-    const trunk = parent ? null : this.trunkShape(options);
+    let trunk = parent ? null : this.trunkShape(options);
+    if (options.deferredFrom) {
+      const saved = this.deferredScope(options.deferredFrom, options.sessionId);
+      this.checkDeferredCredentials(saved.credentials, trunk);
+      if (trunk && saved.credentials) trunk = { ...trunk, keys: saved.credentials.keys };
+    }
+    if (authority && authority.trunkId !== trunk?.trunkId)
+      throw new Error("The original task's Trunk scope is unavailable or its conversation now routes to another Trunk. Reconcile it before continuing.");
+    if (authority?.trunkScope && (!trunk || trunk.agent !== authority.trunkScope.agent || (trunk.owners === true) !== authority.trunkScope.owners
+      || JSON.stringify(trunk.keys) !== JSON.stringify(authority.trunkScope.keys)))
+      throw new Error("The original task's Trunk credential-key ceiling or owner designation changed. Reconcile it before continuing.");
     // eng-trunk-controls: a paused Trunk starts nothing new, whoever asks; said in words, above the first await.
     const paused = trunk ? this.trunkPaused(trunk.trunkId) : null;
     if (paused) throw new Error(paused);
@@ -1723,6 +1857,13 @@ ${run.output.slice(0, 6000)}`;
         ...(options.style === undefined && trunk.style ? { style: trunk.style } : {}) };
     }
     // ── end R17-A ──
+    if (options.deferredFrom) {
+      const saved = this.deferredScope(options.deferredFrom, options.sessionId);
+      const current = options.permissions ?? this.registry.permissions();
+      options = { ...options, originFrom: options.deferredFrom,
+        permissions: current.filter((permission) => saved.permissions.includes(permission)),
+        ...(saved.dryRun ? { dryRun: true } : {}) };
+    }
     // Q050: a task taken up again keeps the reach it started with, never more (the tools it was given, narrowed further
     // by anything above); Lockdown and the owner's rules are still asked at every call.
     if (options.continuing) options = { ...options, permissions: this.continuedReach(options.continuing.runId, options.permissions),
@@ -1752,11 +1893,11 @@ ${run.output.slice(0, 6000)}`;
     // dogfood-ux-2: from here on the task works in ITS conversation's project: its folder and its saved secrets, never
     // those of a project picked anywhere else while it runs (src/project-scope.ts). Entered synchronously, so every
     // refusal above still comes before the first await.
-    return underProject(run.project ?? defaultProjectId, () => this.started(run, options, parent, instructions, budget, trunk, inlet, helper));
+    return underProject(run.project ?? defaultProjectId, () => this.started(run, options, parent, instructions, budget, trunk, inlet, helper, authority, restriction));
   }
   /** The rest of `execute`, once the task exists: everything it does, inside its own project. */
   private async started(run: Run, options: RunOptions, parent: ToolContext | undefined, instructions: string, budget: Budget,
-    trunk: TrunkRunShape | null, inlet: { text: string; blocked: string | null; applied: string[] } | null, helper?: HelperConnection): Promise<Run> {
+    trunk: TrunkRunShape | null, inlet: { text: string; blocked: string | null; applied: string[] } | null, helper?: HelperConnection, authority?: ResumeAuthority, restriction?: ReturnType<Runtime["recoveryHandoff"]>): Promise<Run> {
     if (options.title?.trim()) this.store.event(run.id, "run.titled", { title: options.title.trim().split(/\r?\n/)[0]!.slice(0, 200) }); // DESIGN-DIRECTION PR 2
     if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
     // fix399: a helper of a task kept out of Recent (a learning pass, reading words) is kept out with it.
@@ -1795,7 +1936,15 @@ ${run.output.slice(0, 6000)}`;
           ...(options.unattended ? { unattended: true } : {}),
           ...(options.allowProjectTests ? { allowProjectTests: true } : {}),
           ...this.carriedHelper(options), // helper-lifecycle
+          ...(authority ? { depth: authority.depth, delegates: authority.delegates, ...(authority.agent ? { agent: authority.agent } : {}) } : {}),
         }), trunk);
+    if (authority) {
+      context.ownCopy = authority.ownCopy;
+      context.delegates = authority.delegates;
+      context.depth = authority.depth;
+      if (authority.agent) context.agent = authority.agent;
+      context.permissions = new Set([...context.permissions].filter((permission) => authority.permissions.includes(permission)));
+    }
     // QA R1: the call a yes was given for (or, carried on after a restart, the call whose question was lost) is run by the
     // engine itself, through the same gate, before the model's next turn; the model never has to make it again.
     const approved = this.approvedFor(run, options);
@@ -1842,19 +1991,30 @@ ${run.output.slice(0, 6000)}`;
     else this.store.event(run.id, "run.started", {
       provider: this.provider.name,
       parentRunId: parent?.runId ?? null,
+      ownCopy: context.ownCopy === true,
+      delegates: context.delegates === true,
+      dryRun: context.dryRun === true,
       deadlineMs, // long-work: a resumed task is given the same time again
       // Pass 17 (Helpers): which specialist or mode a helper works as, so the parent's Activity can name it.
       // Its name as it was then (agentName), so a helper whose specialist is deleted later is still named, never by its id.
-      ...(parent && context.agent ? this.helperMarks(context.agent) : {}),
+      ...(context.agent ? this.helperMarks(context.agent) : {}),
       // bucket-18 (A0300): where the task came from, kept on the task so later work can read it.
       ...this.originMarks(options, context, parent),
       // What this task was allowed to reach, so "Do this again" can hand it the very same tools.
       permissions: [...context.permissions].sort(),
+      ...(trunk ? { trunkScope: { id: trunk.trunkId, agent: trunk.agent, owners: trunk.owners === true, keys: trunk.keys } } : {}),
+      // Only an ordinary root can be reconstructed by this deferred queue. Helpers, scoped
+      // memory, borrowed copies and other execution shapes require their original placement.
+      deferredScope: { version: 5, source: context.source ?? "owner", credentials: trunk && !trunk.roomTurn
+        ? { trunkId: trunk.trunkId, agent: trunk.agent, owners: trunk.owners === true, keys: context.trunkKeys } : null, workspace: this.workspace, root: !parent && context.depth === 0 && (!context.agent || (!!trunk && context.agent === trunk.agent))
+        && (!context.trunk || context.trunk === trunk?.trunkId) && (!context.trunkKeys || !!trunk)
+        && (!trunk || !trunk.roomTurn) && !currentAccountCall()?.trunk && !context.isolated && !context.ownCopy && !options.lentTo
+        && context.workspace === this.workspace
+        && !currentPerson() && !startedWithShortLivedKey() && (!options.originFrom || !!options.deferredFrom)
+        && !options.resumeFrom && !options.continuing, dryRun: context.dryRun === true },
       // helper-lifecycle: how deep a helper works and whether it may hand work on, so carrying it on keeps both.
       ...(context.depth ? { depth: context.depth } : {}),
-      ...(context.delegates ? { delegates: true } : {}),
       // Q050 follow-up: a practice run stays one when it is taken up again after its question is answered.
-      ...(context.dryRun ? { dryRun: true } : {}),
       ...(options.channel ? { channel: options.channel.slice(0, 64) } : {}),
     });
     this.recordedSources.delete(run.id); // mac7/outside-resume: read again now that the start is written
@@ -1872,9 +2032,29 @@ ${run.output.slice(0, 6000)}`;
     let status: Run["status"] = "completed";
     let output: string;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
-    const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
+    let place: Awaited<ReturnType<CodingHooks["placeTask"]>> = null;
+    let placementReady = false;
     let pinnedHelper: HelperConnection | undefined; // MODEL-050: its account lease is given back when the run settles
     try {
+      place = this.coding ? await this.coding.placeTask(run, context, parent) : null;
+      if (context.ownCopy && !place) throw new Error("The task's required saved project copy could not be restored. It was not continued in a shared workspace.");
+      if (restriction) {
+        const expected = restriction.authority;
+        if (context.permissions.size !== expected.permissions.length || expected.permissions.some((permission) => !context.permissions.has(permission))
+          || context.agent !== expected.agent || context.depth !== expected.depth || (context.delegates === true) !== expected.delegates
+          || (context.dryRun === true) !== expected.dryRun || (context.ownCopy === true) !== expected.ownCopy || (context.source ?? "owner") !== expected.source)
+          throw new Error("The recovered task's effective authority changed before continuation. No model continuation was started.");
+        const samePath = (left: string, right: string) => process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+        if (restriction.copy) {
+          const actual = place?.identity, wanted = restriction.copy;
+          if (!actual || actual.scope !== wanted.scope || actual.branch !== wanted.branch || actual.base !== wanted.base
+            || actual.source !== wanted.source || !samePath(actual.workspace, wanted.workspace))
+            throw new Error("The recovered task's retained copy changed before continuation. No model continuation was started.");
+        } else if (place || !samePath(await realpath(context.workspace), await realpath(restriction.workspace)))
+          throw new Error("The recovered task's original workspace changed before continuation. No model continuation was started.");
+        context.signal.throwIfAborted();
+      }
+      placementReady = true;
       // owner-dm-signin: the caller writes down where the task came from here (a chat's `channel.inbound`), before a
       // pinned helper's connection is chosen, so Runtime.trunkSignIns reads the whole origin; without it, it says no.
       options.onStarted?.(run);
@@ -1901,7 +2081,10 @@ ${run.output.slice(0, 6000)}`;
         ...(options.continuing ? { continuing: true } : {}),
       }, options.style);
       };
-      output = place && this.coding ? await this.coding.inPlace(place.scope, () => work({ ...context, workspace: place.workspace })) : await work(context);
+      const workingPlace = place;
+      output = workingPlace && this.coding
+        ? await this.coding.inPlace(workingPlace.scope, () => work({ ...context, workspace: workingPlace.workspace }))
+        : await work(context);
     } catch (error) {
       status = this.failureStatus(context, error);
       // mac7/speed: a task that stops must still say something a person can act on. A model service
@@ -1925,7 +2108,7 @@ ${run.output.slice(0, 6000)}`;
     await place?.release().catch(() => undefined); // mac7/r17-d
     if (context.dryRun) this.reportDryRun(run);
     if (status === "completed" && !context.isolated && !sealed) await this.advise(run, context, output);
-    const settled = await this.settleRun(run, context, status, output);
+    const settled = await this.settleRun(run, context, status, output, placementReady ? "ready" : "failed");
     flyCoreSettled?.(settled); // mac2/fly-core (see above)
     const usage = this.store.usage(run.id);
     span.end(settled.status === "completed" ? "ok" : "error", settled.status === "completed" ? "" : settled.output, {
@@ -1948,7 +2131,7 @@ ${run.output.slice(0, 6000)}`;
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is
     // asked with no tools, charged to this task, as reviewRun's is; everything it finds waits for
     // the owner. Nothing happens unless its switches are on, and it never fails the task. ──
-    if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId)) void this.track(() => learnAfterTask(this, settled, context, async (system, question) => {
+    if (placementReady && !parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId)) void this.track(() => learnAfterTask(this, settled, context, async (system, question) => {
       const preset = this.sideJobPreset(this.owner, run.sessionId); // R17-S11
       const scoped: ToolContext = { ...context, permissions: new Set(), budget: new Budget({ maxSteps: 2, maxTokens: 24000 }), signal: AbortSignal.timeout(120000) };
       return (await this.complete(run, [{ role: "system", content: system }, { role: "user", content: question }], scoped, preset, null)).content;
@@ -2077,7 +2260,50 @@ ${run.output.slice(0, 6000)}`;
   private startedAsDryRun(runId: string): boolean {
     return this.store.events(runId).find((event) => event.kind === "run.started")?.data.dryRun === true;
   }
-  /** Q050: what a task taken up again may reach: what it was given when it started, narrowed by what is asked now. */
+  /** Deferred answers only resume a durably identified ordinary root; other shapes remain held. */
+  private deferredScope(runId: string | undefined, sessionId: string | undefined): { permissions: string[]; dryRun: boolean; source: RunSource; credentials: { trunkId: string; agent: string; owners: boolean; keys: NonNullable<ToolContext["trunkKeys"]> } | null } {
+    const run = runId ? this.store.run(runId) : null;
+    const events = runId ? this.store.events(runId) : [];
+    const started = events.find((event) => event.kind === "run.started")?.data;
+    const value = started?.deferredScope;
+    const saved = value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown> : null;
+    if (!run || run.owner !== this.owner || run.sessionId !== sessionId
+      || !saved
+      || saved.version !== 5 || saved.workspace !== this.workspace || saved.root !== true || typeof saved.dryRun !== "boolean"
+      || !Array.isArray(started?.permissions) || !started.permissions.every((permission) => typeof permission === "string")
+      || events.some((event) => event.kind === "worktree.used" || event.kind === "worktree.inherited"))
+      throw new Error("This handed-over task cannot continue safely because its saved effective scope or workspace cannot be recovered. The job remains unanswered; reconcile its original task first.");
+    let credentials: { trunkId: string; agent: string; owners: boolean; keys: NonNullable<ToolContext["trunkKeys"]> } | null = null;
+    if (saved.credentials !== null) {
+      const value = saved.credentials;
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        throw new Error("The handed-over task's saved credential scope is unavailable; the job remains unanswered.");
+      const record = value as Record<string, unknown>;
+      const keys = TrunkSchema.shape.keys.safeParse(record.keys);
+      if (typeof record.trunkId !== "string" || !record.trunkId || typeof record.agent !== "string" || !record.agent
+        || typeof record.owners !== "boolean" || record.keys === undefined || !keys.success
+        || canonicalArguments(JSON.stringify(record.keys)) !== canonicalArguments(JSON.stringify(keys.data)))
+        throw new Error("The handed-over task's saved credential identity or key restrictions are invalid; the job remains unanswered.");
+      credentials = { trunkId: record.trunkId, agent: record.agent, owners: record.owners, keys: keys.data };
+    }
+    const sources: readonly string[] = ["owner", "trigger", "schedule", "mcp", "a2a", "acp", "channel"];
+    const origin = runOrigin(this.store, run.id);
+    if (typeof saved.source !== "string" || !sources.includes(saved.source) || saved.source !== started.source
+      || saved.source !== origin.source || origin.shortLivedKey || origin.personProfileId || origin.lentTo)
+      throw new Error("The handed-over task's original source or caller scope cannot be recovered safely; the job remains unanswered.");
+    return { permissions: [...started.permissions] as string[], dryRun: saved.dryRun, source: saved.source as RunSource, credentials };
+  }
+  private checkDeferredCredentials(saved: { trunkId: string; agent: string; owners: boolean; keys: NonNullable<ToolContext["trunkKeys"]> } | null, current: TrunkRunShape | null): void {
+    // Equality deliberately holds changed scopes: neither a different identity nor newly added
+    // accounts/fallbacks/owner access may be installed by answering an existing handoff.
+    if (currentAccountCall()?.trunk || (saved === null ? current !== null
+      : !current || (current.owners === true) !== saved.owners || current.agent !== saved.agent
+        || current.roomTurn || current.trunkId !== saved.trunkId
+        || canonicalArguments(JSON.stringify(current.keys)) !== canonicalArguments(JSON.stringify(saved.keys))))
+      throw new Error("This handed-over task's original credential identity or key restrictions no longer match. Reconcile its scope before answering; no new credential authority was adopted.");
+  }
+  /** Q050: what a task taken up again may reach, narrowed by what is asked now. */
   private continuedReach(runId: string, now: string[] | undefined): string[] {
     const started = runOrigin(this.store, runId).permissions;
     const allowed = now ?? this.registry.permissions();
@@ -2210,6 +2436,7 @@ ${run.output.slice(0, 6000)}`;
     context: ToolContext,
     status: Run["status"],
     output: string,
+    placement: "ready" | "failed" | "not-applicable" = "not-applicable",
   ): Promise<Run> {
     // mac7/empty-completion: a task that claims to have finished with nothing to show for it is a
     // failure with a plain sentence, not a success. This is the only place the runtime finishes a
@@ -2272,7 +2499,11 @@ ${run.output.slice(0, 6000)}`;
       if ((context.scratchRoot ?? run.id) === run.id) this.orchestration.clearScratch(run.id);
       // A plan that was being carried out by a task that stopped early is not resumed by the next
       // message; one still waiting for the owner's yes stays, because that task stopped to ask.
-      if (status !== "completed") this.orchestration.dropAbandonedPlan(run.sessionId, status);
+      if (status === "failed" && placement === "failed" && this.orchestration.plan(run.sessionId)?.approved) {
+        // A copy refusal precedes model/tool work. Preserve the approved plan for reconciliation.
+        this.orchestration.pausePlan(run.sessionId);
+        this.store.event(run.id, "plan.placement_blocked", { preserved: true, waitingOnOwner: true });
+      } else if (status !== "completed") this.orchestration.dropAbandonedPlan(run.sessionId, status);
     }
     const settled = this.finish(run, status, output);
     this.saveTrace(run.id);
@@ -4448,6 +4679,7 @@ ${run.output.slice(0, 6000)}`;
    */
   private carryOrigin(options: RunOptions, parent?: ToolContext): RunOptions {
     if (parent || (options.source && options.source !== "owner")) return options;
+    if (options.deferredFrom) return { ...options, originFrom: options.deferredFrom };
     const { originFrom: asked, ...rest } = options;
     const carried = (id: string | null | undefined) => (id && outsideSourceOf(this.store, id) ? id : undefined);
     const from = carried(options.resumeFrom) ?? carried(asked) ?? carried(conversationCarrier(this.store, options.sessionId));
@@ -4573,7 +4805,7 @@ ${run.output.slice(0, 6000)}`;
     // before its own config.yaml or .env is edited, so the model cannot switch off the one question Full access keeps.
     const fullAccess = this.ownerFullMode(context);
     const loosening = fullAccess ? settingsHold(tool, args) : null;
-    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args, { store: this.store, context, rule }) ?? contractHold(tool, args)
+    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? ownMessageHold(tool) ?? handOffHold(tool) ?? (settingsHold(tool, args, { store: this.store, context, rule }) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;
@@ -5282,10 +5514,12 @@ ${run.output.slice(0, 6000)}`;
     const deferred = deferredCall(result);
     if (!deferred) return null;
     const entry = this.deferrals.open({ id: deferred.id, runId: context.runId, sessionId: this.sessionOf(context),
-      tool: call.name, description: deferred.description });
-    this.store.event(context.runId, "tool.deferred", { name: call.name, id: call.id, deferredId: entry.id, description: entry.description });
-    return { deferred: true, id: entry.id,
-      note: "This is not finished yet and you are not to wait for it. Carry on with whatever else you can do, and finish your answer. When it is done, what came of it arrives as a new message in this conversation." };
+      tool: call.name, description: deferred.description, ...(deferred.kind ? { kind: deferred.kind } : {}) });
+    this.store.event(context.runId, "tool.deferred", { name: call.name, id: call.id, deferredId: entry.id, description: entry.description, kind: entry.kind });
+    return { deferred: true, id: entry.id, kind: entry.kind,
+      note: entry.kind === "later"
+        ? "This work is set aside and still unfinished. Do not do the remaining work now. Finish your answer with what is pending. The person's Finish now button queues a continuation in this conversation."
+        : "This is not finished yet and you are not to wait for it. Carry on with whatever else you can do, and finish your answer. When it is done, what came of it arrives as a new message in this conversation." };
   }
   /**
    * Some servers answer with a small page meant to be looked at rather than read out. It is kept

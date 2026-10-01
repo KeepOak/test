@@ -8,9 +8,9 @@
    POST /api/runs/<id>/resume or left with POST /api/runs/<id>/cancel. At the bottom of "Needs you": each request to change
    Branch itself (GET /api/self-development/requests), waiting or prepared; its review shows the request and the engine's
    bounded diff of it (GET /api/self-development/requests/<id>/diff). Decline closes a waiting one for good (POST
-   /api/self-development/requests/<id>/decline, the owner's alone in the app). Security tier: "Approve the edits" and
-   "Publish the draft" stay greyed. A yes is the owner writing the contract terms Branch's own source is prepared under,
-   and the window has no place to write them; publishing has no route of its own.
+   /api/self-development/requests/<id>/decline, the owner's alone in the app). The owner writes explicit preparation terms
+   in the review, then separately reviews the committed source and consents
+   to a draft publication through the durable publication queue.
    "Allow all N…" (more than one waiting) answers exactly the questions and Trunk messages its confirm lists, each once,
    through the same routes as their own Allow: POST /api/policy/approve { remember: "never" } by session and fingerprint,
    and POST /api/trunks/messages/<id>/answer. It never keeps a standing yes, and it leaves out install requests, whose
@@ -42,6 +42,7 @@ import { workSection, readWork, pausedIds } from "./inboxwork.js"; // long-work:
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 import { readSourceMerges, sourceMergeCards } from "./self-development-merge.js";
 import { readSourcePublications, sourcePublicationCards } from "./self-development-publication.js";
+import { openSourceReview, initSourceReview } from "./self-change-review.js";
 import { readUrgency, byUrgency } from "./inbox-urgency.js"; // Sort the Inbox by urgency (decision models)
 import { autonomyRows, autonomyCount, readAutonomy, initAutonomyInbox } from "./inbox-autonomy.js";
 
@@ -85,7 +86,7 @@ function cutCard(a) {
 const cutCards = () => (E.state.attention ?? []).filter((a) => a.canContinue && !a.parentRunId && !pausedIds().has(a.runId)).map(cutCard).join(""); // not a helper (FEATURES17C §4); a paused one is under long work
 
 function selfCard(r) {
-  const stage = r.status === "approved" ? t("window.places.inbox.edits-approved-ready-to-publish") : t("flowsBoards.installs.waiting");
+  const stage = r.status === "approved" ? t("window.sourceReview.worktreePrepared") : t("flowsBoards.installs.waiting");
   return `<div class="self15"><span class="ico-tile">${ic("branch", "s")}</span><span class="grow"><b>${t("window.places.inbox.branch-wants-to-improve-itself")}</b><small>${esc(firstLine(r.text))} · ${stage}</small></span><button class="btn sm" type="button" data-act="selfrev15" data-id="${esc(r.id)}">${t("window.places.inbox.review")}</button></div>`;
 }
 /* Waiting for the owner's yes, or prepared and so showing its edits before a draft is published. */
@@ -427,20 +428,12 @@ function diffBlocks(d) {
   return `${[d.note, d.warning].filter(Boolean).map((s) => `<p class="hint">${esc(s)}</p>`).join("")}${files}${added}`;
 }
 
-/* The request as it was sent, who sent it and from which app, and its diff before any yes. Decline (selfno15) is live
-   while it waits; the yes needs the owner's contract terms and publishing has no route, so selfdo15 stays greyed. */
+/* Preparing requires the owner's explicit contract; publication reviews the exact committed source. */
 async function reviewChange(id) {
   const r = changeRequests.find((x) => x.id === id);
   if (!r) return;
-  let diff;
-  try { diff = await api(`self-development/requests/${encodeURIComponent(r.id)}/diff`); } catch (error) { toast(error.message); return; }
-  const editing = r.status === "approved";
-  const stages = [[t("window.places.inbox.approve-the-edits"), editing], [t("window.places.inbox.publish-a-draft-pull-request"), false]].map(([t, d], i) => `<li class="${d ? "done" : (i === 0 && !editing) || (i === 1 && editing) ? "now" : ""}"><em>${d ? ic("check", "s") : i + 1}</em>${t}</li>`).join("");
-  const foot = editing ? `<button class="btn pri" type="button" data-act="selfdo15" data-v="published" data-id="${esc(r.id)}">${t("window.places.inbox.publish-the-draft")}</button>`
-    : `<button class="btn ghost" type="button" data-act="selfno15" data-id="${esc(r.id)}">${t("flowsBoards.installs.decline")}</button><button class="btn pri" type="button" data-act="selfdo15" data-v="editing" data-id="${esc(r.id)}">${t("window.places.inbox.approve-the-edits")}</button>`;
-  openDlg({ title: t("window.places.inbox.a-change-to-branchs-own-code"), wide: true,
-    body: `<p data-css="margin:0 0 10px">${esc(r.text)}</p><p class="hint">${esc([r.from?.senderName, r.from?.channel, when(r.at)].filter(Boolean).join(" · "))}</p>${r.problem ? `<p class="hint">${esc(r.problem)}</p>` : ""}${diffBlocks(diff)}<ol class="stages15">${stages}</ol>`,
-    foot });
+  const details = `<p class="hint">${esc([r.from?.senderName, r.from?.channel, when(r.at)].filter(Boolean).join(" · "))}</p>${r.problem ? `<p class="hint">${esc(r.problem)}</p>` : ""}`;
+  await openSourceReview(r, diffBlocks, details);
 }
 
 /* Decline: the engine closes the request, and it can never be approved afterwards. */
@@ -538,6 +531,17 @@ export function init() {
   });
   on("allowall", () => openAllowAll());
   on("allowall-go", () => allowAll());
+  /* After a review is answered its dialog is closed, then the requests are read again. What comes back is kept and drawn
+     only for the owner who answered, unlocked and still on this page; a read that fails after that says nothing. */
+  initSourceReview(async (published) => {
+    const profile = activeId(), view = S.view;
+    const still = () => ownerHere() && activeId() === profile && S.view === view && !document.getElementById("app")?.classList.contains("locked-b17");
+    const read = await api("self-development/requests").catch((error) => (still() ? sayOnce(error) : {}));
+    if (!still()) return;
+    changeRequests = read.requests ?? [];
+    if (published) await readSourcePublications(still);
+    if (still()) renderNow();
+  });
   on("selfrev15", (el) => reviewChange(el.dataset.id));
   on("selfno15", (el) => declineChange(el));
 }
