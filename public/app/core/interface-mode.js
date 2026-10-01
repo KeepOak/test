@@ -1,6 +1,6 @@
 /* Display-policy/session-reveal approach reviewed in Hermes interface-mode.ts
    (Nous Research, MIT, a9a54245b2311c705d29050b7f9868c015917aec). Original Branch resolver. */
-const SIMPLE = { level: "regular", pane: null, home19: false };
+const SIMPLE = { level: "regular", pane: null, panes19: null, home19: false };
 const reveals = new Map();
 let current = null, unmasked = 0;
 function sync(mode, scope) {

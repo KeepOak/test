@@ -15,7 +15,7 @@
    carries on in its pane. So several Trunks can be watched, and let go on, side by side. */
 
 import { $, $$, esc, render, renderNow, applyCss, onRender, afterDraw } from "../core/dom.js";
-import { S, E, save, refresh, ownName, chatFace, trunkIntro } from "../core/state.js";
+import { S, E, save, refresh, ownName, chatFace, trunkIntro, displayPreference, revealDisplay } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, openPop, closePop, toast } from "../core/ui.js";
@@ -24,7 +24,6 @@ import { text, plain } from "./markdown.js";
 import { mediaRows } from "./media.js";
 import { openConversation, conversationWho } from "./chat.js";
 import { liveFollower } from "./livesteps.js";
-import { simplePart } from "../shell/simple.js";
 import { t } from "../../i18n.js";
 import { waitRoom, holdWait, LONG_WAITS } from "../core/inflight.js"; // each send waits until its task ends
 
@@ -38,13 +37,14 @@ const sid = (s) => s.sessionId ?? s.id;
 
 /* ---------- the layout, as kept (S.panes19) ---------- */
 function layout() {
-  const kept = S.panes19 && typeof S.panes19 === "object" ? S.panes19 : {};
+  const preference = S.panes19 && typeof S.panes19 === "object" ? S.panes19 : {};
+  const kept = displayPreference("panes19", preference) ?? { ...preference, ids: [MAIN], active: MAIN };
   const ids = [...new Set((Array.isArray(kept.ids) ? kept.ids : []).filter((id) => typeof id === "string" && id))];
   if (!ids.includes(MAIN)) ids.unshift(MAIN);
-  const w = kept.w && typeof kept.w === "object" ? kept.w : {};
+  const w = kept.w && typeof kept.w === "object" ? { ...kept.w } : {};
   return { ids, active: typeof kept.active === "string" ? kept.active : MAIN, w, main: typeof kept.main === "string" ? kept.main : null };
 }
-function keep(next) { S.panes19 = next; save(); }
+function keep(next) { if (!revealDisplay("panes19", next)) S.panes19 = next; save(); }
 /** The panes drawn now: the main one and every other conversation but the one already open in it. */
 function shown() { return layout().ids.filter((id) => id === MAIN || id !== S.chat); }
 export const panesOn = () => shown().length > 1;
@@ -335,13 +335,12 @@ function followMain() {
   const L = layout();
   if (!restored) {
     restored = true;
-    if (!S.chat && L.main && L.ids.length > 1 && E.sessions.some((s) => sid(s) === L.main)) { openConversation(L.main); return; }
+    const kept = S.panes19;
+    if (!S.chat && kept?.main && Array.isArray(kept.ids) && kept.ids.length > 1
+      && E.sessions.some((s) => sid(s) === kept.main)) { openConversation(kept.main); return; }
   }
   if (panesOn() && S.chat && L.main !== S.chat) keep({ ...L, main: S.chat });
 }
-
-/* RES-704: Simple leaves the main conversation alone; Advanced brings the panes back as they were. */
-simplePart({ name: "panes19", take: () => S.panes19 ?? null, hide: () => { const L = layout(); if (L.ids.length > 1) S.panes19 = { ...L, ids: [MAIN], active: MAIN }; }, give: (value) => { S.panes19 = value; } });
 
 /* ---------- listening ---------- */
 let dwell = null;

@@ -59,6 +59,8 @@ function migrateSimple(saved) {
     if (S.home19?.open === false && typeof kept.home19 === "boolean") S.home19 = { ...S.home19, open: kept.home19 };
     if (typeof kept.pane === "string" || kept.pane === null) panePreference = kept.pane;
     if (typeof kept.setPage === "string") S.setPage = kept.setPage;
+    if (kept.panes19 && typeof kept.panes19 === "object" && !Array.isArray(kept.panes19)
+      && (!Array.isArray(S.panes19?.ids) || S.panes19.ids.length <= 1)) S.panes19 = kept.panes19;
   }
   return true; // Saving drops the legacy snapshot even when Simple is already off.
 }

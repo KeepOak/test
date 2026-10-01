@@ -192,3 +192,89 @@ test("Ctrl+Enter while another pane is active writes to that pane, not to a new 
   assert.ok(await page.locator(".empty-chat").isVisible(), "the main conversation is still the new one");
   assert.deepEqual(errors, []);
 });
+
+test("Simple pane choices preserve the saved layout, including widths, and a reload restores its main conversation", async (t) => {
+  const { page, errors, ids } = await fixture(t);
+  await threePanes(page, ids);
+  const before = await saved(page), simple = page.locator('[data-act="simple19"]');
+  await simple.click();
+  await page.locator("#app.simple19").waitFor();
+  assert.equal(await page.locator(".pn19").count(), 0);
+  assert.deepEqual(await saved(page), before, "hiding panes leaves the saved layout intact");
+
+  await page.locator(`#side [data-act="chat"][data-id="${ids.pears}"]`).click({ button: "right" });
+  await page.locator(`.pop [data-act="pane-add"][data-id="${ids.pears}"]`).click();
+  await pane(page, ids.pears).getByText("Here is what I know about pears.").waitFor();
+  const handle = page.locator(".pz19").first(), box = await handle.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 100, box.y + box.height / 2, { steps: 4 });
+  await page.mouse.up();
+  assert.deepEqual(await saved(page), before, "a temporary open and resize do not change workspace preferences");
+
+  await simple.click();
+  await pane(page, ids.apples).getByText("Here is what I know about apples.").waitFor();
+  assert.deepEqual(await order(page), before.ids);
+  assert.equal(await page.locator(`.pn19.on19[data-pane="${before.active}"]`).count(), 1);
+  assert.deepEqual(await saved(page), before);
+  await simple.click();
+  await page.reload();
+  await page.locator("#app.simple19").waitFor();
+  await page.locator("#conversation").getByText("Here is what I know about plums.").waitFor();
+  assert.equal(await page.locator(".pn19").count(), 0, "reload keeps the extra panes masked");
+  assert.deepEqual(await saved(page), before);
+  await simple.click();
+  await pane(page, ids.apples).getByText("Here is what I know about apples.").waitFor();
+  assert.deepEqual(await order(page), before.ids);
+  assert.deepEqual(errors, []);
+});
+
+test("legacy Simple snapshots recover the saved pane layout once without persisting a snapshot", async (t) => {
+  const { page, errors, ids } = await fixture(t);
+  await threePanes(page, ids);
+  const before = await saved(page);
+  await page.evaluate((layout) => {
+    const kept = JSON.parse(localStorage.getItem("branch-window"));
+    localStorage.setItem("branch-window", JSON.stringify({ ...kept, simple: true, level: "regular",
+      panes19: { ...layout, ids: ["@main"], active: "@main" }, simpleFrom: { level: "technical", panes19: layout } }));
+  }, before);
+  await page.reload();
+  await page.locator("#app.simple19").waitFor();
+  await page.locator("#conversation").getByText("Here is what I know about plums.").waitFor();
+  assert.equal(await page.locator(".pn19").count(), 0);
+  assert.deepEqual(await saved(page), before, "the legacy hidden layout becomes the normal preference");
+  assert.equal(await page.evaluate(() => "simpleFrom" in JSON.parse(localStorage.getItem("branch-window"))), false);
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("branch-window")).level), "technical");
+  await page.locator('[data-act="simple19"]').click();
+  await pane(page, ids.apples).getByText("Here is what I know about apples.").waitFor();
+  assert.deepEqual(await order(page), before.ids);
+  assert.deepEqual(errors, []);
+});
+
+test("an answer arriving for a pending beside-conversation read cannot unfold Simple", async (t) => {
+  const { page, errors, ids } = await fixture(t);
+  await page.locator(`#side [data-act="chat"][data-id="${ids.plums}"]`).click();
+  await page.locator("#conversation").getByText("Here is what I know about plums.").waitFor();
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  await page.route(`**/api/sessions/${ids.apples}`, async (route) => { await held; await route.continue(); });
+  try {
+    const asked = page.waitForRequest((request) => request.url().endsWith(`/api/sessions/${ids.apples}`));
+    await page.locator(`#side [data-act="chat"][data-id="${ids.apples}"]`).click({ button: "right" });
+    await page.locator(`.pop [data-act="pane-add"][data-id="${ids.apples}"]`).click();
+    await asked;
+    const before = await saved(page), simple = page.locator('[data-act="simple19"]');
+    await simple.click();
+    await page.locator("#app.simple19").waitFor();
+    const answered = page.waitForResponse((response) => response.url().endsWith(`/api/sessions/${ids.apples}`));
+    release();
+    await (await answered).finished();
+    assert.equal(await page.locator(".pn19").count(), 0, "the delayed answer leaves panes folded");
+    assert.deepEqual(await saved(page), before);
+    await page.locator("#conversation").getByText("Here is what I know about plums.").waitFor();
+    await simple.click();
+    await pane(page, ids.apples).getByText("Here is what I know about apples.").waitFor();
+    assert.deepEqual(await order(page), before.ids);
+    assert.deepEqual(errors, []);
+  } finally { release(); }
+});
