@@ -436,20 +436,23 @@ test("goal mode uses the declared completion checks as part of the judge", async
 });
 
 /** A runtime whose rounds finish only when the test says so. */
-function heldRuntime(owner = "local") {
+function heldRuntime(store, owner = "local") {
   const rounds = [];
   const cancelled = [];
   return {
     rounds, cancelled, owner, workspace: tmpdir(),
     async run(options) {
-      const run = { id: `run-${rounds.length + 1}`, sessionId: options.sessionId ?? "00000000-0000-4000-8000-000000000001", owner, prompt: options.prompt, status: "completed", output: "step", createdAt: "", updatedAt: "" };
+      // These are synthetic held rounds, but their saved identities are real: goal recovery validates the previous
+      // owner, conversation and project before it starts another round.
+      const run = store.createRun(owner, options.prompt, options.sessionId);
       let finish;
       const done = new Promise((resolve) => { finish = resolve; });
-      rounds.push({ options, finish });
+      rounds.push({ options, finish, run });
       options.onStarted?.(run);
       options.signal?.addEventListener("abort", () => finish("cancelled"));
       const status = await done;
-      return { ...run, status: status ?? "completed" };
+      store.finish(run.id, status ?? "completed", "step");
+      return store.run(run.id);
     },
     cancel(id) { cancelled.push(id); return true; },
     context() { return {}; },
@@ -466,11 +469,16 @@ async function fakeStore(t) {
 const tick = () => new Promise((done) => setTimeout(done, 5));
 
 test("pause lets the working round finish and waits; resume carries on; stop cancels the round", async (t) => {
-  const runtime = heldRuntime();
+  const store = await fakeStore(t);
+  const runtime = heldRuntime(store);
   let now = 1_000;
-  const goals = new GoalMode(runtime, await fakeStore(t), () => now);
+  const goals = new GoalMode(runtime, store, () => now);
   const started = await goals.start({ objective: "Hold", maxRounds: 5 });
   const id = started.sessionId;
+  assert.equal(store.run(started.lastRunId).owner, runtime.owner);
+  assert.equal(store.run(started.lastRunId).sessionId, id);
+  assert.equal(store.sessionProject(id), runtime.rounds[0].run.project);
+  assert.ok(store.projects.list(runtime.owner).some((project) => project.id === runtime.rounds[0].run.project));
   now += 4_000;
   assert.equal(goals.pause(id).status, "paused");
   now += 60_000; // time paused does not count
@@ -486,11 +494,13 @@ test("pause lets the working round finish and waits; resume carries on; stop can
   await tick();
   assert.equal(runtime.rounds.length, 2);
   assert.match(runtime.rounds[1].options.prompt, /Round 2 of 5/);
+  assert.equal(runtime.rounds[1].run.project, runtime.rounds[0].run.project);
+  assert.equal(runtime.rounds[1].run.sessionId, id);
   now += 1_000;
   const stopped = goals.stop(id);
   assert.equal(stopped.status, "stopped");
   assert.equal(stopped.elapsedMs, 5_000);
-  assert.deepEqual(runtime.cancelled, ["run-2"]);
+  assert.deepEqual(runtime.cancelled, [runtime.rounds[1].run.id]);
   await tick();
   assert.equal(runtime.rounds.length, 2);
   assert.equal(goals.status(id).status, "stopped");
@@ -499,10 +509,15 @@ test("pause lets the working round finish and waits; resume carries on; stop can
 
 test("a goal Branch was closed on shows as paused and can be resumed", async (t) => {
   const store = await fakeStore(t);
-  const id = "00000000-0000-4000-8000-000000000002";
+  const previous = store.createRun("local", "Left over");
+  store.finish(previous.id, "interrupted", "Branch closed during this round");
+  const id = previous.sessionId;
   store.save("settings", "local", `goal:${id}`, { sessionId: id, objective: "Left over", status: "working", round: 2, maxRounds: 2,
-    score: 0.5, best: 0.5, flatRounds: 0, missing: [], reason: "", checks: null, startedAt: "", elapsedMs: 10, activeSince: 5, lastRunId: "run-x" });
-  const runtime = heldRuntime();
+    score: 0.5, best: 0.5, flatRounds: 0, missing: [], reason: "", checks: null, startedAt: "", elapsedMs: 10, activeSince: 5, lastRunId: previous.id });
+  assert.equal(store.run(previous.id).owner, "local");
+  assert.equal(store.sessionProject(id), previous.project);
+  assert.ok(store.projects.list("local").some((project) => project.id === previous.project));
+  const runtime = heldRuntime(store);
   const goals = new GoalMode(runtime, store, () => 100);
   const seen = goals.status(id);
   assert.equal(seen.status, "paused");
@@ -511,6 +526,7 @@ test("a goal Branch was closed on shows as paused and can be resumed", async (t)
   await tick();
   assert.equal(runtime.rounds.length, 1);
   assert.equal(runtime.rounds[0].options.sessionId, id);
+  assert.equal(runtime.rounds[0].run.project, previous.project);
 });
 
 test("the goal and rewind routes answer only for the owner's conversations", noGit, async (t) => {
