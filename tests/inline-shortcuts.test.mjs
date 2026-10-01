@@ -199,3 +199,21 @@ test("a queued answer keeps the authority it was queued under when the same mess
   await f.app.channels.flush();
   assert.deepEqual(f.sent, [], "a repeat of the message does not re-authorize the answer already queued");
 });
+
+test("an idle App lock nobody noticed, then the owner unlocking, refuses the queued answer", async (t) => {
+  const f = await fixture(t);
+  const lock = f.app.sessionLock;
+  let clock = Date.now();
+  lock.now = () => clock;
+  lock.configure({ idleMinutes: 1 });
+  const send = f.adapter.send;
+  f.adapter.send = async () => { f.adapter.send = send; throw new Error("offline for a moment"); };
+  await f.app.channels.handle(f.message("/status", { authoredCommandText: authored("/status") }));
+  assert.deepEqual(f.sent, []);
+  // The quiet minute runs out with nothing looking, and the owner's unlock is the first thing to notice it.
+  clock += 2 * 60_000;
+  lock.unlock();
+  for (const row of f.app.channels.deliveries.outstanding()) f.app.channels.deliveries.retry(row.id);
+  await f.app.channels.flush();
+  assert.deepEqual(f.sent, [], "a lock that lapsed and was unlocked in between still refuses the answer");
+});
