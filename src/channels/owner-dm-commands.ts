@@ -32,7 +32,12 @@ export const ownerDmCommandNames: readonly string[] = [
 /** One of the owner's own accounts, named exactly, on an app that vouches for its senders, in a direct chat, live. */
 export function ownerDmHere(store: Pick<Store, "get">, owner: string, kind: string,
   message: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): boolean {
-  if (message.chatKind !== "direct" || message.caughtUp || !vouchedSenderKinds.includes(kind)) return false;
+  return message.chatKind === "direct" && ownerVouchedHere(store, owner, kind, message);
+}
+/** Narrow group activation exception only; this does not authorize general owner-DM commands. */
+export function ownerVouchedHere(store: Pick<Store, "get">, owner: string, kind: string,
+  message: Pick<InboundMessage, "channel" | "senderId" | "caughtUp">): boolean {
+  if (message.caughtUp || !vouchedSenderKinds.includes(kind)) return false;
   const named = (account: { channel: string; sender: string }) => account.channel === message.channel && account.sender === message.senderId;
   return platformSettings(store, owner).owners.some(named) || ownerCommands(store, owner).accounts.some(named);
 }

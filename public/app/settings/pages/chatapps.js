@@ -13,6 +13,7 @@
    keeps its English title (its id is made from it) and shows through say(); the engine's reason is shown as it wrote it. */
 
 import { esc, render } from "../../core/dom.js";
+import { groupResponseCard, initGroupResponses } from "../group-responses.js";
 import { level, S, E, ownerHere, activeId } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { toast, openDlg } from "../../core/ui.js";
@@ -84,7 +85,7 @@ export function draw() {
   if (lv >= 1) html += advanced(on);
   if (lv >= 2) html += `<div class="sec x15-sec"><h2>${esc(t("window.p17d.chat-apps-technical"))}</h2><div class="ctl"><b>${esc(t("window.p17d.stalled-after"))}</b><span class="right num15"><input class="inp" id="ca-stall17d" value="${esc(A.intake?.stalledAfterSeconds ?? "")}" aria-label="${esc(t("window.p17d.stalled-after"))}"><small>${esc(t("window.p17d.seconds"))}</small></span><small>${esc(t("window.p17d.stalled-hint"))}</small></div></div>`;
   if (lv >= 2) html += `<div class="ctl"><b>${esc(t("window.p17d.watchdog-log"))}</b><button type="button" class="btn sm" data-act="ca-watchdog-log">${esc(t("ov.open"))}</button><small>${esc(t("window.p17d.watchdog-log-hint"))}</small></div>`;
-  return html;
+  return html + groupResponseCard();
 }
 async function showWatchdogLog() {
   if (E.profiles?.isOwner === false) return;
@@ -182,6 +183,7 @@ async function saveSteps(on) {
 }
 
 export function init() {
+  initGroupResponses();
   on("ca-watchdog-log", showWatchdogLog);
   initFormatting();
   initReplyStyle();
