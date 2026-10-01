@@ -1546,6 +1546,22 @@ async function api(
   }
   if (request.method === "POST" && path === "/api/models")
     return app.runtime.models.configure(app.runtime.owner, await readBody(request));
+  if (request.method === "POST" && path === "/api/models/account-hello") {
+    const guard = () => {
+      app.store.profiles.requireOwner("Setup account greeting");
+      if (currentPerson() || startedWithShortLivedKey() || app.sessionLock.state().locked || lockdownActive(app.store, app.runtime.owner))
+        throw new HttpError(403, "Use setup in the owner's unlocked window.");
+    };
+    guard();
+    const input = z.object({ pool: z.string().min(1).max(100), account: z.string().min(1).max(100) }).strict().parse(await readBody(request));
+    const accounts = accountsServiceFor(app.runtime.models);
+    if (!accounts) throw new HttpError(503, "Account setup is unavailable in this launch.");
+    const preset = app.runtime.models.presets.get(input.pool);
+    if (input.account === "primary" && preset && !accounts.poolFor(preset)) {
+      const result = await testModel(app, { preset: preset.id }); guard(); return result;
+    }
+    return accounts.hello(input.pool, input.account, guard);
+  }
   if (request.method === "POST" && path === "/api/models/test") return testModel(app, await readBody(request));
   if (request.method === "GET" && path === "/api/providers/catalog") return providersCatalog();
   if (request.method === "POST" && path === "/api/providers/test") return testProvider(await readBody(request), app.web.policy);

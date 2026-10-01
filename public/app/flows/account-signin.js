@@ -17,7 +17,8 @@
 
 import { esc } from "../core/dom.js";
 import { ic, toast, dialog, closeDlg } from "../core/ui.js";
-import { S, refresh } from "../core/state.js";
+import { S, E, refresh } from "../core/state.js";
+import { sessionAuthority } from "../core/session-pages.js";
 import { api } from "../core/api.js";
 import { logo } from "../core/logos.js";
 import { t } from "../../i18n.js";
@@ -126,62 +127,95 @@ export function planFoot() {
 let ticket = 0;
 /* What is still waiting in the engine for this sign-in ([route, body]), stopped by Back or by closing the dialog. */
 let waiting = null;
+let pollDeadline = null;
 /* Asks again every few seconds while this very sign-in is on screen; closing the dialog or going back stops it. */
 function poll(step) {
   const mine = ++ticket;
+  const code = W.code;
+  const parsed = code?.expiresAt ? Date.parse(code.expiresAt) : code?.expiresInMs > 0 ? Date.now() + code.expiresInMs : null;
+  pollDeadline = Number.isFinite(parsed) ? parsed : null;
   const tick = async () => {
     if (mine !== ticket) return;
     if (!dialog() || !W.plan) { stopPolling(); return; }
-    try { if (await step()) return; } catch (error) { W.error = error.message; W.code = null; waiting = null; draw(); return; }
-    setTimeout(tick, 3000);
+    if (pollDeadline !== null && Date.now() >= pollDeadline) {
+      stopPolling(); W.error = "This sign-in expired. Start it again."; W.code = null; draw(); return;
+    }
+    try { if (await step(() => mine === ticket && !!dialog() && !!W.plan)) return; } catch (error) { if (mine !== ticket) return; W.error = error.message; W.code = null; waiting = null; draw(); return; }
+    if (mine === ticket) setTimeout(tick, pollDeadline === null ? 3000 : Math.max(1, Math.min(3000, pollDeadline - Date.now())));
   };
-  setTimeout(tick, 3000);
+  setTimeout(tick, pollDeadline === null ? 3000 : Math.max(1, Math.min(3000, pollDeadline - Date.now())));
 }
-export const stopPolling = () => {
+/* One sign-in flow lasts from its first action until Back, a new pick, the dialog opening again or closing. Its owner
+   authority is captured at that first action and is sticky: a lock or profile change since, even one undone, ends it. */
+let flow = 0, held = null;
+function flowOwner() {
+  if (held?.flow === flow) return held;
+  held?.authority.close();
+  const mine = flow, authority = sessionAuthority(E.profiles, document.getElementById("app"));
+  held = { flow: mine, authority, current: () => mine === flow && !!dialog() && authority.current(E.profiles) };
+  return held;
+}
+const halt = () => {
   ticket++;
+  pollDeadline = null;
   const was = waiting;
   waiting = null;
   if (was) api(was[0], was[1]).catch((error) => toast(error.message));
 };
-const settled = () => { waiting = null; stopPolling(); };
+export const stopPolling = () => { flow++; held?.authority.close(); held = null; halt(); };
+const settled = () => { waiting = null; halt(); };
 
-async function connected(pool, name) {
+async function connected(pool, name, owner) {
+  /* Back, a new sign-in, a closed dialog, a lock or another profile since the flow began: not this one's to finish. */
+  if (!owner.current()) return;
+  if (pollDeadline !== null && Date.now() >= pollDeadline) throw new Error("This sign-in expired. Start it again.");
   settled();
   await loadAccounts();
+  if (!owner.current()) return;
   Object.assign(W, { plan: null, code: null, check: null, line: null, pool, first: name, step: 3, error: "" });
   await refresh();
+  if (!owner.current()) return;
   draw();
+  document.dispatchEvent(new CustomEvent("model-account-connected", { detail: { pool, account: "primary" } }));
 }
 
 /* The first ChatGPT sign-in: the engine asks OpenAI for the code; the tokens stay in the engine. */
 async function startChatGPT() {
+  const owner = flowOwner();
   try {
     const got = await api("chatgpt/login", {});
-    if (got.signedIn) { await connected("chatgpt", "ChatGPT"); return; }
+    if (!owner.current()) return;
+    if (got.signedIn) { await connected("chatgpt", "ChatGPT", owner); return; }
     W.code = got;
     W.error = "";
     waiting = ["chatgpt/cancel", {}];
-    poll(async () => {
+    poll(async active => {
       const status = await api("chatgpt/status");
-      if (status.signedIn) { await connected("chatgpt", "ChatGPT"); return true; }
+      if (!active() || !owner.current()) return true;
+      if (status.signedIn) { await connected("chatgpt", "ChatGPT", owner); return true; }
       if (!status.pending && status.lastError) { waiting = null; W.error = status.lastError; W.code = null; draw(); return true; }
       return false;
     });
-  } catch (error) { W.error = error.message; }
+  } catch (error) { if (!owner.current()) return; W.error = error.message; }
   draw();
 }
 
 /* An extra ChatGPT account, just added by accounts/add: it signs in by the same code, into its own locker place. */
 export async function signInExtraChatGPT(account, label) {
+  const owner = flowOwner();
   const prompt = await api("accounts/chatgpt/login", { account });
+  if (!owner.current()) return;
   Object.assign(W, { plan: { kind: "chatgpt", account }, code: prompt, step: 2, error: "" });
   waiting = ["accounts/chatgpt/cancel", { account }];
-  poll(async () => {
+  poll(async active => {
     const pool = (await loadAccounts())?.pools?.find((p) => p.pool === "chatgpt");
+    if (!active() || !owner.current()) return true;
     /* Signed in as an account already in the list: the engine merged it into that one, which is the account now connected. */
     const into = pool?.mergedInto?.[account];
     if (pool?.signedIn?.[account] || into) {
+      if (pollDeadline !== null && Date.now() >= pollDeadline) throw new Error("This sign-in expired. Start it again.");
       settled(); closeDlg(); S.addAcct = null;
+      document.dispatchEvent(new CustomEvent("model-account-connected", { detail: { pool: "chatgpt", account: into ?? account } }));
       toast(t("window.flows.acct.connected", { name: into ? pool.accounts?.find((a) => a.id === into)?.label ?? label : label }));
       return true;
     }
@@ -198,16 +232,21 @@ export function signInExtraProgram(pool, account) {
   draw();
 }
 
-async function check(first = false) {
+async function check(first = false, owner = flowOwner()) {
   const { id, account } = W.plan ?? {};
   if (!id) return;
   try {
-    W.check = await api("accounts/sign-ins/check", account ? { id, account } : { id });
+    const status = await api("accounts/sign-ins/check", account ? { id, account } : { id });
+    if (!owner.current()) return;
+    W.check = status;
     W.error = "";
-  } catch (error) { W.error = error.message; }
-  if (W.line && W.check?.signedIn) { settled(); closeDlg(); S.addAcct = null; toast(W.check.message); return; }
+  } catch (error) { if (!owner.current()) return; W.error = error.message; }
+  if (W.line && W.check?.signedIn === true) {
+    settled(); closeDlg(); S.addAcct = null; toast(W.check.message);
+    document.dispatchEvent(new CustomEvent("model-account-connected", { detail: { pool: `cli-${id}`, account } })); return;
+  }
   /* Already signed in on this computer: the one click that picked it adds it (an extra account keeps its Done). */
-  if (first && !W.line && W.check?.installed && W.check.signedIn === true) { await addProgram(); return; }
+  if (first && !W.line && W.check?.installed && W.check.signedIn === true) { await addProgram(owner); return; }
   draw();
 }
 
@@ -216,18 +255,22 @@ async function check(first = false) {
 async function startProgram() {
   const { id, account } = W.plan ?? {};
   if (!id) return;
+  const owner = flowOwner();
   const body = account ? { id, account } : { id };
   pasted = "";
   try {
-    W.check = await api("accounts/sign-ins/start", body);
+    const started = await api("accounts/sign-ins/start", body);
+    if (!owner.current()) return;
+    W.check = started;
     W.error = "";
-  } catch (error) { W.error = error.message; draw(); return; }
-  if (W.check.signedIn === true) { if (W.line) await check(); else await addProgram(); return; }
+  } catch (error) { if (owner.current()) { W.error = error.message; draw(); } return; }
+  if (W.check.signedIn === true) { if (W.line) await check(false, owner); else await addProgram(owner); return; }
   waiting = ["accounts/sign-ins/stop", body];
   draw();
-  poll(async () => {
+  poll(async active => {
     const now = await api("accounts/sign-ins/check", body);
-    if (now.signedIn === true) { W.check = now; if (W.line) await check(); else await addProgram(); return true; }
+    if (!active() || !owner.current()) return true;
+    if (now.signedIn === true) { W.check = now; if (W.line) await check(false, owner); else await addProgram(owner); return true; }
     const shown = (c) => JSON.stringify([c?.message, c?.signingIn, c?.url, c?.takesCode]);
     const changed = shown(now) !== shown(W.check);
     W.check = { ...now, failed: !now.signingIn };
@@ -252,26 +295,31 @@ async function sendCode() {
 }
 
 /* The program becomes a connection under its own name; its sign-in stays the program's. */
-async function addProgram() {
+async function addProgram(owner = flowOwner()) {
   const p = program(W.plan?.id);
   if (!p) return;
   try {
     const made = await api("providers/cli-agents", { id: p.id });
+    if (!owner.current()) return;
     await loadSignIns();
-    await connected(made.id, p.label ?? made.name);
-  } catch (error) { W.error = error.message; draw(); }
+    await connected(made.id, p.label ?? made.name, owner);
+  } catch (error) { if (owner.current()) { W.error = error.message; draw(); } }
 }
 
 async function startGoogle() {
+  const owner = flowOwner();
   try {
-    W.code = await api("accounts/sign-ins/gemini", {});
+    const code = await api("accounts/sign-ins/gemini", {});
+    if (!owner.current()) return;
+    W.code = code;
     Object.assign(W, { plan: { kind: "gemini" }, step: 2, error: "" });
-    poll(async () => {
+    poll(async active => {
       const state = await api("models/gemini-signin");
-      if (state.connected) { await connected("google-gemini", "Gemini"); return true; }
+      if (!active() || !owner.current()) return true;
+      if (state.connected) { await connected("google-gemini", "Gemini", owner); return true; }
       return false;
     });
-  } catch (error) { W.error = error.message; }
+  } catch (error) { if (!owner.current()) return; W.error = error.message; }
   draw();
 }
 

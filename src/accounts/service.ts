@@ -388,6 +388,37 @@ export class AccountsService {
       provider.complete({ messages: [{ role: "user", content: "Reply with the single word: ok" }], tools: [], signal, maxTokens: 16 }));
   }
 
+  /** One bounded setup hello through exactly this account; never pool/fallback routing. */
+  async hello(pool: string, account: string, guard: () => void) {
+    guard();
+    // The owner's model-call context, captured now, is the one the hello is sent under (as measure() does): a Claude
+    // subscription answers only inside its owner's authorized call.
+    const call = currentAccountCall();
+    if (call && call.owner !== this.deps.owner) throw new Error("This account belongs to another owner");
+    const preset = [...this.deps.models.presets.values()].find(one => this.poolFor(one)?.pool === pool);
+    const found = preset ? this.poolFor(preset) : null;
+    const listed = this.usablePool(pool)?.accounts.find(one => one.id === account && !one.disabled);
+    const primary = account === primaryAccount && !this.pool(pool);
+    if (!preset || !found || !listed && !primary) throw new Error("This enabled model account is not available. Add or sign in to it again.");
+    if (listed && this.capReached(pool, listed)) throw new Error("This account has reached its spending cap.");
+    const own = await this.providerFor(pool, found.kind, preset, account);
+    guard();
+    const still = this.usablePool(pool)?.accounts.find(one => one.id === account && !one.disabled);
+    if (this.pool(pool) && !still) throw new Error("This account was disabled or removed. Choose an enabled account.");
+    // Spend may have reached the cap (or the cap changed) while the connection was built.
+    if (still && this.capReached(pool, still)) throw new Error("This account has reached its spending cap.");
+    const started = this.now();
+    const provider = own ?? unwrapProvider(preset.provider);
+    const completion = await withAccountCall(call ?? { owner: this.deps.owner, sessionId: "account-hello", runId: "account-hello" }, () =>
+      provider.complete({ messages: [{ role: "user", content: "Reply with the single word OK." }], tools: [], maxTokens: 16,
+        signal: AbortSignal.timeout(30000) }));
+    // The provider answered, so its cost is this account's whatever is refused next: recorded before any refusal.
+    if (listed) this.record(pool, listed, preset.model, completion);
+    guard();
+    if (!completion.content.trim()) throw new Error("The model returned no greeting. Choose another model or retry.");
+    return { ok: true, pool, account, accountLabel: listed?.label ?? "Primary account", presetId: preset.id, presetName: preset.name,
+      model: preset.model, reply: completion.content.slice(0, 80), ms: this.now() - started };
+  }
   /** Forgets the connections built for one account, after its key changed or it was removed. */
   dropBuilt(pool: string, account: string): void {
     for (const key of [...this.built.keys()]) if (key.startsWith(`${pool}\u0000`) && key.endsWith(`\u0000${account}`)) this.built.delete(key);

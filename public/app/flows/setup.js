@@ -95,7 +95,7 @@ function testOut(o) {
   if (!res) return "";
   if (res === "wait") return `<div class="status"><span class="sdot"></span><div><b>${t("window.flows.setup.saying-hello")}</b></div></div>`;
   if (!res.ok) return `<div class="status"><span class="sdot bad"></span><div><b>${t("window.flows.setup.no-answer")}</b><p>${esc(res.error ?? res.reply ?? "")}</p></div></div>`;
-  return `<div class="status"><span class="sdot"></span><div><b>${t("window.flows.setup.answered-in", { s: (res.ms / 1000).toFixed(1) })}</b><p>“${esc(res.reply)}” · ${esc(res.presetName)}</p></div></div>`;
+  return `<div class="status"><span class="sdot"></span><div><b>${t("window.flows.setup.answered-in", { s: (res.ms / 1000).toFixed(1) })}</b><p>“${esc(res.reply)}” · ${esc(res.presetName)} · ${esc(res.model)} ${res.accountLabel ? `· ${esc(res.accountLabel)}` : ""}</p><button class="btn sm" type="button" data-act="setgo" data-v="models">Change</button></div></div>`;
 }
 
 function models(o) {
@@ -399,6 +399,7 @@ async function answerWith(sw) {
   try {
     const view = await api("accounts/update", { pool, account, disabled: !sw.checked });
     o.pools = o.pools.map((p) => (p.pool === view.pool ? { ...p, ...view } : p));
+    if (sw.checked && S.ob === o) await accountHello(pool, account, o);
   } catch (error) { toast(error.message); }
   if (S.ob === o) draw();
 }
@@ -413,6 +414,15 @@ async function test() {
   if (S.ob === o) draw();
 }
 
+async function accountHello(pool, account, o = S.ob) {
+  if (!o || o.i !== 1 || E.profiles?.isOwner === false) return;
+  const token = o.helloToken = (o.helloToken ?? 0) + 1;
+  o.test = "wait"; draw();
+  const result = await api("models/account-hello", { pool, account }).catch(error => ({ ok: false, error: error.message }));
+  if (S.ob !== o || o.i !== 1 || o.helloToken !== token || E.profiles?.isOwner === false) return;
+  o.test = result; draw();
+}
+
 /* The language picked at the top of Welcome: saved the way Settings › Appearance saves it (the engine's look and this
    browser, shell/language.js), then setup is drawn again in its words. One that cannot be picked changes nothing. */
 async function pickLanguage(code) {
@@ -424,6 +434,9 @@ async function pickLanguage(code) {
 }
 
 export function init() {
+  document.addEventListener("model-account-connected", event => {
+    if (S.ob?.i === 1 && event.detail?.pool && event.detail?.account) void accountHello(event.detail.pool, event.detail.account);
+  });
   initLocalPick();
   markLive(["sw:ob-brain", "sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "ob-go", "ob-next", "ob-close", "ob-done", "ob-test", "oblater18c", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "ob-restore", "sw:ob-restore-file"]);
   on("ob-restore", () => document.getElementById("ob-restore-file")?.click());

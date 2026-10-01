@@ -14,7 +14,7 @@ import { drawPane, initPane } from "./pane.js";
 import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, readyWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
 import { practiceFlag, practiceSent, refusePracticeRoute } from "./practice-next.js";
 import { initRec } from "./rec.js";
-import { noModelRow } from "./nomodel.js";
+import { noModelRow, recoverNoModel } from "./nomodel.js";
 import { binding, spoken } from "../shell/keys.js";
 import { checkpointRows, initCheckpoints } from "./checkpoints.js";
 import { selfCard, loadSelfChange, initSelfChange } from "./selfchange.js";
@@ -772,6 +772,10 @@ async function adopt(sessionId, before, keepDraft) {
 /* `withLead`: a message the person typed and sent carries the words hooked in front of it (addSendPrefix); a choice
    card's answer and a room's route are sent word for word. */
 async function sendPlain(said, withLead = false) {
+  if (E.state?.modelNeeded) {
+    S.drafts[C.sessionId ?? "new"] = said;
+    recoverNoModel({ message: E.state.modelNeeded }); return;
+  }
   const lead = withLead ? PREFIX.map((take) => take(C.sessionId ?? null)).filter(Boolean).join("\n") : "";
   const prompt = lead ? `${lead}\n\n${said}` : said;
   const before = replyMark(C.messages), seat = C.seat, from = C.sessionId ?? "new";
@@ -808,6 +812,7 @@ async function sendPlain(said, withLead = false) {
     else {
       C.messages.push({ role: "assistant", content: error.message });
       if (!started) S.drafts[C.sessionId ?? "new"] = prompt;
+      recoverNoModel(error);
     }
   } finally {
     C.sending = false;
