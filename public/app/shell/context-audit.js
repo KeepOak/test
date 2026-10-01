@@ -37,20 +37,32 @@ const used = (view) => view.reported ?? view.estimated;
 const percent = (view) => Math.max(0, Math.min(100, Math.round(used(view) / view.limit * 100)));
 let key = "";
 /* Sticky owner authority (core/session-pages.js), so a profile switch away and back or a lock and unlock is never
-   missed between renders: the open panel's spans its read and the choice, and the choice's own spans its confirmation,
-   the live read and the write. */
+   missed between renders: each read holds its own from request to result, the open panel's spans its read and the
+   choice, and the choice's own spans its confirmation, the live read and the write. */
 let panel = null, proposal = null;
 const authorityNow = () => sessionAuthority(E.profiles, document.getElementById("app"));
+const ownPop = () => document.querySelector("#app > .pop")?.dataset.contextAudit !== undefined;
+/* A read that outlived its authority: neither its answer nor anything read before it is shown again. */
+function forget() {
+  generation++; state = null; error = ""; last = Date.now();
+  panel?.close(); panel = null;
+  if (ownPop()) closePop();
+}
 
 async function refresh(sid) {
   if (loading) return;
-  const token = generation;
+  const token = generation, authority = authorityNow();
   loading = true; last = Date.now();
+  let kept = false;
   try {
     const next = await api(endpoint(sid), undefined, undefined, AbortSignal.timeout(5000));
-    if (same(sid, token)) { state = next; error = ""; }
-  } catch (why) { if (same(sid, token)) { state = null; error = why.message; } }
-  finally { if (token === generation) { loading = false; renderNow(); } }
+    kept = authority.current(E.profiles);
+    if (kept && same(sid, token)) { state = next; error = ""; }
+  } catch (why) { kept = authority.current(E.profiles); if (kept && same(sid, token)) { state = null; error = why.message; } }
+  finally {
+    authority.close();
+    if (token === generation) { if (!kept) forget(); loading = false; renderNow(); }
+  }
 }
 
 export function contextMeter(sid) {
@@ -87,7 +99,10 @@ async function show(el) {
 }
 function repaintPanel(sid, token) {
   const pop = document.querySelector("#app > .pop"), anchor = document.querySelector('[data-act="context-audit"]');
-  if (!same(sid, token) || !anchor || pop?.dataset.contextAudit !== String(token)) return;
+  if (!same(sid, token) || !panel?.current(E.profiles) || !anchor || pop?.dataset.contextAudit !== String(token)) {
+    if (ownPop() && !panel?.current(E.profiles)) forget();
+    return;
+  }
   closePop(); openPop(anchor, body(state), { role: "dialog", label: "Model context" });
   const next = document.querySelector("#app > .pop");
   if (next) next.dataset.contextAudit = String(token);

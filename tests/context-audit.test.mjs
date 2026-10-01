@@ -82,7 +82,9 @@ function windowFixture() {
     model: "m", limit: 1000, estimated: 10, reported: null, categories: [], definitions: [], totalDefinitions: 0,
     items: [{ callId: "c1", name: "files.read", tokens: 5, removable: true, excluded: false }], totalItems: 1, compactions: 0, at: new Date().toISOString() };
   const lockRecords = [], posts = [], actions = {}, app = { locked: false, classList: { contains: () => app.locked } };
-  let dlg = null, held = null;
+  let dlg = null, held = null, pop = null, clock = Date.now();
+  const pops = [], anchor = {};
+  class Clock extends Date { static now() { return clock; } }
   const MutationObserver = class { observe() {} takeRecords() { return lockRecords.splice(0); } disconnect() {} };
   const pages = { MutationObserver, addEventListener() {} };
   runInNewContext(`${strip(pagesSource)}
@@ -91,15 +93,18 @@ globalThis.pages = { sessionAuthority, resetSessionPages };`, pages);
   const context = { S, E, MutationObserver, sessionAuthority: pages.pages.sessionAuthority,
     activeId: () => E.profiles?.active?.id ?? null, ownerHere: () => E.profiles?.isOwner === true,
     conversationWho: () => ({ sessionId: sid }), esc: (v) => String(v ?? ""), renderNow() {}, markLive() {},
-    on: (name, fn) => { actions[name] = fn; }, openPop() {}, closePop() {}, toast() {},
+    on: (name, fn) => { actions[name] = fn; }, toast() {}, Date: Clock,
+    openPop: (_el, html) => { pops.push(html); pop = { dataset: {} }; }, closePop: () => { pop = null; },
     openDlg: () => { dlg = {}; }, closeDlg: () => { dlg = null; }, dialog: () => dlg,
-    document: { getElementById: () => app, querySelector: () => null }, AbortSignal,
+    document: { getElementById: () => app, querySelector: (q) => q === "#app > .pop" ? pop : q.includes("context-audit") ? anchor : null }, AbortSignal,
     api: async (_path, body) => { if (body) { posts.push(body); return view; } return held ? held.promise : view; } };
   runInNewContext(`${strip(panelSource)}
 globalThis.meter = contextMeter;`, context);
   pages.pages.resetSessionPages(E.profiles);
   return { E, S, app, lockRecords, posts, actions, view, sid, context, reset: (p) => pages.pages.resetSessionPages(p),
-    hold() { let resolve; held = { promise: new Promise((done) => { resolve = done; }) }; held.resolve = () => resolve(view); return held; } };
+    pops, open: () => pop !== null, later: () => { clock += 6000; },
+    hold(answer = view) { let resolve; const read = held = { promise: new Promise((done) => { resolve = done; }) };
+      read.resolve = () => { held = null; resolve(answer); }; return read; } };
 }
 const roundtrips = {
   none: () => {},
@@ -118,5 +123,43 @@ for (const [name, change] of Object.entries(roundtrips)) {
     const read = f.hold(), pending = f.actions["context-confirm"]({ disabled: false });
     change(f); read.resolve(); await pending;
     assert.equal(f.posts.length, name === "none" ? 1 : 0);
+  });
+}
+
+// Review 5927665125 (branch-coord#1): every read's answer is published only under the authority it was asked with. A
+// profile switch away and back, or a lock and unlock, during the meter's first read, its poll, the panel's read or the
+// panel's Refresh leaves nothing from before on show: the meter says unknown and the panel closes.
+const fresher = (f) => ({ ...f.view, estimated: 500 }), tick = () => new Promise((resolve) => setImmediate(resolve));
+const reads = {
+  "first read": async (f, change) => { const read = f.hold(fresher(f)); f.context.meter(f.sid); change(f); read.resolve(); await tick(); },
+  "poll": async (f, change) => {
+    f.context.meter(f.sid); await tick();
+    const read = f.hold(fresher(f)); f.later(); f.context.meter(f.sid); change(f); read.resolve(); await tick();
+  },
+  "panel read": async (f, change) => {
+    f.context.meter(f.sid); await tick();
+    const read = f.hold(fresher(f)), pending = f.actions["context-audit"]({ getAttribute: () => "false" });
+    change(f); read.resolve(); await pending;
+  },
+  "panel Refresh": async (f, change) => {
+    f.context.meter(f.sid); await tick();
+    await f.actions["context-audit"]({ getAttribute: () => "false" });
+    const read = f.hold(fresher(f)), pending = f.actions["context-refresh"]();
+    change(f); read.resolve(); await pending;
+  },
+};
+for (const [where, run] of Object.entries(reads)) for (const name of ["none", "profile away and back", "lock and unlock"]) {
+  test(`context audit window: ${name} during the ${where} ${name === "none" ? "shows its answer" : "shows nothing from before"}`, async () => {
+    const f = windowFixture();
+    await run(f, roundtrips[name]);
+    const meter = f.context.meter(f.sid), panel = where.startsWith("panel");
+    if (name === "none") {
+      assert.match(meter, /Context <\/span>~50%/);
+      if (panel) { assert.equal(f.open(), true); assert.match(f.pops.at(-1), /500 \/ 1,000 tokens/); }
+    } else {
+      assert.match(meter, /Context <\/span>unknown/);
+      assert.equal(f.open(), false, "the panel is closed");
+      assert.equal(f.pops.some((html) => html.includes("500 / 1,000")), false, "the late answer is never drawn");
+    }
   });
 }
