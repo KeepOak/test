@@ -159,6 +159,8 @@ export interface SecuritySnapshot {
   switches: { audit: SwitchMode; malware: SwitchMode };
   /** The container image scripts run in when a rule sends them to a container. */
   sandboxImage: string;
+  /** Group chats the owner set to answer every message (Settings › Chat apps or /activation), whatever the app's default. */
+  alwaysGroups?: { channel: string; title: string }[];
 }
 
 export interface CheckOutcome { id: string; area: CheckArea; title: string; severity: Severity; ok: boolean }

@@ -156,6 +156,10 @@ export class MatrixAdapter implements ChannelAdapter {
         if (inbound && !first) messages.push(inbound);
       }
     }
+    for (const [index, message] of messages.entries()) {
+      const target = this.replyTargets.get(message);
+      if (target && await this.repliedToMe(target)) messages[index] = { ...message, addressed: true };
+    }
     return messages;
   }
   /** Questions a 👍 / 👎 annotation may answer, by the question's own event id (src/channels/reaction-answers.ts). */
@@ -217,12 +221,14 @@ export class MatrixAdapter implements ChannelAdapter {
       || (content["m.mentions"]?.user_ids ?? []).includes(this.options.userId);
     const replyTo = content["m.relates_to"]?.["m.in_reply_to"]?.event_id;
     const repliedTo = !!replyTo && [...this.sent.values()].includes(replyTo);
-    return {
+    const message: InboundMessage = {
       channel: this.id, chatId, chatKind: direct ? "direct" : "group", ...(direct ? {} : { chatTitle: roomId }),
       senderId: handle(sender, "who"), senderName: sender, text,
       addressed: direct || mentioned || repliedTo || calledByName(text, [name]),
       messageId,
     };
+    if (replyTo && !message.addressed) this.replyTargets.set(message, { roomId, eventId: replyTo });
+    return message;
   }
   /** A room with only the person and the assistant (the server's joined count of two) is a direct chat. */
   private directRoom(roomId: string): boolean { return (this.members.get(roomId) ?? 3) <= 2; }
@@ -274,6 +280,19 @@ export class MatrixAdapter implements ChannelAdapter {
   /** CHAT-094: a spoken reply, as an audio message clients show as a voice message. */
   async sendVoice(chatId: string, audio: Uint8Array, mediaType: string): Promise<string | undefined> {
     return this.sendFile(chatId, { name: voiceFileName(mediaType), mediaType, bytes: audio, voice: true });
+  }
+  /** Replies to an event no longer in `sent` (sent before a restart, or older than the newest 200): asked about in `sync`. */
+  private readonly replyTargets = new WeakMap<InboundMessage, { roomId: string; eventId: string }>();
+  /** A reply to one of this account's own events is addressed; the server says who sent it. A failed lookup is not addressed. */
+  private async repliedToMe(target: { roomId: string; eventId: string }): Promise<boolean> {
+    const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(target.roomId)}/event/${encodeURIComponent(target.eventId)}`;
+    try {
+      const response = await this.fetch(address, { headers: { authorization: `Bearer ${this.options.accessToken}` },
+        redirect: "error", signal: AbortSignal.timeout(10000) });
+      if (!response.ok) return false;
+      const parsed = z.object({ sender: z.string() }).passthrough().safeParse(await response.json());
+      return parsed.success && parsed.data.sender === this.options.userId;
+    } catch { return false; }
   }
   /** The events this adapter sent, by the short handle it gave them, so a message it sent can be edited (the newest 200). */
   private readonly sent = new Map<string, string>();

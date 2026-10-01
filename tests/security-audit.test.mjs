@@ -26,6 +26,7 @@ import {
 } from "../dist/security-audit/index.js";
 import { doctorFix } from "../dist/doctor-fix.js";
 import { fixtureModel } from "./fixtures/fixture-model.mjs";
+import { setGroupActivation } from "../dist/channels/group-activation.js";
 
 const run = promisify(execFile);
 const NOW = "2026-09-17T12:00:00.000Z";
@@ -353,6 +354,17 @@ test("a fresh install has both checks when needed and runs neither by itself; sw
   assert.throws(() => app.security.configure({ audit: "always" }));
   app.security.configure({ audit: "off" });
   assert.equal(app.registry.names().includes(securityToolName), false);
+});
+
+// Review r4117782283: a group the owner set to answer every message is reported, even with no launch settings file.
+test("a group set to answer every message is reported by the always-listening check", async (t) => {
+  const { app } = await fixture(t);
+  const quiet = await app.security.check();
+  assert.ok(!quiet.findings.some((finding) => finding.id === "channels.always-listening"));
+  setGroupActivation(app.store, app.runtime.owner, { channel: "telegram", chatId: "-10", activation: "always", title: "Family" }, "test");
+  const found = (await app.security.check()).findings.find((finding) => finding.id === "channels.always-listening");
+  assert.ok(found, "the group override stayed quiet");
+  assert.match(found.detail, /Family/);
 });
 
 test("the tool the assistant uses reads the same check and hands back no repairs", async (t) => {

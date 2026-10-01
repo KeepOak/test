@@ -178,6 +178,32 @@ test("Matrix: a room of two is direct, and a mention, an intentional mention or 
   assert.equal(read("!room:m", { body: "yes", "m.relates_to": { "m.in_reply_to": { event_id: "$theirs" } } }).addressed, false);
 });
 
+// Review r4117782280: a reply to one of its own messages counts after a restart or once the message left the recent list.
+test("Matrix: a reply to its own older message is addressed by asking the server who sent it", async () => {
+  const asked = [];
+  const fetch = async (url, init) => {
+    const address = String(url);
+    if (address.includes("/sync")) return Response.json({ next_batch: "s2", rooms: { join: { "!room:m": { summary: { "m.joined_member_count": 5 }, timeline: { events: [
+      { type: "m.room.message", event_id: "$a", sender: "@alice:m", content: { msgtype: "m.text", body: "yes", "m.relates_to": { "m.in_reply_to": { event_id: "$old" } } } },
+      { type: "m.room.message", event_id: "$b", sender: "@alice:m", content: { msgtype: "m.text", body: "agreed", "m.relates_to": { "m.in_reply_to": { event_id: "$bobs" } } } },
+      { type: "m.room.message", event_id: "$c", sender: "@alice:m", content: { msgtype: "m.text", body: "hm", "m.relates_to": { "m.in_reply_to": { event_id: "$gone" } } } },
+      { type: "m.room.message", event_id: "$d", sender: "@alice:m", content: { msgtype: "m.text", body: "chatting" } },
+      { type: "m.room.message", event_id: "$e", sender: "@alice:m", content: { msgtype: "m.text", body: "offline?", "m.relates_to": { "m.in_reply_to": { event_id: "$boom" } } } },
+    ] } } } } });
+    asked.push({ address, redirect: init?.redirect, auth: init?.headers?.authorization });
+    if (address.endsWith(`/rooms/${encodeURIComponent("!room:m")}/event/${encodeURIComponent("$old")}`)) return Response.json({ event_id: "$old", sender: "@juniper:m.example.org" });
+    if (address.includes(encodeURIComponent("$bobs"))) return Response.json({ event_id: "$bobs", sender: "@bob:m" });
+    if (address.includes(encodeURIComponent("$boom"))) throw new Error("the server went away");
+    return Response.json({ errcode: "M_NOT_FOUND" }, { status: 404 });
+  };
+  const adapter = new MatrixAdapter({ id: "matrix", homeserver: "https://m.example.org", userId: "@juniper:m.example.org", accessToken: "x", fetch });
+  adapter.since = "s1";
+  const got = await adapter.sync();
+  assert.deepEqual(got.map((message) => [message.text, message.addressed]), [["yes", true], ["agreed", false], ["hm", false], ["chatting", false], ["offline?", false]]);
+  assert.equal(asked.length, 4, "only unaddressed replies to unknown events are looked up");
+  assert.ok(asked.every((call) => call.redirect === "error" && call.auth === "Bearer x"));
+});
+
 test("Discord: its name in a server channel is addressed", () => {
   const adapter = new DiscordAdapter({ id: "discord", token: "t" });
   adapter.user = { id: "B1", name: "juniper_bot", shown: "Juniper" };
