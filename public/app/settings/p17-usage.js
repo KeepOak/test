@@ -12,18 +12,20 @@
    engine pauses an account at its cap. Plans have no cap here. The rows below are
    the engine's readouts (settings/demos-b5.js). */
 import { esc, render } from "../core/dom.js";
-import { api } from "../core/api.js";
+import { E, S } from "../core/state.js";
+import { sessionPrincipal } from "../core/session-pages.js";
+import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
-import { toast, openDlg, closeDlg, $ } from "../core/ui.js";
+import { toast, openDlg, closeDlg, dialog, $ } from "../core/ui.js";
 import { demos17, row17, sec17, pill17 } from "./rows17.js";
 import { t } from "../../i18n.js";
 
-const U = { sources: [], pick: null, preview: null, moved: null, parts: null };
+const U = { sources: [], pick: null, preview: null, moved: null, parts: null, where: null, selected: new Set(), busy: false, importing: false, serial: 0, dialog: null, who: null };
 
 export function sections17(lv) {
   let html = sec17(t("window.settings.p17-usage.moving-in-and-out"),
-    row17(t("window.settings.p17-usage.move-in-from-another-assistant"), U.moved ? t("window.settings.p17-usage.brought-in-from-moved-everything-came", { moved: U.moved }) : t("window.settings.p17-usage.conversations-memory-instructions-skills-and-tool"), t("window.settings.p17-usage.move-in"), "moveinb17")
+    row17(t("window.settings.p17-usage.move-in-from-another-assistant"), U.moved ? esc(U.moved) : t("window.settings.p17-usage.conversations-memory-instructions-skills-and-tool"), t("window.settings.p17-usage.move-in"), "moveinb17")
     + row17(t("window.settings.p17-usage.take-everything-with-you"), t("window.settings.p17-usage.your-trunks-skills-procedures-memory-and"), t("window.settings.p17-usage.export-2"), "exportb17"));
   if (lv >= 1) html += sec17(t("window.settings.p17-usage.money-and-keeping-more"),
     row17(t("window.settings.p17-usage.spend-caps-per-service"), t("window.settings.p17-usage.a-monthly-limit-for-each-service"), t("window.settings.p17-usage.set-caps"), "capsb17")
@@ -32,34 +34,112 @@ export function sections17(lv) {
 }
 
 /* ---------- move in ---------- */
-const bringable = () => (U.preview?.groups ?? []).flatMap((g) => g.items).filter((i) => !i.blocked && !i.alreadyMoved).map((i) => i.key);
+const moveIdentity = () => JSON.stringify([sessionPrincipal(E.profiles), S.signedIn, token.get()]);
+const currentMove = (serial) => serial === U.serial && U.dialog?.isConnected && U.who === moveIdentity() && E.profiles?.isOwner === true;
+const bringable = () => (U.preview?.groups ?? []).flatMap((g) => g.items).filter((i) => !i.blocked && !i.alreadyMoved && U.selected.has(i.key)).map((i) => i.key);
 function moveDlg() {
-  const opts = U.sources.map((s) => `<button type="button" class="upd-o15" data-act="moveinpickb17" data-v="${esc(s.source)}" aria-pressed="${U.pick === s.source}" ${s.found ? "" : "disabled"}><b>${esc(s.name)}</b><small>${s.found ? t("window.settings.p17-usage.found-on-this-computer") : t("window.settings.p17-usage.not-found-here")}</small></button>`).join("");
-  const rows = U.preview ? `<div class="rows">${U.preview.groups.map((g) => `<div class="prow"><span class="grow"><b>${esc(g.name)}</b><small>${esc(g.items.filter((i) => !i.blocked).length)}</small></span>${pill17("ok", t("window.settings.p17-usage.comes-in"))}</div>`).join("")}<div class="prow"><span class="grow"><b>${t("window.settings.p17-usage.keys-and-passwords")}</b><small>${t("window.settings.p17-usage.never-copied-you-sign-in-again")}</small></span>${pill17("idle", t("window.settings.p17-usage.left-out"))}</div></div>`
-    : `<p class="hint" data-css="margin:0">${t("window.settings.p17-usage.pick-one-to-see-what-comes")}</p>`;
-  openDlg({ title: t("window.settings.p17-usage.move-in-from-another-assistant"), body: `<p class="lead-b17">${t("window.settings.p17-usage.branch-looked-on-this-computer-everything")}</p><div class="opts-b17">${opts}</div>${rows}`,
-    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("updates.busy.cancel")}</button><button class="btn pri" type="button" data-act="moveingob17" ${bringable().length ? "" : "disabled"}>${t("reach.git.install")}</button>` });
+  const opts = U.sources.map((s) => `<button type="button" class="upd-o15" data-act="moveinpickb17" data-v="${esc(s.source)}" aria-pressed="${U.pick === s.source}" ${s.found && !U.busy ? "" : "disabled"}><b>${esc(s.name)}</b><small>${s.found ? t("window.settings.p17-usage.found-on-this-computer") : t("window.settings.p17-usage.not-found-here")}</small></button>`).join("");
+  const progress = U.busy ? `<p role="status">${esc(U.importing ? t("memory.movein.bringing", { count: bringable().length }) : t("memory.movein.reading"))}</p>` : "";
+  const rows = U.preview ? `<p>${esc(U.preview.name)} · ${esc(U.preview.from)}</p>${(U.preview.notes ?? []).map((note) => `<p class="hint">${esc(note)}</p>`).join("")}<p>${t("memory.movein.tick-then-bring")}</p><div class="rows">${U.preview.groups.map((g) => `<h3>${esc(g.name)}</h3>${g.items.map((item) => `<label class="prow"><input type="checkbox" class="chk15" data-move-item="${esc(item.key)}" ${U.selected.has(item.key) ? "checked" : ""} ${item.blocked || item.alreadyMoved || U.busy ? "disabled" : ""}><span class="grow"><b>${esc(item.title)}</b><small>${esc(item.detail)}${item.alreadyMoved ? ` ${t("memory.movein.already")}` : ""}</small></span></label>`).join("")}`).join("")}</div>`
+    : `<p class="hint">${t(U.busy ? "memory.movein.reading" : "window.settings.p17-usage.pick-one-to-see-what-comes")}</p>`;
+  openDlg({ title: t("window.settings.p17-usage.move-in-from-another-assistant"), body: `<p class="lead-b17">${t("window.settings.p17-usage.branch-looked-on-this-computer-everything")}</p><div class="opts-b17">${opts}</div><button class="btn ghost" type="button" data-act="moveinfileb17" ${U.busy ? "disabled" : ""}>${t("window.settings.movein-export.choose")}</button>${progress}${rows}`,
+    foot: `<button class="btn ghost" type="button" data-act="moveincancelb17">${t(U.importing ? "delight.ach.close" : "updates.busy.cancel")}</button><button class="btn pri" type="button" data-act="moveingob17" ${!U.busy && bringable().length ? "" : "disabled"}>${t("window.settings.movein-export.bring")}</button>` });
+  U.dialog = dialog();
+  const shown = U.dialog, observer = new MutationObserver(() => {
+    if (shown.isConnected) return;
+    observer.disconnect();
+    // Redrawing replaces the dialog; dismissing it releases the archive, including Escape and the X.
+    if (U.dialog === shown) {
+      ++U.serial;
+      Object.assign(U, { dialog: null, where: null, preview: null, selected: new Set(), busy: false, importing: false });
+    }
+  });
+  observer.observe(shown.parentNode, { childList: true });
+  U.dialog.querySelectorAll("[data-move-item]").forEach((input) => input.addEventListener("change", () => {
+    if (!currentMove(U.serial)) { cancelMove(); return; }
+    if (input.checked) U.selected.add(input.dataset.moveItem); else U.selected.delete(input.dataset.moveItem);
+    U.dialog.querySelector('[data-act="moveingob17"]').disabled = U.busy || !bringable().length;
+  }));
 }
 async function openMove() {
+  const serial = ++U.serial, who = moveIdentity();
+  U.who = who;
   try {
     const found = await api("move-in?look=1");
+    if (serial !== U.serial || who !== moveIdentity()) return;
     // Off looks at nothing; the engine says why in its own words when asked for a preview.
     if (found.mode === "off") await api("move-in/preview", { source: "claude-code" });
-    Object.assign(U, { sources: found.sources ?? [], pick: null, preview: null });
-  } catch (error) { toast(error.message); return; }
+    if (serial !== U.serial || who !== moveIdentity()) return;
+    Object.assign(U, { sources: found.sources ?? [], pick: null, preview: null, where: null, selected: new Set(), busy: false, importing: false });
+  } catch (error) { if (serial === U.serial && who === moveIdentity()) toast(error.message); return; }
+  if (serial === U.serial && who === moveIdentity()) moveDlg();
+}
+async function previewMove(where, serial = ++U.serial) {
+  Object.assign(U, { pick: where.source ?? null, where, preview: null, selected: new Set(), busy: true });
+  moveDlg();
+  try {
+    const preview = await api("move-in/preview", where);
+    if (!currentMove(serial)) { if (serial === U.serial) cancelMove(); return; }
+    U.preview = preview;
+  } catch (error) {
+    if (!currentMove(serial)) { if (serial === U.serial) cancelMove(); return; }
+    U.where = null; toast(error.message);
+  }
+  U.busy = false;
   moveDlg();
 }
-async function pick(el) {
-  U.pick = el.dataset.v;
-  try { U.preview = await api("move-in/preview", { source: U.pick }); } catch (error) { U.preview = null; toast(error.message); }
-  moveDlg();
+async function pick(el) { if (!currentMove(U.serial)) { cancelMove(); return; } if (!U.busy) await previewMove({ source: el.dataset.v }); }
+function chooseMoveFile() {
+  if (!currentMove(U.serial)) { cancelMove(); return; }
+  if (U.busy) return;
+  const serial = ++U.serial, picker = Object.assign(document.createElement("input"), { type: "file", accept: ".zip,.tar,.tar.gz,.tgz" });
+  picker.addEventListener("change", async () => {
+    const file = picker.files?.[0];
+    if (!file || !currentMove(serial)) return;
+    Object.assign(U, { pick: null, where: null, preview: null, selected: new Set(), importing: false });
+    if (file.size > 32 * 1024 * 1024) { toast(t("memory.movein.too-large")); moveDlg(); return; }
+    U.busy = true; moveDlg();
+    try {
+      const data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(",")[1]);
+        reader.onerror = () => reject(new Error(t("window.settings.movein-export.read-error")));
+        reader.readAsDataURL(file);
+      });
+      if (!currentMove(serial)) { if (serial === U.serial) cancelMove(); return; }
+      await previewMove({ archive: { name: file.name, data } }, serial);
+    } catch (error) {
+      if (!currentMove(serial)) { if (serial === U.serial) cancelMove(); return; }
+      U.busy = false; U.importing = false; toast(error.message); moveDlg();
+    }
+  });
+  picker.click();
 }
 async function bring() {
+  if (!currentMove(U.serial)) { cancelMove(); return; }
   const items = bringable();
-  if (!U.pick || !items.length) return;
-  try { U.moved = (await api("move-in/import", { source: U.pick, items })).name; } catch (error) { toast(error.message); return; }
+  if (U.busy || !U.where || !items.length) return;
+  const serial = ++U.serial, where = U.where;
+  U.busy = true; U.importing = true; moveDlg();
+  try {
+    const receipt = await api("move-in/import", { ...where, items });
+    if (!currentMove(serial)) { if (serial === U.serial) cancelMove(); return; }
+    U.moved = t("memory.movein.summary", { brought: receipt.brought.length, skipped: receipt.skipped.length });
+    // Release uploaded bytes once the import settles; a retry starts with a fresh preview.
+    Object.assign(U, { where: null, preview: null, selected: new Set(), busy: false, importing: false });
+    openDlg({ title: t("memory.movein.brought-from", { name: receipt.name }),
+      body: `<p>${esc(U.moved)}</p>${receipt.skipped.map((item) => `<p>${esc(t("memory.movein.not-brought", { title: item.title, reason: item.reason }))}</p>`).join("")}`,
+      foot: `<button class="btn pri" type="button" data-act="dlg-close">${t("delight.ach.close")}</button>` });
+    render();
+  } catch (error) {
+    if (!currentMove(serial)) { if (serial === U.serial) cancelMove(); return; }
+    U.busy = false; U.importing = false; toast(error.message); moveDlg();
+  }
+}
+function cancelMove() {
+  ++U.serial;
+  Object.assign(U, { where: null, preview: null, selected: new Set(), busy: false, importing: false });
   closeDlg();
-  render();
 }
 
 /* ---------- take everything with you ---------- */
@@ -154,7 +234,9 @@ export function init17() {
   on("moveinb17", () => openMove());
   on("moveinpickb17", (el) => pick(el));
   on("moveingob17", () => bring());
+  on("moveinfileb17", () => chooseMoveFile());
+  on("moveincancelb17", () => cancelMove());
   on("exportb17", () => openExport());
   on("exportgob17", () => exportNow());
-  markLive(["moveinb17", "moveinpickb17", "moveingob17", "exportb17", "exportgob17", "sw:exp-b17-skills", "sw:exp-b17-memory", "sw:exp-b17-settings"]);
+  markLive(["moveinfileb17", "moveincancelb17", "moveinb17", "moveinpickb17", "moveingob17", "exportb17", "exportgob17", "sw:exp-b17-skills", "sw:exp-b17-memory", "sw:exp-b17-settings"]);
 }
