@@ -330,6 +330,7 @@ export class ModelRouter {
         // phase2/accounts (#22): the thinking levels this model really takes (src/thinking-levels.ts).
         thinking: thinkingLevels(preset.provider.name, preset.model),
         local: presetRunsLocally(preset),
+        retired: isRetiredConnection(preset),
         // Stress test B008, trunks-use-subscriptions: whether a Trunk's work started by whoever asks may answer through this
         // connection, worked out as Runtime.trunkSignIns does: the owner's may use a sign-in, a household person's or a
         // short-lived key's may not, with the engine's own sentence. The window greys only on ok:false, never on "sign-in".
