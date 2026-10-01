@@ -9,6 +9,11 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { startPlan, candidatePaths } from "../dist/local-launch.js";
 import { localVllmModel, vllmEnvironment } from "../dist/local-vllm.js";
+import { Store } from "../dist/store.js";
+import { OneClick } from "../dist/local-oneclick.js";
+import { saveLocalModelsMode } from "../dist/local-jobs.js";
+import { asCaller } from "../dist/caller.js";
+import { enterPairedDoor } from "../dist/people/context.js";
 
 const linux = { platform: "linux", arch: "x64", home: "/home/sam", env: { PATH: "/usr/bin" } };
 const win32 = { platform: "win32", arch: "x64", home: "C:\\Users\\sam", env: { Path: "C:\\Windows" } };
@@ -43,4 +48,24 @@ test("MODEL-086: the model directory must exist with a small config.json, and it
   await assert.rejects(localVllmModel(dir, win32), /only on Linux/);
   await writeFile(join(dir, "config.json"), "x".repeat(70000));
   await assert.rejects(localVllmModel(dir, linux), /bounded local config\.json/);
+});
+
+test("MODEL-086: vLLM setup is refused through a door (a paired phone or from beyond), and still reached from this computer", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-vllm-door-"));
+  const store = new Store(join(root, "branch.sqlite"));
+  t.after(async () => { store.close(); await discardTemp(root); });
+  const owner = store.profiles.scope();
+  saveLocalModelsMode(store, owner, { mode: "when-needed" });
+  const launcher = { at: linux, find: async () => "/usr/bin/vllm", owns: () => false, stopRuntime: async () => {} };
+  const oneClick = new OneClick({ store, owner, launcher, dataDir: join(root, "data"), library: async () => { throw new Error("offline"); },
+    room: async () => { throw new Error("not asked for vLLM"); } });
+  const setup = { runtime: "vllm", name: join(root, "no-such-model"), found: true, toolParser: "hermes" };
+  const doorRefusal = /this computer|own Branch window|through a door/i;
+  const caller = (kind, throughDoor) => ({ kind, lockdown: false, appLocked: false, throughDoor, fromThisComputer: !throughDoor || kind === "legacy-phone", household: false });
+  for (const [kind, throughDoor] of [["owner-remote", true], ["phone-with-own-key", true], ["legacy-phone", true]])
+    await assert.rejects(asCaller(caller(kind, throughDoor), () => oneClick.begin(setup)), doorRefusal, kind);
+  await assert.rejects(new Promise((resolve, reject) => setImmediate(() => { enterPairedDoor(); oneClick.begin(setup).then(resolve, reject); })),
+    doorRefusal, "the paired door");
+  await assert.rejects(asCaller(caller("owner-here", false), () => oneClick.begin(setup)),
+    (error) => !doorRefusal.test(error.message) && /ENOENT|not available/.test(error.message), "the owner here gets as far as the model directory");
 });

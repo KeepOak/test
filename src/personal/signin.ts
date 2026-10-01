@@ -4,6 +4,7 @@ import type { Store } from "../store.js";
 import { callJson } from "../channels/parity-common.js";
 import { partSettings, requirePersonal, savePartSettings, secretNameSchema, type PersonalPart } from "./settings.js";
 import { probeSignIn, type ConnectionHealth } from "./probe.js";
+import { assertHealthCurrent } from "../health-check.js";
 
 /**
  * R17-C: signing in to the owner's own Google, Microsoft and Spotify accounts. Nothing new is
@@ -87,17 +88,20 @@ export class SignIn {
     const described = describeSignIn(this.service, settings);
     if (!settings.clientSecretName) return described;
     const clientSecret = await this.deps.secret(settings.clientSecretName, `signing in to ${labels[this.service]}`);
+    assertHealthCurrent();
     return { ...described, clientSecret };
   }
   /** Starts the sign-in through the existing flow; the owner opens the address it hands back. */
   async start(): Promise<OAuthStart> {
     this.clearHealth();
     const started = await this.deps.oauth.start(await this.provider());
-    this.deps.oauth.waitFor(started.id).catch(() => undefined);
+    // A check begun on the old grant must not be kept for the new one: finishing the sign-in forgets checks again.
+    this.deps.oauth.waitFor(started.id).then(() => this.clearHealth(), () => undefined);
     return started;
   }
   async status(): Promise<{ signedIn: boolean; expiresAt: string | null; scope: string | null; health: ConnectionHealth | null }> {
     const tokens = await this.deps.oauth.saved(`personal-${this.service}`);
+    assertHealthCurrent();
     return { signedIn: tokens !== null, expiresAt: tokens?.expiresAt ?? null, scope: tokens?.scope ?? null, health: tokens ? this.health() : null };
   }
   private healthKey(): string { return `personal-connection-health:${this.service}`; }
@@ -112,11 +116,15 @@ export class SignIn {
   }
   /** Explicit safe reads, separate from having a saved sign-in. A failed read never signs the owner out. */
   async test(): Promise<ConnectionHealth> {
+    assertHealthCurrent();
     requirePersonal(this.deps.store, this.deps.owner, this.part);
     this.clearHealth();
     const revision = this.healthRevision;
     const settings = JSON.stringify(this.settings());
-    const health = await probeSignIn(this.service, await this.token(), this.deps.fetch);
+    const token = await this.token();
+    assertHealthCurrent();
+    const health = await probeSignIn(this.service, token, this.deps.fetch);
+    assertHealthCurrent();
     requirePersonal(this.deps.store, this.deps.owner, this.part);
     if (this.healthRevision !== revision || JSON.stringify(this.settings()) !== settings)
       throw new Error("The connection changed. Check it again.");
@@ -125,7 +133,11 @@ export class SignIn {
   }
   /** A usable access key, renewed first when it has run out. */
   async token(): Promise<string> {
-    return this.deps.oauth.accessToken(await this.provider());
+    const provider = await this.provider();
+    assertHealthCurrent();
+    const token = await this.deps.oauth.accessToken(provider);
+    assertHealthCurrent();
+    return token;
   }
 }
 

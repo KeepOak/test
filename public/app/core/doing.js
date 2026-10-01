@@ -26,7 +26,9 @@ export function agentState(trunk, sending = false) {
   const last = runs.reduce((a, r) => (!a || String(r.updatedAt ?? r.createdAt) > String(a.updatedAt ?? a.createdAt) ? r : a), null);
   if ((E.state?.attention ?? []).some((a) => a.sessionId === sid && !a.canContinue) || runs.some((r) => r.status === "needs_input")) return "wait";
   if (trunk.paused) return "sleep";
-  if (runs.some((r) => r.status === "running")) return "work";
+  const running = runs.filter((r) => r.status === "running").reduce((a, r) =>
+    (!a || String(r.updatedAt ?? r.createdAt) > String(a.updatedAt ?? a.createdAt) ? r : a), null);
+  if (running) return ["work", "think", "search", "read", "talk"].includes(running.activityState) ? running.activityState : "work";
   if (sending) return "think";
   if (last?.status === "completed") {
     const left = YAY_MS - (Date.now() - Date.parse(last.updatedAt ?? last.createdAt));

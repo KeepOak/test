@@ -6,15 +6,27 @@
 import { esc } from "../core/dom.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
-import { openDlg, closeDlg, toast } from "../core/ui.js";
+import { openDlg, closeDlg, dialog, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
+import { S, ownerHere, activeId } from "../core/state.js";
 
 const P = { view: null };
+/* Dialogs the owner closed (Cancel, the close button or Escape): a run still waiting must not close a dialog opened since. */
+let dialogsClosed = 0;
 const quoted = (command) => command.map((part) => (/^[\w@%+=:,./-]+$/.test(part) ? part : `"${part}"`)).join(" ");
 
+/* A late answer is kept, drawn or its error shown only for the newest read, by the same owner on the same page, with the
+   window unlocked: nothing lands behind the lock or for another person. */
+let reading = 0;
+function fence() {
+  const mine = ++reading, profile = activeId(), view = S.view;
+  return () => mine === reading && ownerHere() && activeId() === profile && S.view === view
+    && !document.getElementById("app")?.classList.contains("locked-b17");
+}
 export async function loadPhoneAccess() {
-  try { P.view = (await api("miniapp/phone-access")).phoneAccess; } catch { P.view = null; }
+  const still = fence();
+  try { const read = (await api("miniapp/phone-access")).phoneAccess; if (still()) P.view = read; } catch { if (still()) P.view = null; }
 }
 export function phoneAccessCard() {
   const view = P.view;
@@ -37,13 +49,23 @@ export function initPhoneAccess(reload) {
   markLive(["phone-access-on", "phone-access-off", "phone-access-run", "phone-access-cancel"]);
   on("phone-access-on", () => ask("on"));
   on("phone-access-off", () => ask("off"));
-  on("phone-access-cancel", () => closeDlg());
+  on("phone-access-cancel", () => { dialogsClosed += 1; closeDlg(); });
+  document.addEventListener("click", (e) => { if (e.target.closest?.('[data-act="dlg-close"]')) dialogsClosed += 1; }, true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && dialog()) dialogsClosed += 1; }, true); // main.js closes it on Escape
+  /* The command runs on the owner's yes. What the engine answers is kept and the page read again for the owner who asked
+     (the result is recorded whatever the dialog did); the asking dialog is closed, or its button given back, only if that
+     same dialog is still the one open, never a dialog opened since. */
   on("phone-access-run", async (el) => {
     const turn = el.dataset.v, command = P.view?.[turn];
     if (!command) return;
     el.disabled = true;
-    try { P.view = (await api("miniapp/phone-access", { turn, command })).phoneAccess; closeDlg(); }
-    catch (error) { toast(error.message); el.disabled = false; }
-    await reload();
+    const still = fence(), opened = dialog(), closed = dialogsClosed;
+    const sameDialog = () => dialog() === opened && dialogsClosed === closed;
+    try {
+      const done = (await api("miniapp/phone-access", { turn, command })).phoneAccess;
+      if (still()) P.view = done;
+      if (still() && sameDialog()) closeDlg();
+    } catch (error) { if (still()) toast(error.message); if (sameDialog()) el.disabled = false; }
+    if (still()) await reload();
   });
 }

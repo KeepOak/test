@@ -13,11 +13,12 @@ import { ic, av, mi, openPop, closePop } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
 import { shareMenu } from "../flows/share.js";
+import { githubReaderMenu, initGithubReader } from "./github-reader.js";
 
 /* ---------- the conversation's menu ---------- */
 /* "Open another conversation beside" pulls one into a pane of its own (chat/panes.js). */
 export function chatMenuTop() {
-  return mi("beside15", "cols15", t("window.chat.beside.open-another")) + shareMenu() + mi("roster10", "spark", t("window.chat.beside.who-it-knows")) + "<hr>";
+  return mi("beside15", "cols15", t("window.chat.beside.open-another")) + shareMenu() + githubReaderMenu() + mi("roster10", "spark", t("window.chat.beside.who-it-knows")) + "<hr>";
 }
 
 /* ---------- who it knows ---------- */
@@ -69,6 +70,7 @@ function connectAgent() {
 }
 
 export function initBeside() {
+  initGithubReader();
   markLive(["roster10", "roster10h", "t9-kind-roster"]);
   on("t9-kind-roster", () => connectAgent());
   on("roster10", () => roster($('[data-act="roster10h"]') || $('[data-act="chatmenu"]'), true));

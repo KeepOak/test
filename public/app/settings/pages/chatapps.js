@@ -8,13 +8,13 @@
    wait for messages split in two, the watchdog, when it starts a stalled app again, the "stalled after" figure and
    online status in the app (off until chosen: it changes the bot's profile). Each connected app the watchdog looks at
    has its line: when it last answered and how often it was started again today. Per-app formatting saves native/plain
-   choices through channels/formatting; turning Telegram off has no route that is not deleting its saved token, so it
-   stays greyed too. Every word goes through t() (public/locales); a switch
+   choices through channels/formatting; the revoked-card action switches off only the exact guided Telegram
+   connection, with a short-lived Undo that retains its token and conversations. Every word goes through t() (public/locales); a switch
    keeps its English title (its id is made from it) and shows through say(); the engine's reason is shown as it wrote it. */
 
 import { esc, render } from "../../core/dom.js";
 import { groupResponseCard, initGroupResponses } from "../group-responses.js";
-import { level, E } from "../../core/state.js";
+import { level, S, E, ownerHere, activeId } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { toast, openDlg } from "../../core/ui.js";
 import { ownerCommandCard, initOwnerCommands } from "../owner-commands.js";
@@ -37,11 +37,20 @@ const OWN_FULL = "Your own chats have your full access";
 const OWN_FULL_SUB = "Your own account, one to one, on an app that vouches for its senders, can do what you can in the window. Groups and other people keep the short list. Lockdown turns it off.";
 const kindOf = (c) => c.kind ?? c.id;
 
+/* The window is not behind the App lock. */
+const unlocked = () => !document.getElementById("app")?.classList.contains("locked-b17");
+/* The owner, the same person as when a read began, with the window unlocked: what a late answer may still change. */
+const sameOwner = (profile) => ownerHere() && activeId() === profile && unlocked();
+
+let appsRead = 0;
 async function loadApps() {
-  if (E.profiles?.isOwner === false) return; // the owner's chat apps: no page asks for them on a household person's profile
+  const profile = activeId();
+  if (!ownerHere() || !unlocked()) return; // the owner's chat apps: no page asks for them on a household person's profile
+  const read = ++appsRead, current = () => read === appsRead && sameOwner(profile);
   A.at = Date.now();
-  const [live, setup] = await Promise.all(["channels", "channel-setup"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
-  A.channels = live?.channels ?? [];
+  const [live, setup] = await Promise.all(["channels", "channel-setup"].map((path) => api(path).catch((error) => { if (current()) toast(error.message); return null; })));
+  if (!current()) return;
+  A.channels = live?.channels ?? A.channels; // a failed read is unknown, never evidence that no app is connected
   A.intake = live?.intake ?? null;
   A.watchdogLog = live?.watchdogLog ?? [];
   A.live = live?.live ?? null;
@@ -52,7 +61,7 @@ async function loadApps() {
   A.permissions = live?.permissions ?? null;
   A.apps = setup?.channels ?? [];
   await Promise.all([loadFormats(), loadReplyStyles(), loadPhoneAccess()]);
-  render();
+  if (current()) render();
 }
 
 const nameOf = (id) => A.apps.find((x) => x.id === id)?.name ?? id;
@@ -124,10 +133,43 @@ function advanced(on) {
 export function revokedPrompts() {
   if (E.profiles?.isOwner === false) return "";
   if (Date.now() - A.at > 30_000) loadApps();
-  return (A.channels ?? []).filter(revoked).map((c) => `<div class="rev17d" role="status">${logo("telegram", "Telegram", 34)}<span class="grow"><b>${esc(t("window.p17d.revoked-title"))}</b><small>${esc(c.health.reason ?? "")}</small></span><button class="btn ghost sm" type="button" data-act="revoff17d">${esc(t("window.p17d.turn-telegram-off"))}</button><button class="btn pri sm" type="button" data-act="revfix17d">${esc(t("window.p17d.paste-the-new-token"))}</button></div>`).join("");
+  return (A.channels ?? []).filter(revoked).map((c) => `<div class="rev17d" role="status">${logo("telegram", "Telegram", 34)}<span class="grow"><b>${esc(t("window.p17d.revoked-title"))}</b><small>${esc(c.health.reason ?? "")}</small></span><button class="btn ghost sm" type="button" data-act="revoff17d" data-v="${esc(c.id)}">${esc(t("window.p17d.turn-telegram-off"))}</button><button class="btn pri sm" type="button" data-act="revfix17d">${esc(t("window.p17d.paste-the-new-token"))}</button></div>`).join("");
 }
 /** Customize › Channels: whether a connected app is offline because its token was refused. */
 export const offlineIn = (connected, id) => connected.some((c) => kindOf(c) === id && revoked(c));
+
+let telegramControlBusy = false;
+/* Turning Telegram off reads the card first; the switch is sent only if the same person is still here, unlocked, with the
+   card's button still on screen. Its note (with Undo) shows after the page is read again only if nothing moved on: the
+   same person on the same page, unlocked. */
+async function turnTelegramOff(el) {
+  const profile = activeId(), channel = el.dataset.v, view = S.view;
+  const still = () => sameOwner(profile) && S.view === view;
+  if (!still() || telegramControlBusy || !channel) return;
+  telegramControlBusy = true;
+  try {
+    const before = await api("never-break/telegram");
+    if (!still() || !el.isConnected) return;
+    if (before.card?.channel !== channel || before.mode === "off") throw new Error(t("window.p17d.telegram-card-only"));
+    const done = await api("never-break/telegram", { action: "off", channel, revision: before.card.revision, expectedMode: before.mode, expectedSettingsRevision: before.settingsRevision });
+    if (!still()) return;
+    await loadApps();
+    if (still()) toast(done.note, () => undoTelegramOff(done.receipt, profile));
+  } catch (error) { if (still()) toast(error.message); }
+  finally { telegramControlBusy = false; }
+}
+async function undoTelegramOff(receipt, profile) {
+  const view = S.view, still = () => sameOwner(profile) && S.view === view;
+  if (!receipt || !still() || telegramControlBusy) return;
+  telegramControlBusy = true;
+  try {
+    const done = await api("never-break/telegram", { action: "undo", receipt });
+    if (!still()) return;
+    await loadApps();
+    if (still()) toast(done.note);
+  } catch (error) { if (still()) toast(error.message); }
+  finally { telegramControlBusy = false; }
+}
 
 /** owner-dm-full: the switch saves the engine's own value, then the page is read again from the engine. */
 async function saveOwnFull(on) {
@@ -145,7 +187,8 @@ export function init() {
   on("ca-watchdog-log", showWatchdogLog);
   initFormatting();
   initReplyStyle();
-  markLive(["sw:f15-show-steps-in-chats", "sw:" + id15(OWN_FULL), "ca-split", "ca-reconnect", "sw:ca-stall17d", "ca-watchdog-log", ...Object.keys(SW).map((id) => "sw:" + id)]);
+  markLive(["sw:f15-show-steps-in-chats", "sw:" + id15(OWN_FULL), "ca-split", "ca-reconnect", "sw:ca-stall17d", "ca-watchdog-log", "revoff17d", ...Object.keys(SW).map((id) => "sw:" + id)]);
+  on("revoff17d", (el) => turnTelegramOff(el));
   on("ca-split", (el) => saveIntake({ splitWaitMs: Number(el.dataset.v) }));
   on("ca-reconnect", (el) => saveIntake({ reconnectMinutes: Number(el.dataset.v) }));
   document.addEventListener("change", (e) => {

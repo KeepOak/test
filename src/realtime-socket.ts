@@ -15,7 +15,7 @@ import type { RealtimePlaybackItem } from "./realtime.js";
 
 /** What the browser may say on a live conversation's socket. Anything else is ignored. */
 export type LiveCommand =
-  | { live: "start" }
+  | { live: "start"; offer?: string }
   | { live: "stop" }
   | { live: "interrupt"; playback?: RealtimePlaybackItem[] }
   | { live: "done" }
@@ -40,7 +40,12 @@ export function parseCommand(payload: Buffer): LiveCommand | null {
   try { value = JSON.parse(payload.toString("utf8")); } catch { return null; }
   if (!value || typeof value !== "object") return null;
   const live = (value as { live?: unknown }).live;
-  if (live === "start" || live === "stop" || live === "done") return { live };
+  if (live === "start") {
+    const offer = (value as { offer?: unknown }).offer;
+    if (offer !== undefined && (typeof offer !== "string" || Buffer.byteLength(offer) > 256 * 1024)) return null;
+    return { live, ...(typeof offer === "string" ? { offer } : {}) };
+  }
+  if (live === "stop" || live === "done") return { live };
   if (live === "interrupt") return { live, playback: playbackItems((value as Record<string, unknown>)["playback"]) };
   if (live === "say") {
     const text = String((value as { text?: unknown }).text ?? "").slice(0, 4000).trim();
@@ -83,11 +88,12 @@ export function socketOutput(reply: RunSocketWriter): LiveOutput {
  */
 export function liveHooks(live: LiveConversations, runId: string, sessionId: string): RunSocketHooks {
   let conversation: LiveConversation | undefined;
+  let starting = false, ended = false;
   const handle = (payload: Buffer, binary: boolean, reply: RunSocketWriter): void => {
     if (binary) { conversation?.audio(new Uint8Array(payload)); return; }
     const command = parseCommand(payload);
     if (!command) return;
-    if (command.live === "start") { void begin(reply); return; }
+    if (command.live === "start") { if (!starting && !conversation && !ended) void begin(reply, command.offer); return; }
     if (!conversation) { reply.text(JSON.stringify({ kind: "voice.live.problem", data: { message: "No live conversation is open." } })); return; }
     if (command.live === "stop") { live.stop(runId, "You ended the conversation"); conversation = undefined; return; }
     if (command.live === "interrupt") { conversation.interrupt(command.playback); return; }
@@ -95,20 +101,23 @@ export function liveHooks(live: LiveConversations, runId: string, sessionId: str
     try { if (command.live === "picture") conversation.show(command); else conversation.say(command.text); }
     catch (error) { reply.text(JSON.stringify({ kind: "voice.live.problem", data: { message: (error as Error).message } })); }
   };
-  const begin = async (reply: RunSocketWriter): Promise<void> => {
+  const begin = async (reply: RunSocketWriter, offer = ""): Promise<void> => {
+    starting = true;
     try {
-      const started = await live.start(runId, sessionId, socketOutput(reply));
+      const started = await live.start(runId, sessionId, socketOutput(reply), offer);
+      if (ended) { live.stop(runId, "The window closed"); return; }
       conversation = started.conversation;
-      reply.text(JSON.stringify({ kind: "voice.live.ready", data: { service: started.plan.service, reason: started.plan.reason } }));
+      reply.text(JSON.stringify({ kind: "voice.live.ready", data: { service: started.plan.service, reason: started.plan.reason,
+        ...(started.plan.answerSdp ? { answerSdp: started.plan.answerSdp } : {}) } }));
     } catch (error) {
       // A refusal is the ordinary answer here, not a failure: "keep sound on this computer" is on,
       // or the connection cannot hold a live conversation. The person is told which, in words.
       reply.text(JSON.stringify({ kind: "voice.live.refused", data: { message: (error as Error).message } }));
-    }
+    } finally { starting = false; }
   };
   return {
     onClientFrame: handle,
     liveOpen: () => conversation?.open === true,
-    onClose: () => { if (conversation) { live.stop(runId, "The window closed"); conversation = undefined; } },
+    onClose: () => { ended = true; live.stop(runId, "The window closed"); conversation = undefined; },
   };
 }

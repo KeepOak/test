@@ -36,6 +36,7 @@ import { TrunkFiles } from "./files.js";
 import { characters } from "./characters.js";
 import { conversationBootstrap } from "../conversation-bootstrap.js";
 import { currentPerson } from "../people/context.js";
+import { createFingerprint, initializedTrunk, requestedTrunk } from "./create-request.js";
 import { fromSetup } from "../setup-origin.js"; // defaulttrunk: which Trunk setup made
 
 
@@ -65,7 +66,7 @@ const byRuntime = new WeakMap<Runtime, Trunks>();
 export const trunksFor = (runtime: Runtime): Trunks | undefined => byRuntime.get(runtime);
 
 /** Q44: the three-field create, and where it starts, so even its introduction starts in the right place. */
-const CreateInput = TrunkCreateSchema.extend({ startsIn: StartsInSchema.optional() }).strict();
+const CreateInput = TrunkCreateSchema.extend({ startsIn: StartsInSchema.optional(), requestId: z.string().uuid().transform((id) => id.toLowerCase()).optional() }).strict();
 const AvatarInput = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("face"), locked: z.boolean().default(false) }).strict(),
   z.object({ kind: z.literal("image"), dataUrl: z.string().max(400_000, "That picture is too large for a Trunk; use one under about 290 KB") }).strict(),
@@ -422,34 +423,54 @@ export class Trunks {
     return { unread: 0 };
   }
 
-  private conversation(title: string): string {
-    // Dogfood D14: a Trunk's own conversation belongs to no project, so a project opened last never lends it its instructions.
-    const run = this.store.createRun(this.owner, title, undefined, false, "web", defaultProjectId);
-    this.store.event(run.id, "run.bootstrap", conversationBootstrap);
-    this.store.markAside(run.id); // overview: the conversation's opening row, set aside in GET /api/state
-    this.store.finish(run.id, "completed", "Opened");
-    startLikeNew({ store: this.store, runtime: { owner: this.owner } }, run.sessionId); // Q013: starts as a new conversation does
+  private conversation(title: string, project = defaultProjectId, afterCommit?: (() => void)[]): string {
+    // Canonical Trunk chats stay in default; a chosen conversation carries its explicitly requested project.
+    const run = this.store.createRun(this.owner, title, undefined, false, "web", project);
+    if (afterCommit) {
+      // A failed keyed create must not notify hooks or completion listeners about rolled-back work.
+      afterCommit.push(this.store.eventUnannounced(run.id, "run.bootstrap", conversationBootstrap));
+      afterCommit.push(this.store.eventUnannounced(run.id, "run.aside", {}));
+      afterCommit.push(() => {
+        this.store.finish(run.id, "completed", "Opened");
+        startLikeNew({ store: this.store, runtime: { owner: this.owner } }, run.sessionId);
+      });
+    } else {
+      this.store.event(run.id, "run.bootstrap", conversationBootstrap);
+      this.store.markAside(run.id); // overview: the conversation's opening row, set aside in GET /api/state
+      this.store.finish(run.id, "completed", "Opened");
+      startLikeNew({ store: this.store, runtime: { owner: this.owner } }, run.sessionId); // Q013
+    }
     return run.sessionId;
   }
+
   /** phase2/rooms: a new conversation that a chosen Trunk answers in. */
   startConversation(input: unknown): { sessionId: string } {
-    return this.conversations.start(input, (title) => this.conversation(title));
+    return this.conversations.start(input, (title, project) => this.conversation(title, project));
   }
   /** R17-002: the three-field create. The Trunk then introduces itself in its own conversation. */
   create(input: unknown, extra: Partial<Trunk> = {}): Trunk {
     requireTrunkPart(this.store, this.owner, "trunks");
-    const { startsIn, ...basic } = CreateInput.parse(input);
+    const { startsIn, requestId, ...basic } = CreateInput.parse(input);
     checkStartsIn(startsIn, this.computers()); // Q44: refused before anything is made
     const fields = TrunkSchema.parse({ ...basic, ...(startsIn ? { startsIn } : {}) });
-    return this.adopt(fields, fromSetup() ? { ...extra, fromSetup: true } : extra); // defaulttrunk: setup's first Trunk may be the default
+    return this.adopt(fields, fromSetup() ? { ...extra, fromSetup: true } : extra, true, requestId); // defaulttrunk: setup's first Trunk may be the default
   }
-  private adopt(fields: z.infer<typeof TrunkSchema>, extra: Partial<Trunk>, speaks = true): Trunk {
+  private adopt(fields: z.infer<typeof TrunkSchema>, extra: Partial<Trunk>, speaks = true, requestId?: string): Trunk {
     const before = this.records.list().length;
-    if (before >= 50) throw new Error("You can have at most 50 Trunks");
-    const trunk = this.records.put(this.records.build(fields, this.conversation(`Trunk: ${fields.name}`), extra));
+    const afterCommit: (() => void)[] | undefined = requestId ? [] : undefined;
+    const create = () => {
+      if (before >= 50) throw new Error("You can have at most 50 Trunks");
+      return this.records.put(this.records.build(fields, this.conversation(`Trunk: ${fields.name}`, defaultProjectId, afterCommit), extra));
+    };
+    const result = requestId ? requestedTrunk(this.store, this.owner, requestId, createFingerprint(fields),
+      (id) => this.records.find(id), create) : { trunk: create(), created: true };
+    const { trunk } = result;
+    if (!result.created) return trunk;
+    for (const finish of afterCommit ?? []) finish();
     this.refresh();
     if (!before) this.settle(); // defaulttrunk: once setup is over the first Trunk is the default, and everything with nobody joins it
     if (speaks) this.introduce(trunk);
+    if (requestId) initializedTrunk(this.store, this.owner, requestId);
     return trunk;
   }
   private introduce(trunk: Trunk): void {

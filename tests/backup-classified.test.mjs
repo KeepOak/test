@@ -41,6 +41,7 @@ const notSettings = new Set(["[page]", "crashes", "help.", "installed_skills", "
  * src/backup.ts; a new one fails here until someone reads it and adds it.
  */
 const reviewedComputedKeys = new Set([
+  "src/context-audit.ts: key",
   "src/channels/topic-command.ts: key",
   "src/channels/thread-lifecycle.ts: keyFor",
   "src/channels/personality-settings.ts: keyFor",
@@ -89,6 +90,7 @@ const reviewedComputedKeys = new Set([
   "src/flows-boards/settings.ts: key",
   "src/gitlab-connection.ts: gitlabAccountKey", // RES-719: "gitlab-account" stays on this computer (its token is in the locker)
   "src/gitlab-connection.ts: gitlabSwitchKey", // RES-719: "gitlab-connection" waits for the owner's yes
+  "src/github-device-connection.ts: accountKey", // SELF-021: "github.device.account" stays on this computer (its token is in the locker)
   "src/goal-mode.ts: key",
   "src/integrations/mcp-oauth.ts: settingsKey",
   "src/personal/signin.ts: this.healthKey",
@@ -204,7 +206,7 @@ const computedExamples = {
     "channel-session:telegram:1", "channel-voice:telegram:1", "coding-checklist:s", "coding-read-first", "coding-ci", "comfort-notify",
     "conversation-mode:s", "goal:s", "interop-fleet", "interop-handoff", "knobs-compaction", "learning-more-providers-settings",
     "model-savings-mixtures", "handoffs:x", "openapi-service:w", "profile-role:p", "personal-email-settings", "plan-act:project:p",
-    "plan-act:session:s", "pinned-skill:s", "skill-package:k", "captured-api-skill:c", "registry-key:r", "skill-candidate:k:1", "trunks-messages", "trunks-routines",
+    "plan-act:session:s", "pinned-skill:s", "context-result-exclusions:s", "skill-package:k", "captured-api-skill:c", "registry-key:r", "skill-candidate:k:1", "trunks-messages", "trunks-routines",
     "flowboards-recipe-checks:p", "tool-meaning-search", "people-shares", "policy", "desktop-control", "wake-word",
     "live-dictation", "routing", "model-profiles", "models", "governance", "person-about:owner", "person-picture:owner"],
   travels: ["channel-usage:telegram:1", "delight-achievements", "prompt-library-items", "reflection-cursor:s",

@@ -300,3 +300,36 @@ test("RES-408: checking a Google sign-in reads only metadata, names each capabil
   signIn.save({ clientId: "changed" });
   assert.equal((await signIn.status()).health, null, "changing the sign-in forgets the old check");
 });
+test("RES-408: the Home Assistant check is one read of GET /api/ and says working only when the API answers", async () => {
+  const store = fakeStore();
+  on(store, "home-control");
+  const web = fakeWeb([[/\/api\/$/, { message: "API running." }]]);
+  const home = new HomeControl(store, "local", web.fetch, async () => "ha-token");
+  await assert.rejects(home.test(), /Add your Home Assistant address/);
+  home.save({ url: "https://home.example.net/" });
+  const health = await home.test();
+  assert.equal(health.ok, true);
+  assert.equal(health.checks.length, 1);
+  const wrong = new HomeControl(store, "local", fakeWeb([[/\/api\/$/, { message: "something else" }]]).fetch, async () => "ha-token");
+  assert.equal((await wrong.test()).ok, false, "an answer that is not the API's own is not working");
+});
+
+test("RES-408: a check still reading the old grant is not kept once a new sign-in has finished", async () => {
+  const store = fakeStore();
+  on(store, "google");
+  let finish, release;
+  const finished = new Promise((resolve) => { finish = resolve; });
+  const slow = new Promise((resolve) => { release = resolve; });
+  const fetch = async () => { await slow; return new Response("{}", { status: 200, headers: { "content-type": "application/json" } }); };
+  const oauth = { start: async () => ({ id: "x", url: "https://accounts.google.com/x" }), waitFor: () => finished,
+    saved: async () => ({ expiresAt: null, scope: "read" }), accessToken: async () => "the-old-token" };
+  const signIn = new SignIn({ store, owner: "local", fetch, oauth, secret: async () => "shh" }, "google", "google");
+  signIn.save({ clientId: "abc" });
+  await signIn.start();
+  const checking = signIn.test();
+  finish({ ok: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  await assert.rejects(checking, /connection changed/);
+  assert.equal((await signIn.status()).health, null, "the new grant is not labelled by the old grant's check");
+});
