@@ -56,6 +56,8 @@ async function realBranch(t, calls) {
   const owner = app.runtime.owner;
   app.store.projects.save(owner, { id: "branch-agent-remove-button", name: "Branch Agent: remove-button", instructions: "",
     modelPreset: null, repository: "stabrea/Branch-Agent", folder: worktree, profile: null, knowledgeBases: [], branch: "" });
+  // The project assigns an existing working copy; production must refuse a missing one.
+  await mkdir(join(root, "workspace", worktree), { recursive: true });
   app.store.projects.setActive(owner, { active: "branch-agent-remove-button" });
   const book = new ContractBook(app.store.sqlite);
   return {

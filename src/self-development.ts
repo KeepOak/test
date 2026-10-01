@@ -42,6 +42,8 @@ export interface SelfDevelopmentDeps {
   fullAccessOwner?: (context: ToolContext) => string | null;
   /** selfdev: the task is the owner's own turn through their designated default Trunk (src/runtime.ts `ownersDefaultTurn`). */
   ownersDefaultTurn?: (context: ToolContext) => boolean;
+  /** The owner UI's fresh approval guard, supplied only for explicit Inbox preparation. */
+  recheckApproval?: () => void;
 }
 
 const present = (path: string): Promise<boolean> => stat(path).then(() => true, () => false);
@@ -193,13 +195,17 @@ export async function prepareBranchSourceChange(
       reason: `From ${repository.repo} at ${input.base}. Paths ${terms.allowedPaths.join(", ")}; tools ${terms.permissions.join(", ")}`.slice(0, 500),
       runId: runId ? runId.slice(0, 64) : null, outcome: "pending" });
   const source = await ensureSource(deps, repository, signal);
+  deps.recheckApproval?.();
   const remote = await ensureUpstream(deps, source, !isBranchRepository(repository.repo), signal);
+  deps.recheckApproval?.();
   await run(deps, source, ["fetch", remote, input.base], signal, 900_000);
   const copyName = `self-${input.name}`, branch = `branch/self-${input.name}`;
   const folder = `${sourceFolder}/.branch-worktrees/${copyName}`;
   const exists = deps.exists ?? present;
   const existing = await exists(sourceChangeFolder(deps.workspace, input.name));
+  deps.recheckApproval?.();
   const contract = await bindContract(deps, { source, folder, ref: `${remote}/${input.base}`, remote, runId, terms, existing }, signal);
+  deps.recheckApproval?.();
   if (!existing)
     await run(deps, source, ["worktree", "add", "-b", branch, `.branch-worktrees/${copyName}`, contract.sourceSha], signal, 600_000);
   const projectId = `branch-agent-${input.name}`;

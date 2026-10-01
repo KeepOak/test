@@ -34,7 +34,9 @@ import {
 } from "./plan-act.js";
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
 import { checkCodexModels, chooseCodexModel, codexModelsView } from "./codex-models-api.js"; // QA 2026-09-28
+import { usageByPerson } from "./usage-by-person.js";
 import { usageByTrunk } from "./usage-by-trunk.js"; // models-ui (MODEL-052)
+import { RecapSettingsSchema, weeklyRecap } from "./weekly-recap.js";
 import { helperDefaultsView, saveHelperDefault } from "./helper-defaults-api.js"; // models-ui (MODEL-051)
 import { classifyToolEvent } from "./receipts.js";
 import { SkillScanPolicySchema } from "./skill-scan.js";
@@ -127,6 +129,7 @@ import { handlesLearningCorePath, learningCoreApi, LearningCoreApiError } from "
 import { conversationPathsApi, conversationPathsRoute, readMarksPath } from "./conversation-paths-api.js";
 import { ArtifactPageSchema, ArtifactSaveSchema, artifactPageRoute, holdArtifactPage } from "./artifact-pages.js";
 import { readServingSettings, saveServingSettings } from "./mcp-server.js";
+import { validateStateless, statelessFailure, StatelessError } from "./mcp-stateless.js";
 import { meaningSearchExplanation, meaningSearchOn, meaningSearchSetting } from "./tool-loading.js";
 import { handleA2a, remoteAgentsApi } from "./a2a-routes.js";
 import type { createBranch } from "./index.js";
@@ -149,7 +152,9 @@ import { projectsApi, secretsApi } from "./owner-data-api.js";
 import { HttpError, readJsonBody as readBody } from "./server-http.js";
 import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
+import { handlesSourceDraftPath, sourceDraftApi } from "./self-development-drafts.js";
 import { handlesSourceMergePath, sourceMergeApi } from "./self-development-merge.js";
+import { sourceCiApi } from "./self-development-ci-api.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
 import { handlesSeasonsPath, seasonsApi, SeasonsHttpError } from "./seasons/api.js"; // Seasons
@@ -289,7 +294,8 @@ import { guardsApi, GuardsApiError, handlesGuardsPath } from "./run-guards.js";
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
 import { syncMixtures } from "./model-savings/mixture.js"; // a forgotten connection takes its mixtures with it
-import { readChatIntake, saveChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
+import { channelMessageOrigins } from "./channels/message-origin.js";
+import { readChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
 import { channelFormats, saveChannelFormatting } from "./channels/formatting-settings.js";
 import { replyStyles, saveReplyStyle } from "./channels/reply-style.js";
 import { practiceRunsEnabled, savePracticeRuns } from "./practice-runs.js";
@@ -336,14 +342,17 @@ import { handlesOrchestrationPath, orchestrationApi, OrchestrationApiError } fro
 import { handlesOtherPath, otherApi, OtherApiError } from "./other-api.js";
 import { handlesSdkKitPath, sdkKitApi, SdkKitError } from "./sdk-kit.js"; // bucket 21
 import { gitlabApi, GitLabApiError, handlesGitLabPath } from "./gitlab-connection.js"; // RES-719
+import { githubDeviceApi, handlesGitHubDevicePath } from "./github-device-connection.js";
+import { GitHubDeviceError } from "./integrations/github-device-auth.js";
 import { webPagesApi, WebPagesApiError } from "./web-pages.js"; // w911 (A0743, A1452) hook
+import { webSearchApi, WebSearchApiError } from "./web-search-choice.js"; // wire-greyed
 import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
 import { proposeSchedule } from "./schedule-words.js";
 import { readScheduledDashboard } from "./scheduled-dashboards.js";
 import { proposeTrigger } from "./trigger-words.js";
-import { ownerTimezone } from "./person-about.js"; // your-profile
+import { aboutOf, ownerTimezone } from "./person-about.js"; // your-profile
 import { workbooksRoute } from "./workbooks.js"; // P17-D §3
 import type { AnswerShape, ShapedAnswer } from "./answer-shape.js";
 // Wave 6 (collaboration and workflows): sharing pages and links, labels and notes, workflows,
@@ -1070,7 +1079,12 @@ async function api(
   // A change to Branch itself asked for from a chat (src/self-development-requests.ts): reading the requests
   // and answering them is the owner's alone, in the app window. Short-lived keys and household persons are
   // refused before this (src/short-lived-keys.ts, src/household-routes.ts), and each answer checks again.
+  if (handlesSourceDraftPath(path)) {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
+    return sourceDraftApi(app.sourceDrafts, request.method ?? "GET", path, () => readBody(request));
+  }
   if (handlesSourceRequestPath(path)) {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
     app.store.profiles.requireOwner("The list of requests to change Branch itself");
     return sourceRequestsApi(app.sourceRequests, request.method ?? "GET", path, () => readBody(request));
   }
@@ -1094,6 +1108,9 @@ async function api(
     if (throughADoor(request)) throw new HttpError(403, hereOnly);
     return sourceMergeApi(app.sourceMerges, request.method ?? "GET", path, () => readBody(request));
   }
+  if (path === "/api/self-development/ci") {
+    return sourceCiApi(app, request.method ?? "GET", throughADoor(request), () => readBody(request));
+  }
   // bucket-18: code editor (A0098)
   if (handlesWorkspaceEditorPath(path))
     return workspaceEditorApi({
@@ -1116,11 +1133,24 @@ async function api(
       request.method ?? "GET", () => readBody(request)).catch((error: unknown) => {
       throw error instanceof WebPagesApiError ? new HttpError(error.status, error.message) : error;
     });
+  // wire-greyed: where "search the web" goes, picked in Settings › Advanced (owner-only change).
+  if (path === "/api/web-search")
+    return webSearchApi({ store: app.store, owner: app.runtime.owner, launch: () => app.web.settings().search,
+      hasSecret: (name) => { try { return app.store.secrets.list(app.runtime.owner, app.store.projects.active(app.runtime.owner).id).some((entry) => entry.name === name); } catch { return false; } },
+      requireOwner: (what) => app.store.profiles.requireOwner(what),
+      requireUnlocked: () => { if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before choosing where web searches go."); },
+    }, request.method ?? "GET", () => readBody(request, 4 * 1024)).catch((error: unknown) => {
+      throw error instanceof WebSearchApiError ? new HttpError(error.status, error.message) : error;
+    });
   // RES-719: GitLab set up in the window: its switch, the token checked and kept in the locker, and taking it out.
   if (handlesGitLabPath(path))
     return gitlabApi({ connection: app.gitlab, store: app.store, owner: app.runtime.owner,
       requireOwner: (what) => app.store.profiles.requireOwner(what) }, request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
       throw error instanceof GitLabApiError ? new HttpError(error.status, error.message) : error;
+    });
+  if (handlesGitHubDevicePath(path))
+    return githubDeviceApi(app.githubDevice, request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
+      throw error instanceof GitHubDeviceError ? new HttpError(error.status, error.message) : error;
     });
   // ── Bucket 21: the switch for building on Branch, and flows written out and read back as YAML. ──
   if (handlesSdkKitPath(path))
@@ -1310,7 +1340,7 @@ async function api(
   // RES-709: a piece of what the window's own microphone heard, written out on this computer (hearInWindow below).
   if (request.method === "POST" && path === "/api/voice/dictation/hear") {
     const host = { store: app.store, owner: app.runtime.owner, isOwner: app.store.profiles.isOwner(),
-      locked: app.sessionLock.locked(), voice: app.voice, platform: app.dictation.platform, present: app.dictation.present };
+      locked: app.sessionLock.locked(), isLocked: () => app.sessionLock.locked(), voice: app.voice, platform: app.dictation.platform, present: app.dictation.present };
     try { return await hearInWindow(host, request); } catch (error) {
       throw new HttpError(error instanceof HearRefused ? error.status : 400, errorText(error));
     }
@@ -1353,6 +1383,17 @@ async function api(
     answer.windowBuild = liveWindowCommit() ?? ownBuild();
     for (const part of ["triggers", "webhooks"]) if (part in answer) answer[part] = withoutSecretToADoor(request, answer[part]);
     return answer;
+  }
+  if (path === "/api/weekly-recap") {
+    app.store.profiles.requireOwner("The weekly recap");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "The weekly recap belongs to the owner at the app.");
+    if (request.method === "POST") {
+      const input = RecapSettingsSchema.parse(await readBody(request, 4096));
+      app.store.profiles.requireOwner("The weekly recap");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing your weekly estimate.");
+      app.store.save("settings", app.runtime.owner, "weekly_recap", input);
+    } else if (request.method !== "GET") throw new HttpError(405, "Use GET or POST");
+    return weeklyRecap(app.store, app.runtime.owner, (id) => app.trunks.records.find(id)?.name ?? null);
   }
   // FQ-collaboration.unified-search: one query across conversations, saved workflows and the
   // record of what the assistant was allowed to do. Owner-only: it reads across everything the
@@ -1564,7 +1605,7 @@ async function api(
   // conversation. Its tools run as the owner, so it is the owner's alone (src/short-lived-keys.ts no
   // longer lets a key or a household person reach it).
   if (path === "/api/voice/live"
-    || path === "/api/voice/settings" || path === "/api/voice/plan" || path === "/api/voice/voices"
+    || path === "/api/voice/settings" || path === "/api/voice/plan" || path === "/api/voice/voices" || path === "/api/voice/piper/files"
       || path.startsWith("/api/models/profiles") || path === "/api/models/switch" || path === "/api/models/probe"
       || path === "/api/models/gemini-signin")
     return voiceApi(voiceDeps(app), request.method ?? "GET", path, () => readBody(request));
@@ -1599,7 +1640,14 @@ async function api(
   }
   if (request.method === "GET" && path === "/api/artifacts") {
     const type = new URL(request.url ?? "/", "http://local").searchParams.get("type") ?? "";
-    const kept = await app.artifacts.list();
+    // SCREEN-162: the same rule as the file route, so the gallery lists only files this profile can open.
+    const requestingScope = scopeWhileUnlocked(app);
+    const all = await app.artifacts.list();
+    // Recheck that the profile scope captured at the start is still current and AppLock is not on.
+    // This matches the pattern in the /api/artifacts/file route: if scope changed during the await, refuse.
+    if (!requestingScope || scopeWhileUnlocked(app) !== requestingScope)
+      return { artifacts: [] };
+    const kept = all.filter((entry) => ownArtifact(app, requestingScope, entry.runId));
     return { artifacts: type ? kept.filter((entry) => entry.mediaType.startsWith(`${type}/`)) : kept };
   }
   // Batch 26 (wave 8): what Windows itself allows, with the page that turns each one on.
@@ -2132,9 +2180,12 @@ async function api(
   if (request.method === "GET" && path === panelsWorkPath)
     return panelsWork(app.store, app.runtime.owner, new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
   // live-stage: the full-size view of Branch's browser, a frame of what a conversation's task sees now (src/live-stage.ts).
-  if (request.method === "GET" && path === liveStagePath)
-    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
-      new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
+  if (request.method === "GET" && path === liveStagePath) {
+    const query = new URL(request.url ?? "/", "http://local").searchParams;
+    const replay = query.has("step") ? { step: query.get("step"), runId: query.get("run"), planAt: query.get("plan") } : undefined;
+    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser,
+      plan: session => app.runtime.orchestration.plan(session), observeSteps: query.get("observe") === "steps" }, query.get("session") ?? "", replay);
+  }
   // Redesign phase 1: the mode chip in the message box (src/conversation-mode-api.ts).
   if (handlesConversationModePath(path))
     return conversationModeApi(app, request.method ?? "GET", new URL(request.url ?? "/", "http://local"), () => readBody(request))
@@ -2159,7 +2210,11 @@ async function api(
     const stats = app.store.usageStore().getMonthlyStats(budget?.maxMonthlyTokens, overrides);
     // Wave 7: the few numbers that say how it is behaving, beside what it cost.
     const statistics = app.store.usageStore().statistics(app.runtime.owner, range === "7d" ? 7 : range === "90d" ? 90 : 30);
-    return { data, stats, statistics, pricing: pricingTableInUse(app.store, app.runtime.owner) };
+    // The household return above stays scoped; full person attribution is only for the owner window.
+    const byPerson = url.searchParams.get("people") === "1" && !currentPerson() && !startedWithShortLivedKey()
+      ? usageByPerson({ store: app.store, owner: app.runtime.owner, modelCostOf: (id) => runCost(app, id).amount },
+        range === "7d" ? 7 : range === "90d" ? 90 : 30) : null;
+    return { data, stats, statistics, pricing: pricingTableInUse(app.store, app.runtime.owner), byPerson };
   }
   if (request.method === "GET" && path === "/api/pricing")
     return pricingTableInUse(app.store, app.runtime.owner);
@@ -2347,7 +2402,9 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
     const shared = person && app.trunks.rooms.forPerson(person.id).some((room) => room.sessionId === match[1]);
     const view = app.store.sessionView(shared ? app.runtime.owner : owner, match[1]!);
     // Dogfood D14: the project the conversation is filed under, so the window can say so; projects are the owner's.
-    return app.store.profiles.isOwner() ? { ...view, project: app.store.sessionProject(match[1]!) ?? null } : view;
+    return app.store.profiles.isOwner() ? { ...view, messages: channelMessageOrigins(app.store, owner, match[1]!, view.messages),
+      project: app.store.sessionProject(match[1]!) ?? null }
+      : { ...view, messages: view.messages.map((message) => ({ ...message, channelOrigin: undefined })) };
   }
   if (match && match[2] === "skill") {
     if (!app.store.ownsSession(owner, match[1]!)) throw new HttpError(404, "Session not found");
@@ -2572,6 +2629,11 @@ async function memoryApi(app: Branch, request: IncomingMessage, path: string): P
  * App lock: whose records an open stream or socket may still carry. Once Branch locks with a PIN set
  * the answer is nobody's, so a stream opened before the lock ends there instead of flowing on.
  */
+/** A kept file is this profile's when the task that made it is theirs, in a conversation they own. */
+const ownArtifact = (app: Branch, scope: string, runId: string): boolean => {
+  const run = app.store.run(runId);
+  return !!run && run.owner === scope && app.store.ownsSession(scope, run.sessionId);
+};
 const scopeWhileUnlocked = (app: Branch): string => (app.sessionLock.refusal("GET", "/api/events/stream") ? "" : app.store.profiles.scope());
 /** An App lock refusal answered with its own status (400, 403 or 429); anything else as it was. */
 async function appLockAnswer(step: () => Promise<unknown>): Promise<unknown> {
@@ -3231,7 +3293,7 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   if (path === "/api/channels/intake") {
     if (request.method === "GET") return { intake: readChatIntake(app.store, owner) };
     if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
-    const before = readChatIntake(app.store, owner).presence, intake = saveChatIntake(app.store, owner, await readBody(request));
+    const before = readChatIntake(app.store, owner).presence, intake = app.channels.saveIntake(await readBody(request));
     if (intake.presence !== before) await app.channels.presenceChanged(intake.presence);
     return { intake };
   }
@@ -3343,8 +3405,17 @@ function conversationCost(app: Branch, owner: string, sessionId: string): { amou
  * models-ui: the connection that makes pictures now (src/media.ts preset: the owner's plan for "media") and the kind of
  * picture route it has, or null when it has none, so Settings › Models › Media offers only models that route can make.
  */
-function picturesNow(app: Branch): { connection: string; kind: "openai" | "gemini"; defaultModel: string } | null {
+function picturesNow(app: Branch): { connection: string; kind: "openai" | "gemini" | "codex"; defaultModel: string } | null {
   const preset = app.runtime.models.plan(app.runtime.owner, "media").candidates[0];
+  if (preset && typeof (preset.provider as { signInImages?: unknown }).signInImages === "function" &&
+      (preset.provider as { signInImagesAvailable?: boolean }).signInImagesAvailable !== false) {
+    const service = accountsServiceFor(app.runtime.models), found = service?.poolFor(preset), pool = found ? service?.usablePool(found.pool) : null;
+    if (!app.store.profiles.isOwner() || app.store.profiles.scope() !== app.runtime.owner || currentPerson() || startedWithShortLivedKey() || lockdownActive(app.store, app.runtime.owner) ||
+        (found && found.kind === "chatgpt" && !service?.legacySignedIn) ||
+        (pool && (pool.accounts.length !== 1 || pool.accounts[0]!.id !== "primary" || pool.accounts[0]!.disabled || pool.accounts[0]!.monthlyCapUsd !== null ||
+          (pool.defaultAccount !== null && pool.defaultAccount !== "primary")))) return null;
+    return { connection: preset.name, kind: "codex", defaultModel: "gpt-image-2" };
+  }
   const where = preset ? providerImages(preset.provider) : null;
   return preset && where ? { connection: preset.name, kind: where.kind, defaultModel: where.defaultModel } : null;
 }
@@ -3486,8 +3557,16 @@ async function documentsApi(app: Branch, request: IncomingMessage, path: string)
     if (request.method === "POST") return library.configure(owner, await readBody(request));
   }
   if (request.method === "GET" && path === "/api/documents") return library.view(owner);
-  if (request.method === "POST" && path === "/api/documents")
-    return library.add(owner, await readBody(request, documentBodyBytes));
+  if (request.method === "POST" && path === "/api/documents") {
+    const body = await readBody(request, documentBodyBytes);
+    const allowed = () => {
+      app.store.profiles.requireOwner("Adding a document");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before adding a document.");
+    };
+    // Checked again after waiting for the body, and again after the file's words are read, before anything is kept.
+    allowed();
+    return library.add(owner, body, undefined, true, { kind: "person", name: aboutOf(app, "owner").name, role: "owner" }, allowed);
+  }
   if (request.method === "POST" && path === "/api/documents/search")
     return { results: await library.search(owner, await readBody(request)) };
   if (request.method === "POST" && path === "/api/documents/reindex") {
@@ -3526,7 +3605,22 @@ async function researchApi(app: Branch, request: IncomingMessage, path: string):
   const owner = app.runtime.owner;
   if (request.method === "GET" && path === "/api/research") return { reports: app.research.list(owner) };
   if (request.method === "GET" && path === "/api/monitors") return { monitors: app.monitors.list(owner) };
-  if (request.method === "POST" && path === "/api/monitors") return app.monitors.create(owner, await readBody(request));
+  if (request.method === "POST" && path === "/api/monitors") {
+    const body = await readBody(request);
+    const allowed = () => {
+      app.store.profiles.requireOwner("Creating a watch");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before creating a watch.");
+    };
+    // Checked again after waiting for the body, before a price watch's first look at the page, and before saving.
+    allowed();
+    return app.monitors.create(owner, body, undefined, undefined, allowed);
+  }
+  const prices = /^\/api\/monitors\/([a-f0-9-]{36})\/prices$/.exec(path);
+  if (prices && request.method === "GET") {
+    app.store.profiles.requireOwner("Your watched prices");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "Watched price history belongs to the owner at the app.");
+    return app.monitors.history(owner, prices[1]!);
+  }
   const watch = /^\/api\/monitors\/([a-f0-9-]{36})(?:\/(check))?$/.exec(path);
   if (watch && request.method === "DELETE" && !watch[2]) return app.monitors.remove(owner, watch[1]!);
   if (watch && request.method === "POST" && watch[2] === "check") return app.monitors.check(owner, watch[1]!);
@@ -3665,6 +3759,8 @@ async function handleMcpRequest(
     const owner = app.runtime.owner;
     const mcp = app.mcpServer;
     if (!mcp) throw new HttpError(500, "MCP server not initialized");
+    if (request.headers["mcp-protocol-version"] === "2026-07-28" && request.method !== "POST")
+      throw new HttpError(405, "Stateless MCP uses POST only");
 
     const sessionId = request.headers["mcp-session-id"] as string | undefined;
 
@@ -3694,6 +3790,23 @@ async function handleMcpRequest(
     }
 
     const body = request.method === "POST" ? await readBody(request, 65536) : undefined;
+
+    const metadata = body && typeof body === "object" ? (body as { params?: { _meta?: unknown } }).params?._meta : undefined;
+    if (request.headers["mcp-protocol-version"] === "2026-07-28" || metadata && typeof metadata === "object"
+      && "io.modelcontextprotocol/protocolVersion" in metadata) {
+      try {
+        const parsed = validateStateless(body, request.headers);
+        const result = await mcp.handleStateless(parsed);
+        const status = result.error?.code === -32601 ? 404 : result.error ? 400 : 200;
+        if (!response.destroyed && !response.writableEnded) {
+          response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+          response.end(JSON.stringify(result));
+        }
+      } catch (error) {
+        send(response, 400, statelessFailure(body, error instanceof StatelessError ? error : new StatelessError(-32602, "Invalid stateless request")));
+      }
+      return true;
+    }
 
     if (request.method === "POST" && body) {
       const JsonRpcSchema = z
@@ -4454,7 +4567,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         if (handlesPersonalPath(path)) {
           app.store.profiles.requireOwner("Your personal connectors");
           const answer = await personalApi({ personal: app.personal, runtime: app.runtime, method: request.method ?? "GET",
-            readBody: () => readBody(request, 4 * 1024 * 1024) }, path).catch((error: unknown) => {
+            sessionLock: app.sessionLock, request, readBody: () => readBody(request, 4 * 1024 * 1024) }, path).catch((error: unknown) => {
             throw error instanceof PersonalHttpError ? new HttpError(error.status, error.message) : error;
           });
           send(response, 200, answer);
@@ -4499,7 +4612,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           }, path).catch((error: unknown) => {
             throw error instanceof FlowsBoardsHttpError ? new HttpError(error.status, error.message) : error;
           });
-          send(response, 200, answer);
+          // Recorded graph state may contain secret values; use the same scrub as task inspection.
+          const snapshot = request.method === "GET" && /^\/api\/flows-boards\/flows\/[^/]+\/steps$/.test(path);
+          send(response, 200, snapshot ? app.runtime.hideSecrets(answer) : answer);
           return;
         }
         // ---- end of the r17-h block ----
@@ -4946,14 +5061,16 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     const readable = () => !!scope && scopeWhileUnlocked(app) === scope && app.store.profiles.isOwner()
       && app.store.ownsSession(scope, session);
     if (!readable()) throw new HttpError(404, "Conversation not found");
-    await streamLiveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
-      session, response, readable);
+    // The stream is read only while the view shows the browser, so it observes plan steps as a fast read does (#996).
+    await streamLiveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser,
+      plan: session => app.runtime.orchestration.plan(session), observeSteps: true }, session, response, readable);
     return true;
   }
   // ---- bucket 13 (mac4): recordings of a task, the path it took, the run monitor and the event-loop
   // watch (src/run-recording-api.ts). It answers errors itself. ----
   if (handlesRecordingPath(path)) {
-    await recordingApi(app, request, response, path, { readBody: () => readBody(request, path === "/api/recordings/restart" ? 32 * 1024 * 1024 : undefined) });
+    await recordingApi(app, request, response, path, { readBody: () => readBody(request, path === "/api/recordings/restart" ? 32 * 1024 * 1024 : undefined),
+      locked: () => app.sessionLock.refusal(request.method, path) });
     return true;
   }
   // ---- end of the bucket 13 block ----
@@ -5025,11 +5142,15 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   // One kept picture or sound, so the gallery can show it. Anything outside the artifacts folder
   // is refused by RunArtifacts itself, and only kinds the browser can safely display are served.
   if (request.method === "GET" && path === "/api/artifacts/file") {
+    const requestingScope = scopeWhileUnlocked(app);
     const wanted = new URL(request.url ?? "/", "http://local").searchParams.get("path") ?? "";
     const entry = (await app.artifacts.list(500)).find((kept) => kept.path === wanted);
     if (!entry) throw new HttpError(404, "That file was not made by the assistant");
+    const readable = () => !!requestingScope && scopeWhileUnlocked(app) === requestingScope && ownArtifact(app, requestingScope, entry.runId);
+    if (!readable()) throw new HttpError(404, "That file is not available in this profile");
     if (!/^(image|audio)\//.test(entry.mediaType)) throw new HttpError(415, "Only pictures and sounds are shown here");
     const bytes = await app.artifacts.read(entry.path);
+    if (!readable()) throw new HttpError(404, "That file is not available in this profile");
     response.writeHead(200, {
       "content-type": entry.mediaType, "cache-control": "no-store",
       "x-content-type-options": "nosniff", "content-disposition": `inline; filename="${entry.name}"`,
@@ -5421,6 +5542,7 @@ function voiceDeps(app: Branch) {
   return {
     store: app.store, models: app.runtime.models, owner: app.runtime.owner,
     voice: app.voice, policy: app.web.policy, fetch: app.web.policy.guard(globalThis.fetch),
+    localFilesRefusal: () => app.sessionLock.locked() ? "Unlock Branch before browsing installed Piper files." : null,
     // Wave 7: the Gemini card's "Sign in with Google" needs the workspace's OAuth connections.
     oauth: app.oauth,
     liveRefusal: (sessionId: string) => liveRefusalFor(app, sessionId), // phase2/rooms
