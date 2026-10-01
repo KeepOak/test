@@ -67,6 +67,21 @@ test("Computer & browser is shown with the engine's values, even when its read i
   assert.deepEqual(errors, []);
 });
 
+/* The same page reached by a link's or a command's home (chat/goto.js) goes the page list's way, so it waits too. */
+test("Computer & browser opened by its home waits for the engine's values too", async (t) => {
+  const slow = (page) => page.route("**/api/comfort", async (route) => {
+    if (route.request().method() === "GET") await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+  const { page, errors, call, server } = await settingsWindow(t, { name: "wire-browser-slow-home", route: slow });
+  await call("/api/comfort", { card: "browser", values: { askNewSites: true } });
+  await page.goto(new URL("/#open=settings:computer", server.url).href);
+  await page.locator('[data-act="setpage"][data-v="computer"][aria-current="true"]').waitFor();
+  await page.locator("#b-new").waitFor();
+  assert.equal(await page.locator("#b-new").isChecked(), true, "Ask before a site shows the engine's value when first shown");
+  assert.deepEqual(errors, []);
+});
+
 test("Downloads may come from: Known sites and Ask each time are saved", async (t) => {
   const { page, errors, call } = await settingsWindow(t, { name: "wire-downloads-from" });
   await openSettingsPage(page, "permissions");
