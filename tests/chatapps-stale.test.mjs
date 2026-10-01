@@ -150,6 +150,7 @@ test("a failed refresh preserves the last verified connection instead of claimin
   const reading = w.page.load();
   await w.fail("channels", new Error("Could not refresh chat apps"));
   await w.answer("channel-setup", { channels: [] });
+  await w.answer("channels/routes", null); // #588: the routing card reads its routes with the page
   await reading;
   assert.match(w.page.draw(), /telegram/);
   assert.doesNotMatch(w.page.draw(), /window\.p17d\.no-chat-app/);
@@ -168,12 +169,15 @@ test("an older empty read cannot overwrite the new connection returned by a re-e
   const w = await appsPage(t);
   const oldChannels = w.held.splice(w.held.findIndex((h) => h.path === "channels"), 1)[0];
   const oldSetup = w.held.splice(w.held.findIndex((h) => h.path === "channel-setup"), 1)[0];
+  const oldRoutes = w.held.splice(w.held.findIndex((h) => h.path === "channels/routes"), 1)[0]; // #588's routes read
   const refresh = w.page.load();
   await w.answer("channels", telegram);
   await w.answer("channel-setup", { channels: [] });
+  await w.answer("channels/routes", null); // #588: the routing card reads its routes with the page
   await refresh;
   oldChannels.resolve({ channels: [] });
   oldSetup.resolve({ channels: [] });
+  oldRoutes.resolve(null);
   await w.drain();
   assert.match(w.page.draw(), /telegram/);
   assert.doesNotMatch(w.page.draw(), /window\.p17d\.no-chat-app/);
@@ -184,12 +188,15 @@ test("a superseded failed read cannot report an error after a successful refresh
   const w = await appsPage(t);
   const oldChannels = w.held.splice(w.held.findIndex((h) => h.path === "channels"), 1)[0];
   const oldSetup = w.held.splice(w.held.findIndex((h) => h.path === "channel-setup"), 1)[0];
+  const oldRoutes = w.held.splice(w.held.findIndex((h) => h.path === "channels/routes"), 1)[0]; // #588's routes read
   const refresh = w.page.load();
   await w.answer("channels", telegram);
   await w.answer("channel-setup", { channels: [] });
+  await w.answer("channels/routes", null); // #588: the routing card reads its routes with the page
   await refresh;
   oldChannels.reject(new Error("An old request failed"));
   oldSetup.resolve({ channels: [] });
+  oldRoutes.resolve(null);
   await w.drain();
   assert.match(w.page.draw(), /telegram/);
   assert.deepEqual(w.ca.toasts, []);
