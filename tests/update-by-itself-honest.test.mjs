@@ -16,6 +16,16 @@ import { startServer } from "../dist/server.js";
 
 const source = async (path) => (await readFile(new URL(`../public/app/${path}`, import.meta.url), "utf8"))
   .replace(/^import [\s\S]*?;\r?\n/gm, "").replace(/^export /gm, "");
+// Keep the imported report renderer real, in its own module scope. These older card-only
+// harnesses have no signed-in report owner; dedicated coverage below exercises that section.
+async function failureHelpers({ signedIn = false, ownerHere = () => true, api = async () => ({ failure: null }) } = {}) {
+  const context = createContext({ S: { signedIn }, activeId: () => "fixture-owner", ownerHere,
+    document: { getElementById: () => null }, api, t: words,
+    esc: (text) => String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"),
+    render: () => undefined, toast: () => undefined, markLive: () => undefined, on: () => undefined });
+  runInContext(await source("settings/update-failure.js"), context);
+  return runInContext("({ updateFailureSection, initUpdateFailure, loadUpdateFailure })", context);
+}
 const words = (key, params) => (params ? `${key} ${JSON.stringify(params)}` : key);
 
 async function engine(t, notify) {
@@ -241,6 +251,7 @@ test("Settings › Updates: the switch installs, and the status card says the fa
     // shell/updating.js: no install under way (tests/update-screen-ui.test.mjs covers the card while one is).
     updateNow: () => null, channelStatus: () => null, installing: () => false, clock: String, stageWords: String, targetWords: String,
   });
+  Object.assign(context, await failureHelpers());
   runInContext(await source("settings/pages/updates.js"), context);
   await runInContext("saveAutoUpdate(true)", context);
   assert.deepEqual(JSON.parse(JSON.stringify(posted.at(-1))), { card: "notify", values: { autoUpdate: "install" } }, "Keep Branch up to date by itself installs");

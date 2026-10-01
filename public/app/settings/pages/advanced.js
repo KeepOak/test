@@ -5,6 +5,7 @@ import { api, token } from "../../core/api.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { toast, openDlg } from "../../core/ui.js";
+import { viewFence } from "../../core/view-fence.js";
 import { fact15 } from "../rows15.js";
 import { sections17, init17, load17 } from "../p17-advanced.js";
 import { initMarket } from "../market.js"; // RES-720
@@ -26,16 +27,16 @@ import { restart as restartEngine } from "./self.js";
    Crash reports need a linked destination first, so they stay greyed; every other greyed row says why under itself
    (core/why.js, the locale's window.why.*). */
 const D = { knobs: null, log: null, local: null, profiles: null, orders: null, retrieval: null, providers: null, history: null,
-  heartbeat: null, boards: null, reach: null, autonomy: null, personal: null, media: null };
+  heartbeat: null, boards: null, reach: null, autonomy: null, personal: null, media: null, search: null };
 const PATHS = { knobs: "knobs", log: "diagnostics/log/settings", local: "local-models", profiles: "browser/profiles", orders: "autonomy/orders",
   retrieval: "memory/retrieval", providers: "learning-more/providers", history: "memory/history", heartbeat: "heartbeat",
-  boards: "flows-boards", reach: "reach", autonomy: "autonomy", personal: "personal", media: "media/programs" };
+  boards: "flows-boards", reach: "reach", autonomy: "autonomy", personal: "personal", media: "media/programs", search: "web-search" };
 /* The owner's own settings: every change here is refused to a household profile (src/household-routes.ts fails closed),
    so for one the window neither reads them nor draws them live: each control is drawn without its id and greys with the
    owner-only reason (as models.js num() does, Q261), never showing an "off" it did not read. */
 const household = () => E.profiles?.isOwner === false;
 const own = (id) => (household() ? 'data-why="knobs-owner-only"' : `id="${id}" ${WIRES[id] ? checked(id) : ""}`);
-const OWNER_ONLY = new Set(["retrieval", "providers", "history", "heartbeat", "boards", "reach", "autonomy", "personal", "media"]);
+const OWNER_ONLY = new Set(["retrieval", "providers", "history", "heartbeat", "boards", "reach", "autonomy", "personal", "media", "search"]);
 const onMode = (mode) => Boolean(mode) && mode !== "off";
 const mode = (on) => (on ? "when-needed" : "off");
 const part = (path, name) => (on) => api(path, { part: name, mode: mode(on) });
@@ -62,6 +63,77 @@ async function loadAll() {
   const raw = Object.fromEntries(keys.map((key, i) => [key, got[i]]));
   Object.assign(D, raw, { knobs: raw.knobs?.values ?? null, profiles: raw.profiles?.profiles ?? null, orders: raw.orders?.orders ?? null });
   render();
+}
+
+/* Web search: where "search the web" goes (GET/POST /api/web-search, src/web-search-choice.ts), pressed from the engine's
+   own choice. A paid service's key stays in the locker; the row says the secret's name and whether it is saved. SearXNG
+   takes its address in the box under the row, sent with the pick. */
+const SEARCH = [["duckduckgo", "DuckDuckGo"], ["brave", "Brave"], ["tavily", "Tavily"], ["exa", "Exa"], ["serper", "Serper"], ["searxng", "SearXNG"]];
+function searchRow() {
+  const label = t("window.settings.advanced.web-search");
+  if (household()) return `<div class="ctl"><b>${label}</b><span class="right"><span class="seg" role="group" aria-label="${label}">${SEARCH.map(([, words]) => `<button type="button" aria-pressed="false" data-act="ad-search-owner" data-why="knobs-owner-only">${words}</button>`).join("")}</span></span><small></small></div>`;
+  const chosen = D.search?.chosen?.backend ?? "duckduckgo";
+  const service = (D.search?.services ?? []).find((one) => one.id === chosen);
+  const sub = chosen === "searxng" ? t("window.settings.advanced.search-searxng")
+    : service?.needsKey ? t(service.hasKey ? "window.settings.advanced.search-has-key" : "window.settings.advanced.search-needs-key", { name: esc(service.keySecret ?? "") })
+    : t("window.settings.advanced.duckduckgo-needs-no-key-so-search");
+  const from = D.search?.fromLaunchFile ? ` ${t("window.settings.advanced.search-from-file")}` : "";
+  const buttons = SEARCH.map(([v, words]) => `<button type="button" aria-pressed="${D.search ? chosen === v : false}" data-act="ad-search" data-v="${v}">${words}</button>`).join("");
+  const address = `<span class="right num15"><input class="inp" id="ad-searx" value="${esc(D.search?.chosen?.searxngUrl ?? "")}" placeholder="https://search.example.org" aria-label="${t("window.settings.advanced.search-address")}"></span>`;
+  return `<div class="ctl"><b>${label}</b><span class="right"><span class="seg" role="group" aria-label="${label}">${buttons}</span></span><small>${sub}${from}</small></div>`
+    + `<div class="ctl"><b>${t("window.settings.advanced.search-address")}</b>${address}<small></small></div>`;
+}
+
+async function chooseSearch(v) {
+  const box = document.getElementById("ad-searx"), typed = box?.value.trim();
+  try { await api("web-search", { backend: v, ...(v === "searxng" && typed ? { searxngUrl: typed } : {}) }); } catch (error) { toast(error.message); }
+  await loadAll();
+}
+
+/* Rewrite short notes: pick one of the owner's notes (GET /api/reach/notes) and a style, and the engine suggests a new
+   version (POST /api/reach/notes/rewrite; nothing is saved). Keep this version saves it over the note (POST
+   /api/reach/notes with the note's stamp, so a note changed meanwhile is refused in the engine's words). */
+const RW = { notes: [], id: "", style: "clearer", out: null };
+const STYLES = () => [["clearer", t("reach.notes.clearer")], ["shorter", t("reach.notes.shorter")], ["fix", t("reach.notes.fix")], ["list", t("reach.notes.list")], ["formal", t("reach.notes.formal")]];
+function drawRewrite() {
+  const options = RW.notes.map((n) => `<option value="${esc(n.id)}"${n.id === RW.id ? " selected" : ""}>${esc(n.title || n.body.slice(0, 40))}</option>`).join("");
+  const styles = STYLES().map(([s, words]) => `<button type="button" aria-pressed="${RW.style === s}" data-act="ad-rw-style" data-v="${s}">${words}</button>`).join("");
+  const body = RW.notes.length
+    ? `<p class="lead-b17">${t("reach.notes.purpose")}</p><div class="ctl"><b>${t("reach.notes.title")}</b><span class="right"><select class="inp" id="ad-rw-note" aria-label="${t("reach.notes.title")}">${options}</select></span><small></small></div>`
+      + `<div class="ctl"><b>${t("reach.notes.style")}</b><span class="right"><span class="seg" role="group" aria-label="${t("reach.notes.style")}">${styles}</span></span><small>${t("reach.notes.styleHint")}</small></div>`
+      + (RW.out ? `<pre class="code6" data-css="white-space:pre-wrap;margin:12px 0 0;max-height:40vh;overflow:auto">${esc(RW.out.suggestion)}</pre>` : "")
+    : `<p class="empty">${t("reach.notes.purpose")}</p>`;
+  const foot = `<button class="btn ghost" type="button" data-act="dlg-close">${t("updates.busy.cancel")}</button>`
+    + (RW.notes.length ? `<button class="btn" type="button" data-act="ad-rw-go">${t("reach.notes.rewrite")}</button>` : "")
+    + (RW.out ? `<button class="btn pri" type="button" data-act="ad-rw-keep">${t("reach.notes.keep")}</button>` : "");
+  openDlg({ title: t("window.settings.advanced.rewrite-short-notes"), body, foot });
+}
+async function openRewrite() {
+  const still = viewFence("ad-rewrite");
+  let notes;
+  try { notes = (await api("reach/notes")).notes ?? []; } catch (error) { if (still()) toast(error.message); return; }
+  if (!still()) return; // closed, replaced, another person or locked while the notes were read: nothing is shown late
+  RW.notes = notes;
+  RW.id = RW.notes.some((n) => n.id === RW.id) ? RW.id : RW.notes[0]?.id ?? "";
+  RW.out = null;
+  drawRewrite();
+}
+async function rewriteNow() {
+  RW.id = document.getElementById("ad-rw-note")?.value || RW.id;
+  const still = viewFence("ad-rewrite");
+  let out;
+  try { out = await api("reach/notes/rewrite", { id: RW.id, style: RW.style }); } catch (error) { if (still()) toast(error.message); return; }
+  if (!still()) return;
+  RW.out = out;
+  drawRewrite();
+}
+async function keepRewrite() {
+  const note = RW.notes.find((n) => n.id === RW.out?.id);
+  if (!note) return;
+  const still = viewFence("ad-rewrite-keep"); // the dialog this came from: closed while saving, it is not opened again
+  try { await api("reach/notes", { id: note.id, title: note.title, body: RW.out.suggestion, expected: RW.out.basedOn }); } catch (error) { if (still()) toast(error.message); return; }
+  toast(t("accounts.saved"));
+  if (still()) await openRewrite();
 }
 
 /* Outside memory: the engine's four choices (none, Mem0, Honcho, Hindsight), pressed from its own value. */
@@ -133,7 +205,7 @@ export function draw() {
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.check-a-skill-is-ready-first")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-check-a-skill-is-ready-first")} aria-label=\"${t("window.settings.advanced.check-a-skill-is-ready-first")}\" data-sw=\"set\"><small>${t("window.settings.advanced.programs-keys-and-systems-it-needs")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.only-signed-skill-packages")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-only-signed-skill-packages\" aria-label=\"${t("window.settings.advanced.only-signed-skill-packages")}\" data-sw=\"set\"><small></small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.check-install-requests-for-malware")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-check-install-requests-for-malware\" aria-label=\"${t("window.settings.advanced.check-install-requests-for-malware")}\" data-sw=\"set\"><small>${t("window.settings.advanced.against-the-osv-database-before-you")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.web-search")}</b><span class=\"right\"><span class=\"seg\" role=\"group\" aria-label=\"${t("window.settings.advanced.web-search")}\"><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">DuckDuckGo</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">Brave</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">SearXNG</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">Tavily</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">Exa</button></span></span><small>${t("window.settings.advanced.duckduckgo-needs-no-key-so-search")}</small></div>`;
+    html += searchRow();
     html += `<div class=\"ctl\"><b>${t("personal.x.search")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-search-x")} aria-label=\"${t("personal.x.search")}\" data-sw=\"set\"><small>${t("window.settings.advanced.turns-on-when-an-x-account")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.video-tools")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-video-tools")} aria-label=\"${t("window.settings.advanced.video-tools")}\" data-sw=\"set\"><small>${t("window.settings.advanced.download-read-captions-and-make-short")}</small></div>`;
     html += "</div>";
@@ -152,7 +224,7 @@ export function draw() {
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.search-documents-by-meaning")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-search-documents-by-meaning\" aria-label=\"${t("window.settings.advanced.search-documents-by-meaning")}\" data-sw=\"set\"><small>${t("window.settings.advanced.finds-the-lease-clause-about-repairs")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.a-local-index-of-mail-calendar")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-a-local-index-of-mail-calendar-and-messa\" aria-label=\"${t("window.settings.advanced.a-local-index-of-mail-calendar")}\" data-sw=\"set\"><small>${t("window.settings.advanced.built-and-kept-on-this-computer")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.keep-versions-of-what-trunks-make")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-keep-versions-of-what-trunks-make\" aria-label=\"${t("window.settings.advanced.keep-versions-of-what-trunks-make")}\" data-sw=\"set\"><small>${t("window.settings.advanced.every-file-in-made-for-you")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.rewrite-short-notes")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"rewrite-short-notes\">${t("personal.signin.try")}</button></span><small>${t("window.settings.advanced.clearer-shorter-fixed-or-more-formal")}</small></div>`;
+    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.rewrite-short-notes")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"ad-rewrite\">${t("personal.signin.try")}</button></span><small>${t("window.settings.advanced.clearer-shorter-fixed-or-more-formal")}</small></div>`;
     html += "</div>";
 
     html += `<div class=\"sec x15-sec\"><h2>${t("window.settings.advanced.pinned-skills")}</h2>`;
@@ -214,10 +286,16 @@ export function init() {
   on("restart16", () => restartNow());
   on("ad-orders", () => openOrders());
   on("ad-outside", (el) => chooseOutside(el));
+  on("ad-search", (el) => chooseSearch(el.dataset.v));
+  on("ad-rewrite", () => openRewrite());
+  on("ad-rw-style", (el) => { RW.style = el.dataset.v; RW.id = document.getElementById("ad-rw-note")?.value || RW.id; RW.out = null; drawRewrite(); });
+  on("ad-rw-go", () => rewriteNow());
+  on("ad-rw-keep", () => keepRewrite());
   initTunnel();
-  markLive(["adv-logs", "restart16", "ad-orders", "ad-outside", "sw:ad-facts", ...tunnelLive, ...Object.keys(WIRES).map((id) => "sw:" + id)]);
+  markLive(["adv-logs", "restart16", "ad-orders", "ad-outside", "ad-search", "sw:ad-searx", "ad-rewrite", "ad-rw-style", "ad-rw-go", "ad-rw-keep", "sw:ad-rw-note", "sw:ad-facts", ...tunnelLive, ...Object.keys(WIRES).map((id) => "sw:" + id)]);
   document.addEventListener("change", async (e) => {
     if (e.target.id === "ad-facts") { await saveFacts(e.target); return; }
+    if (e.target.id === "ad-searx") { if (e.target.value.trim()) await chooseSearch("searxng"); return; }
     const wire = WIRES[e.target.id];
     if (!wire) return;
     try { await wire[1](e.target.checked); } catch (error) { toast(error.message); }
@@ -228,4 +306,4 @@ export function init() {
 
 export async function load() { await Promise.all([loadAll(), load17()]); }
 
-export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "sw:ad-facts": true, "tunnel-seg": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };
+export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "ad-search": true, "sw:ad-searx": true, "ad-rewrite": true, "ad-rw-style": true, "ad-rw-go": true, "ad-rw-keep": true, "sw:ad-rw-note": true, "sw:ad-facts": true, "tunnel-seg": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };

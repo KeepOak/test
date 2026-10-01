@@ -22,7 +22,9 @@ import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 import { initDocRead, revealable } from "./docread.js"; // dogfood D6, dogfood-ux-3
 import { pendingMemories, readPendingMemories, initMemoryReview } from "./memory-review.js";
 import { initMemoryDetail } from "./memory-detail.js";
+import { madeFiles } from "./library-made.js";
 import { lockdownOn } from "../chat/approvals.js";
+import { sessionPrincipal } from "../core/session-pages.js";
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -33,6 +35,10 @@ function tabBar(tabs, place, current) {
 let docsKey = "";
 let docsList = [];
 let docsFailed = false;
+/* The documents list is kept for the one principal it was read for (null: nothing kept), and each read is numbered, so
+   a late answer, or a list kept for the owner, is never drawn for a household person or over the App lock. */
+let docsFor = null;
+let docsRead = 0;
 let artsFailed = false;
 let artsKey = "";
 let artsList = [];
@@ -67,18 +73,40 @@ function memoryTab(mem) {
   return html + (mem.length ? "" : empty18("library:memory"));
 }
 
+const unlocked = () => !document.getElementById("app")?.classList.contains("locked-b17");
+/* Lets the kept documents go when the window is someone else's now, or locked; they are read again when next shown. */
+function dropStaleDocs() {
+  if (docsFor === null || (docsFor === sessionPrincipal(E.profiles) && unlocked())) return;
+  docsFor = null; docsList = []; docsKey = ""; docsFailed = false; docsRead += 1;
+}
+/* A documents read belongs to who asked, on the page they asked from: checked after it answers, before anything is kept. */
+function docsReadFence() {
+  const who = sessionPrincipal(E.profiles), view = S.view, mine = ++docsRead;
+  const current = () => mine === docsRead && sessionPrincipal(E.profiles) === who && E.profiles?.isOwner !== false
+    && unlocked() && S.view === view && (S.tabs.library || "memory") === "documents";
+  return { who, current };
+}
+/* Who started a save, on which page and from which dialog, noted before it is sent: a late answer never closes a newer
+   dialog (openDlg makes a new one each time), and never speaks to someone else or over the lock. */
+function saveFence() {
+  const who = sessionPrincipal(E.profiles), view = S.view, opened = dialog();
+  const here = () => sessionPrincipal(E.profiles) === who && E.profiles?.isOwner !== false && unlocked() && S.view === view;
+  return { here, fromDialog: () => here() && opened !== null && dialog() === opened };
+}
+
 /* "Write a new document" opens a small editor: a name and the text, kept as a document of the owner's (POST /api/documents
    { name, text }, src/documents.ts AddSchema), searched like any other. A household person's window keeps it greyed, as
    the documents are the owner's (Q261). A document's Open and a Made file's Open read it in the window
    (places/docread.js: GET /api/documents/<id>, dogfood D6; GET /api/artifacts/read, dogfood-ux-2). */
 function documentsTab() {
+  dropStaleDocs();
   const view = [["list", "list15", t("addons.lists.address")], ["map", "map15", t("window.places.library.map")]].map(([k, i, l]) => `<button type="button" aria-pressed="${docView === k}" data-act="dv15" data-v="${k}">${ic(i, "s")}${l}</button>`).join("");
   let html = `<div class="acts docacts15" data-css="margin:6px 0"><button class="btn" type="button" data-act="${E.profiles?.isOwner === false ? "doc-new-owner" : "doc-new"}"${E.profiles?.isOwner === false ? ' data-why="knobs-owner-only"' : ""}>
       ${ic('file', 's')}${t("window.places.library.write-a-new-document")}</button><span class="seg dv15" role="group" aria-label="${t("window.places.library.show-documents-as")}">${view}</span></div>`;
   html += workSection();
   /* The Map view shows what the map says about a name in place of the list, as the prototype's Map does. */
   if (docView !== "map") html += labelled(docsList).map((d) => `<div class="prow"><span class="fi">${esc((d.name || '').split('.').pop() || 'txt')}</span>
-        <span class="grow"><b>${esc(d.name)}</b><small>${esc(when(d.updatedAt))}</small></span>
+        <span class="grow"><b>${esc(d.name)}</b><small>${esc(when(d.updatedAt))}</small><small>${(d.addedBy?.name || d.addedBy?.role === "owner") ? t("window.places.library.doc-added-by", { name: esc(d.addedBy.name || t("household.role.owner")) }) : t("window.places.library.doc-added-by-unknown")}</small></span>
         <button class="btn sm" type="button" data-act="doc-open" data-id="${esc(d.id)}">${t("ov.open")}</button></div>`).join('');
   if (docView !== "map" && docsKey === "[]") html += empty18("library:documents"); // read, and nothing there yet
   return html + mapSection(docView) + manageSection();
@@ -108,9 +136,9 @@ export function draw() {
   if (tab === "memory") html += pendingMemories() + memoryTab(mem) + learnSection();
   else if (tab === "documents") html += documentsTab();
   else if (tab === "made") {
-    html += artsList.map((a) => `<div class="prow"><span class="fi">${esc((a.name || '').split('.').pop() || 'bin')}</span>
+    html += madeFiles(artsList, (a) => `<div class="prow"><span class="fi">${esc((a.name || '').split('.').pop() || 'bin')}</span>
         <span class="grow"><b>${esc(a.name)}</b><small>${esc([madeBy(a), when(a.createdAt)].filter(Boolean).join(" · "))}</small></span>
-        ${revealable() ? `<button class="btn ghost sm" type="button" data-act="made-reveal" data-v="${esc(a.path)}">${t("window.places.library.show-in-folder")}</button>` : ""}<button class="btn sm" type="button" data-act="made-open" data-v="${esc(a.path)}">${t("ov.open")}</button></div>`).join('');
+        ${revealable() ? `<button class="btn ghost sm" type="button" data-act="made-reveal" data-v="${esc(a.path)}">${t("window.places.library.show-in-folder")}</button>` : ""}<button class="btn sm" type="button" data-act="made-open" data-v="${esc(a.path)}">${t("ov.open")}</button></div>`);
     if (artsKey === "[]") html += empty18("library:made"); // read, and nothing made yet
   }
 
@@ -136,10 +164,15 @@ export async function after() {
     if (p17.changed) renderNow();
     /* The engine answers {documents: [...]} with its settings beside the list; only the list is drawn. */
     /* Q261: the documents library and the files tasks made are kept for the owner; a household person reads neither. */
-    if (docsFailed || E.profiles?.isOwner === false) return;
-    let fresh = [];
-    try { fresh = (await api("documents")).documents ?? []; } catch (error) { docsFailed = true; toast(error.message); }
+    dropStaleDocs();
+    if (docsFailed || E.profiles?.isOwner === false || !unlocked()) return;
+    const { who, current } = docsReadFence();
+    let fresh = [], failed = null;
+    try { fresh = (await api("documents")).documents ?? []; } catch (error) { failed = error; }
+    if (!current()) { dropStaleDocs(); return; } // switched, locked or left while it was read: nothing drawn or kept
+    if (failed) { docsFailed = true; toast(failed.message); }
     const key = JSON.stringify(fresh);
+    docsFor = who;
     if (key !== docsKey) { docsKey = key; docsList = fresh; renderNow(); }
   } else if (tab === "made") {
     /* The engine answers {artifacts: [...]} (each kept file's name, path and media type). */
@@ -248,9 +281,15 @@ async function saveNewDoc() {
   const typed = document.getElementById("doc-new-name")?.value.trim() ?? "", text = document.getElementById("doc-new-text")?.value ?? "";
   if (!text.trim()) { toast(t("window.places.library.doc-needs-text")); return; }
   const name = !typed ? `${t("window.places.library.doc-untitled")} ${new Date().toISOString().slice(0, 10)}.md` : /\.[a-z0-9]{1,6}$/i.test(typed) ? typed : `${typed}.md`;
-  try { await api("documents", { name, text }); } catch (error) { toast(error.message); return; }
+  const { here, fromDialog } = saveFence();
+  try { await api("documents", { name, text }); } catch (error) { if (fromDialog()) toast(error.message); return; }
+  if (!fromDialog()) { dropStaleDocs(); return; } // closed, replaced, someone else or locked meanwhile: left as it is
   closeDlg();
-  try { docsList = (await api("documents")).documents ?? docsList; docsKey = JSON.stringify(docsList); } catch (error) { toast(error.message); }
+  const { who, current } = docsReadFence();
+  let fresh = null;
+  try { fresh = (await api("documents")).documents ?? null; } catch (error) { if (here()) toast(error.message); }
+  if (!here()) { dropStaleDocs(); return; }
+  if (fresh && current()) { docsList = fresh; docsKey = JSON.stringify(fresh); docsFor = who; }
   toast(t("window.places.library.doc-kept"));
   renderNow();
 }

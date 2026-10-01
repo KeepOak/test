@@ -41,6 +41,11 @@ export interface RecordingApp {
 }
 export interface RecordingApiOptions {
   readBody: () => Promise<unknown>;
+  /**
+   * The App lock's refusal for this request now, or null while it may go on (src/session-lock.ts refusal). Asked again
+   * after the body is read, since a request admitted while unlocked can finish arriving after Branch locked.
+   */
+  locked: () => string | null;
   /** Reads a file from the app's public folder; tests hand in their own. */
   readPublic?: (name: string) => Promise<string>;
 }
@@ -222,8 +227,12 @@ async function restartFromLog(app: RecordingApp, method: string, options: Record
   if (!execute || !registry) throw new Error("Task execution is unavailable");
   app.store.profiles.requireOwner("Restart a task from its event log");
   if (app.store.profiles.scope() !== owner) throw new Error("The active profile changed");
-  const done = await replayRun({ run: (options) => execute({ ...options,
-    permissions: (options.permissions ?? []).filter((permission) => registry.permissions().includes(permission)),
-  }) }, app.store, source.id);
+  const done = await replayRun({ run: (runOptions) => {
+    // Asked at the moment the new task would start: Branch may have locked while the body was arriving.
+    const refused = options.locked();
+    if (refused) throw Object.assign(new Error(refused), { status: 423 });
+    return execute({ ...runOptions,
+      permissions: (runOptions.permissions ?? []).filter((permission) => registry.permissions().includes(permission)) });
+  } }, app.store, source.id);
   return { original: done.original, replay: done.replay, status: done.run.status };
 }

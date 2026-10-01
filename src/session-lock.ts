@@ -114,8 +114,20 @@ export class SessionLock {
    * standing yeses given for a conversation end here, as well as the secrets locker closing.
    */
   onLock: () => void = () => undefined;
+  private readonly lockListeners = new Set<() => void>();
+  /** Short-lived owner operations release this subscription when their request settles. */
+  onLocked(listener: () => void): () => void {
+    this.lockListeners.add(listener);
+    return () => { this.lockListeners.delete(listener); };
+  }
+  private notifyLocked(): void {
+    for (const listener of this.lockListeners) {
+      try { listener(); } catch { /* A request listener must not prevent the existing lock cleanup. */ }
+    }
+    this.onLock();
+  }
   lock(): SessionLockState {
-    if (this.lockedAt === null) { this.markLocked(); this.onLock(); }
+    if (this.lockedAt === null) { this.markLocked(); this.notifyLocked(); }
     return this.state();
   }
   /** Locks, and with a PIN set writes the lock down so a restart keeps it (Q040). */
@@ -150,7 +162,7 @@ export class SessionLock {
   locked(): boolean {
     if (this.lockedAt !== null) return true;
     const { idleMinutes } = this.settings();
-    if (idleMinutes > 0 && this.now() - this.lastActive >= idleMinutes * 60_000) { this.markLocked(); this.onLock(); }
+    if (idleMinutes > 0 && this.now() - this.lastActive >= idleMinutes * 60_000) { this.markLocked(); this.notifyLocked(); }
     return this.lockedAt !== null;
   }
   state(): SessionLockState {

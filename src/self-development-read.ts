@@ -17,7 +17,7 @@ export function offerSourceContractRead(deps: SelfDevelopmentDeps): () => void {
       permission: "git.read",
       description: "Read the latest persisted contract for an existing Branch source change by its original name. Use before continuing or revising that work: recover the exact worktree, source baseline, contract revision/hash, allowed paths, tool permissions, expected tests, completion criteria, side effects and rollback. Do not reconstruct these terms from memory or prepare the worktree again. This reads metadata only; it does not inspect current files, grant permissions, widen a contract, run tests, publish or merge.",
       parameters: z.object({ name }).strict(),
-      execute: (input, context: ToolContext) => {
+      execute: async (input, context: ToolContext) => {
         ownerOnly(context, deps.store, deps.ownersDefaultTurn, "read an existing Branch source contract");
         const worktree = `branch-agent-source/.branch-worktrees/self-${input.name}`;
         const contract = deps.contracts.current(deps.owner, worktree);
