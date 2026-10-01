@@ -82,6 +82,33 @@ test("Computer & browser opened by its home waits for the engine's values too", 
   assert.deepEqual(errors, []);
 });
 
+/* A live reload puts the open page back and draws it before any read (shell/liveupdate.js restoreOpen), so the page is
+   drawn without the engine's values. Until they are back the browser's switches wait and cannot be moved; they are
+   never shown off. The page's read is held here until the waiting switch has been seen. */
+test("Computer & browser drawn before its read shows the browser's switches waiting, then the engine's values", async (t) => {
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const { page, errors, call } = await settingsWindow(t, { name: "wire-browser-restore" });
+  t.after(() => release());
+  await call("/api/comfort", { card: "browser", values: { askNewSites: true } });
+  await page.route("**/api/comfort", async (route) => {
+    if (route.request().method() === "GET") await held;
+    await route.continue();
+  });
+  await page.evaluate(() => sessionStorage.setItem("branch-live-restore",
+    JSON.stringify({ view: "settings", setPage: "computer", at: Date.now() })));
+  await page.reload();
+  const box = page.locator("#b-new");
+  await box.waitFor();
+  assert.equal(await box.isDisabled(), true, "waiting for the engine, it cannot be moved");
+  assert.equal(await box.getAttribute("aria-busy"), "true", "and says it is waiting, not that it is off");
+  release();
+  await page.locator("#b-new:not([disabled])").waitFor();
+  assert.equal(await box.getAttribute("aria-busy"), null);
+  assert.equal(await box.isChecked(), true, "then it shows the engine's value");
+  assert.deepEqual(errors, []);
+});
+
 test("Downloads may come from: Known sites and Ask each time are saved", async (t) => {
   const { page, errors, call } = await settingsWindow(t, { name: "wire-downloads-from" });
   await openSettingsPage(page, "permissions");

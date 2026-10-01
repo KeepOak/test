@@ -63,7 +63,12 @@ const WIRES = {
   "f15-record-browser-tasks": [() => D.care?.recordTasks === true, (on) => setCare({ recordTasks: on })],
   "f15-number-the-clickable-things": [() => D.care?.numberMarks === true, (on) => setCare({ numberMarks: on })],
 };
-const sw = (title, sub) => sw15(title, sub, WIRES[id15(title)]?.[0]() ?? false);
+/* The browser care switches (GET /api/comfort) before that read is back, on any way into the page (a live reload's
+   restore draws before it): waiting and not movable, never shown off while the engine may keep them on. */
+const CARE = new Set(["b-new", "b-watch", "f15-record-browser-tasks", "f15-number-the-clickable-things"]);
+const careBusy = (id) => CARE.has(id) && !D.care;
+const careState = (id, on) => (careBusy(id) ? 'disabled aria-busy="true"' : on ? "checked" : "");
+const sw = (title, sub) => sw15(title, sub, WIRES[id15(title)]?.[0]() ?? false, careBusy(id15(title)));
 
 async function loadAll() {
   const [c, n, p, d, desktop, wall, reach, appAsk, comfort, container] = await Promise.all(["coding", "browser/notes/settings", "developer/pull-requests", "devices", "desktop/settings", "os-sandbox", "reach", "desktop/app-ask", "comfort", "browser/container"]
@@ -162,7 +167,7 @@ function onAComputer() {
   return `<div class="sec"><h2>${t("window.settings.computer.on-a-computer")}</h2><div class="ctl"><b>${t("window.settings.computer.see-the-screen-and-use-the")}</b><input class="sw" type="checkbox" id="c-screen" ${D.desktop?.enabled ? "checked" : ""} aria-label="${t("window.settings.computer.see-the-screen-and-use-the")}" data-sw="set"><small>${t("window.settings.computer.needed-for-apps-without-a-connection")}</small></div><div class="ctl"><b>${t("window.settings.computer.ask-before-opening-an-app-it")}</b><input class="sw" type="checkbox" id="c-ask" ${D.appAsk?.on ? "checked" : ""} aria-label="${t("window.settings.computer.ask-before-opening-an-app-it")}" data-sw="set"><small>${t("window.settings.computer.once-per-app-per-trunk")}</small></div>${seg15(t("settings.card.where-scripts-run"), sub, [["sealed", t("window.settings.computer.sealed-box")], ["this", t("dashboard.computer.title")]], cur, "c-where", "f15-where-scripts-run")}</div>`;
 }
 
-const BROWSER = () => `<div class="sec"><h2>${t("settingsGrown.bucket.computer.browser")}</h2>${seg15(t("window.settings.computer.which-browser"), t("window.settings.computer.its-own-profile-keeps-your-tabs"), [["own", t("window.settings.computer.branchs-own")], ["chrome", t("window.settings.computer.your-chrome")]], null, "seg", "f15-which-browser")}<div class="ctl"><b>${t("window.settings.computer.ask-before-a-site-it-hasnt")}</b><input class="sw" type="checkbox" id="b-new" ${D.care?.askNewSites ? "checked" : ""} aria-label="${t("window.settings.computer.ask-before-a-site-it-hasnt")}" data-sw="set"><small>${t("window.settings.computer.you-say-yes-once-per-site")}</small></div><div class="ctl"><b>${t("window.settings.computer.open-the-browser-full-size-when")}</b><input class="sw" type="checkbox" id="b-watch" ${D.care?.openFullSize ? "checked" : ""} aria-label="${t("window.settings.computer.open-the-browser-full-size-when")}" data-sw="set"><small>${t("window.settings.computer.otherwise-it-stays-small-in-the")}</small></div></div>`;
+const BROWSER = () => `<div class="sec"><h2>${t("settingsGrown.bucket.computer.browser")}</h2>${seg15(t("window.settings.computer.which-browser"), t("window.settings.computer.its-own-profile-keeps-your-tabs"), [["own", t("window.settings.computer.branchs-own")], ["chrome", t("window.settings.computer.your-chrome")]], null, "seg", "f15-which-browser")}<div class="ctl"><b>${t("window.settings.computer.ask-before-a-site-it-hasnt")}</b><input class="sw" type="checkbox" id="b-new" ${careState("b-new", D.care?.askNewSites)} aria-label="${t("window.settings.computer.ask-before-a-site-it-hasnt")}" data-sw="set"><small>${t("window.settings.computer.you-say-yes-once-per-site")}</small></div><div class="ctl"><b>${t("window.settings.computer.open-the-browser-full-size-when")}</b><input class="sw" type="checkbox" id="b-watch" ${careState("b-watch", D.care?.openFullSize)} aria-label="${t("window.settings.computer.open-the-browser-full-size-when")}" data-sw="set"><small>${t("window.settings.computer.otherwise-it-stays-small-in-the")}</small></div></div>`;
 
 /* Phones lent to Branch: every paired phone, with what it lends in the engine's words, so one lending nothing can
    still be removed. A phone a Tailscale invitation let in has no device record (GET /api/devices doorPhones); it lends
