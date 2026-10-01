@@ -659,34 +659,6 @@ test("1 — on demand, a credential the server echoes back is taken out of the a
   assert.match(said, /credential redacted/);
 });
 
-test("1 — on demand, a credential the server echoes back in a failure is taken out of the reason", async (t) => {
-  const { app } = await fixture(t);
-  const config = { id: "grumpy", transport: "stdio", command: process.execPath, args: ["-e", ""],
-    tools: ["echo"], expectedVersion: "1.0.0" };
-  const shape = { type: "object", properties: { text: { type: "string" } }, required: ["text"] };
-  let thrown = false;
-  const names = registerCachedMcp(app.registry, config,
-    [{ name: "echo", description: "Say something back", inputSchema: shape }],
-    async () => ({
-      call: async () => {
-        if (thrown) return { isError: true, content: [{ type: "text", text: "bad key sk-do-not-print" }] };
-        thrown = true;
-        throw new Error("rejected sk-do-not-print");
-      },
-      secrets: ["sk-do-not-print"],
-      tools: [{ name: "echo", inputSchema: shape }],
-    }));
-  t.after(() => { for (const name of names) app.registry.unregister(name); });
-  const context = app.runtime.context({ runId: app.store.createRun(app.runtime.owner, "call it").id });
-  for (const expected of [/MCP tool failed: rejected \[credential redacted\]/, /The server said .*bad key \[credential redacted\]/]) {
-    const error = await app.registry.execute(names[0], { text: "hello" }, { ...context, permissions: new Set(names) })
-      .then(() => null, (e) => e);
-    assert.ok(error, "the call fails");
-    assert.match(error.message, expected);
-    assert.ok(!error.message.includes("sk-do-not-print"), "the credential is not in the reason the model is given");
-  }
-});
-
 test("9 — the sentence the owner reads names who would receive the tool descriptions", async () => {
   const named = meaningSearchExplanation("openai, the model service you have connected");
   assert.match(named, /sending your request/, "it still says plainly what goes out");

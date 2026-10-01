@@ -25,6 +25,7 @@ const stubs = {
   "app/core/features.js": "export const markLive = () => {};",
   "app/settings/owner-commands.js": nothing,
   "app/settings/chat-steps.js": "export const stepsCard = () => \"\"; export const initSteps = () => {};",
+  "app/settings/chat-routing.js": "export const routingCard = () => \"\"; export const initRouting = () => {};",
   "app/settings/phone-access.js": "export const phoneAccessCard = () => \"\"; export const initPhoneAccess = () => {}; export const loadPhoneAccess = async () => {};",
   "app/settings/rows15.js": "export const sw15 = () => \"\"; export const sec15 = () => \"\"; export const seg15 = () => \"\"; export const id15 = (s) => s;",
   "app/flows/chatapps17d.js": "export const nativeFormat = () => \"\"; export const pill17d = () => \"\"; export const stateOf = () => [];",

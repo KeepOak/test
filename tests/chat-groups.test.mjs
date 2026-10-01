@@ -165,8 +165,9 @@ test("Slack: a reply in a thread it started, a name, and group messages (mpim) c
 
 test("Matrix: a room of two is direct, and a mention, an intentional mention or a reply to it is addressed", async () => {
   const adapter = new MatrixAdapter({ id: "matrix", homeserver: "https://m.example.org", userId: "@juniper:m.example.org", accessToken: "x" });
-  adapter.members.set("!dm:m", 2);
-  adapter.members.set("!room:m", 5);
+  // Base's direct room (src/channels/matrix.ts directRoom): a known direct peer and two members.
+  adapter.memberCounts.set("!dm:m", 2); adapter.directPeers.set("!dm:m", "@alice:m");
+  adapter.memberCounts.set("!room:m", 5);
   adapter.sent.set("h1", "$mine");
   const read = (room, content) => adapter.inbound(room, { type: "m.room.message", event_id: `$${Math.random()}`, sender: "@alice:m", content: { msgtype: "m.text", ...content } });
   const dm = read("!dm:m", { body: "hello" });
@@ -249,8 +250,9 @@ test("Matrix: a reaction answer in a room of two is direct, in a bigger room it 
   const puts = [];
   const fetch = async (url, init) => { puts.push({ url: String(url), body: JSON.parse(init.body) }); return Response.json({ event_id: `$q${puts.length}` }); };
   const adapter = new MatrixAdapter({ id: "matrix", homeserver: "https://m.example.org", userId: "@juniper:m.example.org", accessToken: "x", fetch });
-  adapter.members.set("!dm:m", 2);
-  adapter.members.set("!room:m", 5);
+  // Base's direct room (src/channels/matrix.ts directRoom): a known direct peer and two members.
+  adapter.memberCounts.set("!dm:m", 2); adapter.directPeers.set("!dm:m", "@alice:m");
+  adapter.memberCounts.set("!room:m", 5);
   for (const room of ["!dm:m", "!room:m"]) await adapter.sendButtons(room, "May I?", [{ label: "Yes", value: "y:abc" }, { label: "No", value: "n:abc" }]);
   const question = (room) => puts.find((put) => put.url.includes(encodeURIComponent(room)) && put.url.includes("/m.room.message/")).url && puts.filter((put) => put.url.includes(encodeURIComponent(room)) && put.body["m.relates_to"])[0].body["m.relates_to"].event_id;
   const react = (room) => adapter.inbound(room, { type: "m.reaction", event_id: "$r1", sender: "@alice:m", content: { "m.relates_to": { rel_type: "m.annotation", event_id: question(room), key: "👍" } } });
@@ -262,8 +264,9 @@ test("Matrix: a reaction answer in a room of two is direct, in a bigger room it 
    addressed); in a bigger room it waits to be asked about, like any other message there. */
 test("Matrix: a file in a room of two is direct and addressed, in a bigger room it is a group one", () => {
   const adapter = new MatrixAdapter({ id: "matrix", homeserver: "https://m.example.org", userId: "@juniper:m.example.org", accessToken: "x" });
-  adapter.members.set("!dm:m", 2);
-  adapter.members.set("!room:m", 5);
+  // Base's direct room (src/channels/matrix.ts directRoom): a known direct peer and two members.
+  adapter.memberCounts.set("!dm:m", 2); adapter.directPeers.set("!dm:m", "@alice:m");
+  adapter.memberCounts.set("!room:m", 5);
   const read = (room, msgtype) => adapter.inbound(room, { type: "m.room.message", event_id: "$f1", sender: "@alice:m",
     content: { msgtype, body: "cat.jpg", url: "mxc://m.example.org/abc", info: { mimetype: msgtype === "m.audio" ? "audio/ogg" : "image/jpeg" } } });
   const dm = read("!dm:m", "m.image");

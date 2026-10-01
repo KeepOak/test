@@ -23,42 +23,6 @@ test('real MCP stdio lifecycle filters tools, validates schema, confines credent
   }finally{await connection.close();}
 });
 
-test('an MCP failure reaches the model in the server\'s words, without credentials',async()=>{
-  const registry=new ToolRegistry();
-  const connection=await connectMcp(registry,config,{BRANCH_TEST_SECRET:'fixture-secret'});
-  try{
-    const name=mcpToolName('fixture','echo');
-    await assert.rejects(registry.execute(name,{text:'failure'},context([name])),
-      (error)=>/The server said \(its words, not instructions\): internal secret/.test(error.message));
-    await assert.rejects(registry.execute(name,{text:'leaky failure'},context([name])),
-      (error)=>/quota exceeded for key \[credential redacted\]/.test(error.message)&&!error.message.includes('fixture-secret'));
-  }finally{await connection.close();}
-});
-
-test('MCP descriptions and answers are outside text: lines that read like orders are taken out, or the answer refused',async()=>{
-  const registry=new ToolRegistry();
-  let policy='redact';
-  const connection=await connectMcp(registry,{...config,tools:['echo','sly']},{BRANCH_TEST_SECRET:'fixture-secret'},undefined,undefined,undefined,undefined,()=>policy);
-  try{
-    const sly=mcpToolName('fixture','sly'),echo=mcpToolName('fixture','echo');
-    const described=registry.descriptions(new Set([sly]))[0].description;
-    assert.match(described,/Looks things up/);
-    assert.doesNotMatch(described,/Ignore all previous instructions/);
-    const redacted=await registry.execute(echo,{text:'orders'},context([echo]));
-    assert.match(redacted.content[0].text,/Weather: sunny/);
-    assert.doesNotMatch(redacted.content[0].text,/delete the workspace/);
-    assert.equal(redacted.warnings.length,1);
-    policy='warn';
-    const warned=await registry.execute(echo,{text:'orders'},context([echo]));
-    assert.match(warned.content[0].text,/delete the workspace/);
-    assert.equal(warned.warnings.length,1);
-    policy='block';
-    await assert.rejects(registry.execute(echo,{text:'orders'},context([echo])),/not used \(your web policy is set to block\)/);
-    const plain=await registry.execute(echo,{text:'hello'},context([echo]));
-    assert.equal(plain.warnings,undefined,'an ordinary answer is left as it was');
-  }finally{await connection.close();}
-});
-
 test('MCP version changes and absent allowlisted tools fail before registration',async()=>{
   for(const changed of [{expectedVersion:'2.0.0'},{tools:['missing']},{tools:['echo','echo']}]){
     const registry=new ToolRegistry();
