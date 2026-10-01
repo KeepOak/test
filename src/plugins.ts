@@ -13,10 +13,11 @@ import type { BranchPluginProvider } from "./provider-plugins.js";
 import type { BranchPluginChannel } from "./channels/connectors.js";
 // ── bucket-15: the add-on interface version (src/add-ons/sdk.ts). ──
 import { checkApiVersion } from "./add-ons/sdk.js";
+import { PluginWindowSchema, type BranchPluginWindow } from "./plugin-window.js";
 
 /**
  * Plugins are single files a developer drops into the `plugins` folder beside the private data.
- * A plugin may add tools and may react to events; it may not add screens to the app. Nothing a
+ * A plugin may add tools, react to events and contribute bounded window data. Nothing a
  * plugin brings is loaded until the owner switches it on, and every tool it adds still needs the
  * permission the plugin declared, checked the same way every built-in tool is checked. That
  * permission check keeps a plugin in bounds; RES-251: a plugin runs as its own walled program (src/add-ons/walled-plugin.ts)
@@ -54,6 +55,8 @@ export interface BranchPlugin {
   providers?: BranchPluginProvider[];
   /** Chat services this plugin brings; see src/channels/connectors.ts. */
   channels?: BranchPluginChannel[];
+  /** Plain text scoped to an existing owner conversation; requires ui.contribute in its grant. */
+  window?: BranchPluginWindow[];
 }
 /** Where a plugin's model connections go. Kept structural so the loader needs no extra import. */
 export interface PluginProviderHost {
@@ -90,7 +93,7 @@ const PluginSidecarSchema = z.object({
 interface Declared { summary: PluginSummary; sha256: string | null }
 const noManifest = (id: string): string =>
   `${id}.mjs has no manifest (the plugin catalog's record, or ${id}.plugin.json beside it), so what it adds is shown only once you switch it on. Switching it on runs its code.`;
-interface Loaded { summary: PluginSummary; toolNames: string[]; stopHooks: (() => void)[] }
+interface Loaded { summary: PluginSummary; toolNames: string[]; stopHooks: (() => void)[]; window: BranchPluginWindow[] }
 /**
  * bucket-15: where a plugin that must not run inside Branch is loaded instead — its own walled
  * program (src/add-ons/walled-plugin.ts). `load` hands back a plugin whose tools and hooks call
@@ -231,8 +234,11 @@ export class Plugins {
     const listed = allow ?? this.saved(id)?.grant?.permissions;
     const grant = this.grantFor(summary, declared
       ? (listed ?? declared.summary.permissions).filter((permission) => declared.summary.permissions.includes(permission)) : listed);
+    const window = PluginWindowSchema.parse(plugin.window ?? []);
+    const windowAllowed = grant.permissions.includes("ui.contribute");
     const { kept, left } = narrowTools(summary.tools, grant);
-    const leftOut = [...(summary.leftOut ?? []), ...left.map((tool) => narrowedSentence(tool.name, tool.permission))];
+    const leftOut = [...(summary.leftOut ?? []), ...left.map((tool) => narrowedSentence(tool.name, tool.permission)),
+      ...(!windowAllowed && window.length ? ["Window contributions left out: ui.contribute was not granted."] : [])];
     const wanted = new Set(kept.map((tool) => tool.name));
     const toolNames: string[] = [], stopHooks: (() => void)[] = [];
     try {
@@ -257,9 +263,17 @@ export class Plugins {
     for (const hook of plugin.hooks ?? [])
       stopHooks.push(this.store.onEvent((runId, kind, data) => { if (kind === hook.event) void hook.run({ event: kind, runId, data }).catch(() => undefined); }));
     const narrowed: PluginSummary = { ...summary, tools: kept, leftOut };
-    this.loaded.set(id, { summary: narrowed, toolNames, stopHooks });
+    this.loaded.set(id, { summary: narrowed, toolNames, stopHooks, window: windowAllowed ? window : [] });
     this.store.save("settings", this.owner, this.key(id), { enabled: true, summary: narrowed, grant });
     return narrowed;
+  }
+  /** Reads only enabled, permission-granted data for this owner's existing conversation. */
+  windowContributions(sessionId: string) {
+    this.store.profiles.requireOwner("Plugin window contributions");
+    if (!this.store.ownsSession(this.owner, sessionId)) throw new Error("Conversation not found");
+    return [...this.loaded.entries()].flatMap(([plugin, entry]) => entry.window
+      .filter(contribution => contribution.sessionId === sessionId)
+      .map(contribution => ({ ...contribution, id: `${plugin}:${contribution.id}`, plugin, pluginName: entry.summary.name }))).slice(0, 100);
   }
   /** Takes a plugin out of this running copy without changing the owner's choice. */
   private unload(id: string): void {

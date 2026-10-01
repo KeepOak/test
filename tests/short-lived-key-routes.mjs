@@ -964,6 +964,8 @@ export const ROUTES = {
   "/api/plugin-catalog/inspect": "owner POST",
   "/api/plugin-catalog/install": "owner POST",
   "/api/plugins": "look",
+  "/api/plugins/window/:id": "look",
+  "/api/plugins/window/:id/draft": "owner POST",
   "/api/plugins/sample/disable": "owner POST",
   "/api/plugins/sample/enable": "owner POST",
   "/api/plugins/sample/inspect": "owner POST",

@@ -2,6 +2,7 @@
    composer, sending through POST /api/run, and the approval card for a task waiting on a yes (GET /api/policy). */
 
 import { restOf } from "../core/sleep.js";
+import { pluginRowBadges, pluginDraftButtons, loadPluginWindow, initPluginWindow } from "./plugin-window.js";
 import { $, esc, renderNow, render, onRender } from "../core/dom.js";
 import { S, E, refresh, trunkIntro, chatFace, defaultTrunk, threadTrunk, ownerHere, projectName, level } from "../core/state.js";
 import { api, whenBack } from "../core/api.js";
@@ -130,7 +131,7 @@ function stageButtons(working) {
 
 const mid = (m) => (m.messageId ? ` data-i15="${esc(m.messageId)}"` : "");
 /* In a view-only conversation (a room member's, pass 18b) a message has no actions: nothing there starts work. */
-const acts = (m) => (viewingHelper() ? "" : msgActs(m));
+const acts = (m) => (viewingHelper() ? "" : pluginRowBadges(m) + msgActs(m));
 /* dogfood D15: a Trunk's routine is asked with "[Trunk @handle] " in front, for the scheduler; the thread shows its words. */
 const ownWords = (words) => String(words ?? "").replace(/^\[Trunk @[a-z0-9-]{1,60}\] /, "");
 /* QA retest 2026-09-28 pass 2: the engine writes "[attached file: name (kind)]" after the words so the model knows a file
@@ -328,7 +329,7 @@ function composer() {
   return `<div class="dock">${helpFrame()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}${paneTarget() ? " away19" : ""}" id="composer" data-form="composer">
     <button class="c-btn" type="button" aria-label="${t("window.chat.composer.plus")}" aria-haspopup="menu" aria-expanded="false" data-act="plusmenu">${ic("plus")}</button><button class="c-btn plug9" type="button" aria-label="${t("window.chat.composer.tools-label")}" data-tip="${t("dashboard.filter.tools")}" aria-haspopup="dialog" data-act="tools9">${ic("puzzle")}</button>
     ${dictating() ? dictRow() : ""}${paneTo()}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}" data-main="${main}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${practiceFlag()}${costLine(C.sessionId)}</span>`}
-    ${chips()}
+    ${chips()}${viewingHelper() ? "" : pluginDraftButtons()}
     ${dictating() ? "" : `${micButton()}<button class="c-btn" type="button" aria-label="${t("window.chat.composer.voice")}" data-act="voice">${ic("wave")}</button>`}
     ${!draft.trim() && (C.sending || stoppable()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
       : `<button class="c-btn send${draft.trim() || hasFiles() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}"${C.sessionId ? "" : ` data-tip="${esc(t("window.chat.bgsend.tip", { keys: spoken("Ctrl+Enter") }))}"`}>${ic("up")}</button>`}</form></div>`;
@@ -999,6 +1000,8 @@ function putAway(id) {
 }
 
 export function init() {
+  initPluginWindow();
+  onRender(loadPluginWindow);
   initAgent17();
   initTrunkLine();
   document.addEventListener("conv-put-away", (e) => putAway(e.detail));

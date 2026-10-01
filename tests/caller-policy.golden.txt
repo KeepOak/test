@@ -1657,6 +1657,10 @@ owner GET /api/plugin-catalog/install | here=ok remote=ok phone=ok legacy=ok per
 owner POST /api/plugin-catalog/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/plugins | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/plugins | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/plugins/window/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/plugins/window/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/plugins/window/:id/draft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/plugins/window/:id/draft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/plugins/sample/disable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/plugins/sample/disable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/plugins/sample/enable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3952,6 +3956,10 @@ owner+lockdown GET /api/plugin-catalog/install | here=ok remote=ok phone=ok lega
 owner+lockdown POST /api/plugin-catalog/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/plugins | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/plugins | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/plugins/window/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/plugins/window/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/plugins/window/:id/draft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/plugins/window/:id/draft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/plugins/sample/disable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/plugins/sample/disable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/plugins/sample/enable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -6247,6 +6255,10 @@ household GET /api/plugin-catalog/install | here=400/f6e21c remote=400/f6e21c re
 household POST /api/plugin-catalog/install | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/plugins | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/plugins | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/plugins/window/:id | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/plugins/window/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/plugins/window/:id/draft | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/plugins/window/:id/draft | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/plugins/sample/disable | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/plugins/sample/disable | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/plugins/sample/enable | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8542,6 +8554,10 @@ household+lockdown GET /api/plugin-catalog/install | here=400/f6e21c remote=400/
 household+lockdown POST /api/plugin-catalog/install | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/plugins | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/plugins | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/plugins/window/:id | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/plugins/window/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/plugins/window/:id/draft | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/plugins/window/:id/draft | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/plugins/sample/disable | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/plugins/sample/disable | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/plugins/sample/enable | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -10837,6 +10853,10 @@ applock GET /api/plugin-catalog/install | here=423/a8f863
 applock POST /api/plugin-catalog/install | here=423/a8f863
 applock GET /api/plugins | here=423/a8f863
 applock POST /api/plugins | here=423/a8f863
+applock GET /api/plugins/window/:id | here=423/a8f863
+applock POST /api/plugins/window/:id | here=423/a8f863
+applock GET /api/plugins/window/:id/draft | here=423/a8f863
+applock POST /api/plugins/window/:id/draft | here=423/a8f863
 applock GET /api/plugins/sample/disable | here=423/a8f863
 applock POST /api/plugins/sample/disable | here=423/a8f863
 applock GET /api/plugins/sample/enable | here=423/a8f863

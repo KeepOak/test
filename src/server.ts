@@ -1966,6 +1966,26 @@ async function api(
     app.store.profiles.requireOwner("What the assistant has learned about its tools");
     return app.store.toolUsage.removeNote(app.runtime.owner, toolNote[1]!);
   }
+  const windowPlugin = /^\/api\/plugins\/window\/([a-f0-9-]{36})(\/draft)?$/.exec(path);
+  if (windowPlugin) {
+    const guard = () => {
+      app.store.profiles.requireOwner("Plugin window contributions");
+      if (currentPerson() || startedWithShortLivedKey() || app.sessionLock.state().locked || lockdownActive(app.store, app.runtime.owner))
+        throw new HttpError(403, "Use plugin contributions in the owner's unlocked app window.");
+    };
+    guard();
+    const sessionId = z.string().uuid().parse(windowPlugin[1]);
+    if (request.method === "GET" && !windowPlugin[2])
+      return { sessionId, contributions: app.plugins.windowContributions(sessionId) };
+    if (request.method === "POST" && windowPlugin[2]) {
+      const input = z.object({ id: z.string().max(90), approve: z.literal(true) }).strict().parse(await readBody(request));
+      guard();
+      const draft = app.plugins.windowContributions(sessionId).find(entry => entry.id === input.id && entry.slot === "composer-draft");
+      if (!draft || draft.slot !== "composer-draft") throw new HttpError(404, "This plugin draft is no longer available.");
+      return { sessionId, draft };
+    }
+    throw new HttpError(405, "Use GET to read contributions or POST to approve a draft.");
+  }
   if (request.method === "GET" && path === "/api/plugins") return { plugins: await app.plugins.list(), problems: app.pluginProblems };
   const plugin = /^\/api\/plugins\/([a-z][a-z0-9-]{0,39})\/(inspect|enable|disable)$/.exec(path);
   if (plugin && request.method === "POST") {
