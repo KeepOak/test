@@ -3039,7 +3039,7 @@
   "library.note.looking-back-cost": "Chaque relecture est une question posée à votre modèle, comptée pour la conversation relue. Une conversation temporaire n'est jamais relue.",
   "library.note.looking-back-positions": "Activé : après chaque série de vos messages, et chaque fois qu'une longue conversation est raccourcie. Au besoin : uniquement quand une longue conversation est raccourcie, ou à votre demande.",
   "libraryMadeTypes.all": "Tous",
-  "libraryMadeTypes.audio": "Audio",
+  "libraryMadeTypes.audio": "Fichiers audio",
   "libraryMadeTypes.count": "{shown} sur {total} fichiers conservés",
   "libraryMadeTypes.data": "Données",
   "libraryMadeTypes.documents": "Documents",
