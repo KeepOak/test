@@ -7,7 +7,7 @@ const keep = source.slice(source.indexOf("function openNow("), source.indexOf("c
 /* The module's own layout and scroll helpers, and stand-ins for what it imports (who is signed in, Settings pages, pane tabs). */
 const helpers = source.slice(source.indexOf("const VIEWS ="), source.indexOf("/* Listens for live updates"));
 const stubs = (principal = "owner") => ({ E: { profiles: null }, sessionPrincipal: () => principal, hasPage: () => true, extraTabs: [],
-  document: { getElementById: () => null, querySelectorAll: () => [] } });
+  sessionAuthority: () => ({ current: () => true, close: () => {} }), document: { getElementById: () => null, querySelectorAll: () => [] } });
 function capture({ chat = null, pending = true, storageError = false } = {}) {
   let saved;
   const context = vm.createContext({ ...stubs(), S: { chat, view: "chat", tabs: {}, drafts: {} }, sendingWithoutSession: () => pending,
@@ -112,25 +112,32 @@ test("PLAT-045: a shell handover brings back the place, pane and layout, and nev
   assert.equal(other.removed, true, "their snapshot is dropped");
 });
 /* Each case changes something while the restoration waits (inside the awaited call, so the change lands mid-wait):
-   the person, the app lock, the owner's own move, or a newer handover's snapshot. */
+   the person, the app lock, the owner's own move, or a newer handover's snapshot. sessionAuthority stands in for
+   core/session-pages.js: revoked for good by any lock it hears, or by any person change, even one switched back
+   (its own behaviour is covered by tests/new-conversation-*.test.mjs). */
 async function interrupted(at, change) {
   const kept = { at: Date.now(), commit: "a".repeat(40), principal: "owner", view: "inbox", chat: KEPT, drafts: { [KEPT]: "half a thought" },
     caret: { start: 1, end: 4, focused: false }, scroll: { top: 30, atEnd: false }, layout: { pane: "files", sideW: 300 } };
   const store = new Map([["restore", JSON.stringify(kept)]]);
-  const world = { who: "owner", locked: false, opens: 0, receipts: 0, frames: 0, store };
+  const world = { who: "owner", revision: 0, opens: 0, receipts: 0, frames: 0, closed: 0, store, hearing: [] };
+  world.lock = (on) => { for (const hear of world.hearing) hear(on); };
   const state = world.state = { chat: null, view: "chat", tabs: {}, drafts: {} };
   const box = world.box = { value: "", setSelectionRange: () => {}, focus: () => {} }, scroll = world.scroll = { scrollTop: 0 };
-  const app = { classList: { contains: (name) => name === "locked-b17" && world.locked } };
-  const context = vm.createContext({ ...stubs(), sessionPrincipal: () => world.who, KEY: "restore",
+  const sessionAuthority = () => {
+    const who = world.who, revision = world.revision; let revoked = false;
+    world.hearing.push((on) => { if (on) revoked = true; });
+    return { current: () => !revoked && world.revision === revision && world.who === who, close: () => { world.closed++; } };
+  };
+  const context = vm.createContext({ ...stubs(), sessionPrincipal: () => world.who, sessionAuthority, KEY: "restore",
     frames: async () => { if (++world.frames === 1 && at === "frames") change(world); },
     bridge: () => ({ windowRestored: async () => { world.receipts++; if (at === "receipt") change(world); return true; } }),
     location: { href: "http://localhost:45001/?_branch_live_restore=handover" }, URL, history: { replaceState: () => {} }, S: state, renderNow: () => {},
     $: (selector) => selector === "#prompt" ? box : selector === "#scroll" ? scroll : null,
-    document: { getElementById: (id) => id === "app" ? app : null, querySelectorAll: () => [] },
     sessionStorage: { getItem: (key) => store.get(key) ?? null, removeItem: (key) => { store.delete(key); } } });
   context.held = async (id) => { world.opens++; state.chat = id; state.view = "chat"; if (at === "open") change(world); };
   vm.runInContext(helpers + restore, context);
   world.result = await vm.runInContext("restoreOpen(held)", context);
+  assert.equal(world.closed, 1, "the authority is let go once");
   return world;
 }
 test("PLAT-045: a person switch while the conversation is read puts nothing more back and drops only that snapshot", async () => {
@@ -143,7 +150,7 @@ test("PLAT-045: a person switch while the conversation is read puts nothing more
   assert.equal(run.opens, 1); assert.equal(run.receipts, 1, "the app is told once");
 });
 test("PLAT-045: the app lock during the first frames stops the composer, caret and scroll coming back", async () => {
-  const run = await interrupted("frames", (world) => { world.locked = true; });
+  const run = await interrupted("frames", (world) => { world.lock(true); });
   assert.equal(run.result, false);
   assert.equal(run.box.value, "", "no draft is written behind the lock");
   assert.equal(run.scroll.scrollTop, 0);
@@ -166,4 +173,15 @@ test("PLAT-045: a newer handover's snapshot written while the app is told is kep
   assert.equal(run.result, false);
   assert.equal(run.store.get("restore"), newer, "the older restoration does not consume the newer snapshot");
   assert.equal(run.opens, 1); assert.equal(run.receipts, 1);
+});
+test("PLAT-045: a lock lifted again, or a person switched away and back, while the conversation is read still ends the restoration", async () => {
+  for (const change of [(world) => { world.lock(true); world.lock(false); },
+    (world) => { world.who = "someone-else"; world.revision++; world.who = "owner"; }]) {
+    const run = await interrupted("open", change);
+    assert.equal(run.result, false);
+    assert.equal(run.state.view, "chat"); assert.equal(run.state.pane, undefined);
+    assert.equal(run.box.value, ""); assert.equal(run.scroll.scrollTop, 0);
+    assert.equal(run.store.has("restore"), false);
+    assert.equal(run.opens, 1); assert.equal(run.receipts, 1);
+  }
 });

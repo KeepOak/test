@@ -9,7 +9,7 @@
    - The engine is being handed over: the window stays quiet while its requests wait and its streams reconnect. */
 
 import { S, E } from "../core/state.js";
-import { sessionPrincipal } from "../core/session-pages.js";
+import { sessionPrincipal, sessionAuthority } from "../core/session-pages.js";
 import { hasPage } from "../settings/settings.js";
 import { extraTabs } from "../chat/pane.js";
 import { sendingWithoutSession } from "../chat/chat.js";
@@ -182,12 +182,10 @@ export async function restoreOpen(open) {
     await bridge()?.windowRestored?.(recovery);
     return false;
   }
-  /* This restoration belongs to the person signed in now and to this one handover's snapshot. A person switch, the app
-     lock or a newer handover's snapshot during any wait below ends it: nothing more is put back, only this snapshot is
-     dropped (never a newer one), and the app is told once. */
+  /* This restoration belongs to the person signed in now and to this one handover's snapshot. A person switch (even one
+     switched back), the app lock (even one lifted again) or a newer handover's snapshot during any wait below ends it:
+     nothing more is put back, only this snapshot is dropped (never a newer one), and the app is told once. */
   const who = sessionPrincipal(E.profiles);
-  const current = () => sessionPrincipal(E.profiles) === who && !document.getElementById("app")?.classList.contains("locked-b17")
-    && sessionStorage.getItem(KEY) === raw;
   const forget = () => {
     if (recovery) { const url = new URL(location.href); url.searchParams.delete("_branch_live_restore"); history.replaceState(null, "", url); }
     if (sessionStorage.getItem(KEY) === raw) sessionStorage.removeItem(KEY);
@@ -195,34 +193,38 @@ export async function restoreOpen(open) {
   const drop = async () => { forget(); await frames(); await bridge()?.windowRestored?.(recovery ?? kept.commit); return false; };
   // A profile change must never bring back the previous person's private workspace or draft.
   if (typeof kept.principal === "string" && kept.principal !== who) return drop();
-  const view = VIEWS.has(kept.view) ? kept.view : S.view;
-  if (kept.tabs && typeof kept.tabs === "object" && !Array.isArray(kept.tabs)) {
-    for (const key of Object.keys(S.tabs)) {
-      if (typeof kept.tabs[key] === "string" && /^[a-z][a-z0-9-]{0,39}$/.test(kept.tabs[key])) S.tabs[key] = kept.tabs[key];
+  const authority = sessionAuthority(E.profiles, $("#app"));
+  const current = () => authority.current(E.profiles) && sessionStorage.getItem(KEY) === raw;
+  try {
+    const view = VIEWS.has(kept.view) ? kept.view : S.view;
+    if (kept.tabs && typeof kept.tabs === "object" && !Array.isArray(kept.tabs)) {
+      for (const key of Object.keys(S.tabs)) {
+        if (typeof kept.tabs[key] === "string" && /^[a-z][a-z0-9-]{0,39}$/.test(kept.tabs[key])) S.tabs[key] = kept.tabs[key];
+      }
     }
-  }
-  if (typeof kept.setPage === "string" && hasPage(kept.setPage)) S.setPage = kept.setPage;
-  if (kept.drafts && typeof kept.drafts === "object") Object.assign(S.drafts, kept.drafts);
-  if (sessionId(kept.chat)) await open(kept.chat);
-  if (!current()) return drop();
-  // The owner may have gone elsewhere while the conversation was read: their own move stands, nothing more is laid over it.
-  const here = !sessionId(kept.chat) || (S.chat === kept.chat && S.view === "chat");
-  if (here) {
-    restoreLayout(kept.layout);
-    // Opening the retained conversation sets the view to chat. The owner's actual place comes back after that read.
-    S.view = view;
-    renderNow();
-  }
-  const chat = S.chat;
-  await frames();
-  if (!current()) return drop();
-  if (here && S.view === view && S.chat === chat) restoreComposer(kept);
-  await frames();
-  if (!current()) return drop();
-  const accepted = await bridge()?.windowRestored?.(recovery ?? kept.commit);
-  // Told once: a switch, the lock or a newer handover meanwhile drops only this snapshot, even if the page was refused.
-  if (!current()) { forget(); return false; }
-  if (accepted === false) throw new Error("The restored page was not accepted; its draft is kept for recovery.");
-  forget();
-  return true;
+    if (typeof kept.setPage === "string" && hasPage(kept.setPage)) S.setPage = kept.setPage;
+    if (kept.drafts && typeof kept.drafts === "object") Object.assign(S.drafts, kept.drafts);
+    if (sessionId(kept.chat)) await open(kept.chat);
+    if (!current()) return drop();
+    // The owner may have gone elsewhere while the conversation was read: their own move stands, nothing more is laid over it.
+    const here = !sessionId(kept.chat) || (S.chat === kept.chat && S.view === "chat");
+    if (here) {
+      restoreLayout(kept.layout);
+      // Opening the retained conversation sets the view to chat. The owner's actual place comes back after that read.
+      S.view = view;
+      renderNow();
+    }
+    const chat = S.chat;
+    await frames();
+    if (!current()) return drop();
+    if (here && S.view === view && S.chat === chat) restoreComposer(kept);
+    await frames();
+    if (!current()) return drop();
+    const accepted = await bridge()?.windowRestored?.(recovery ?? kept.commit);
+    // Told once: a switch, the lock or a newer handover meanwhile drops only this snapshot, even if the page was refused.
+    if (!current()) { forget(); return false; }
+    if (accepted === false) throw new Error("The restored page was not accepted; its draft is kept for recovery.");
+    forget();
+    return true;
+  } finally { authority.close(); }
 }
