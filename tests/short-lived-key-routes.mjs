@@ -16,6 +16,7 @@
  * ":id" stands for any task, conversation or item id.
  */
 export const ROUTES = {
+  "/api/monitors/:id/prices": "owner GET", // owner price history; Trunk tool reads stay creator-bound
   "/api/taste": "prefix",
   "/api/panels/browser/demonstration": "owner POST",
   "/api/panels/browser/network": "owner POST",
@@ -119,7 +120,7 @@ export const ROUTES = {
   "/api/decisions/urgency": "owner POST",
   "/api/approvals/categories": "owner POST",
   "/api/artifacts": "look",
-  "/api/artifacts/file": "look",
+  "/api/artifacts/file": "secret-read",
   "/api/artifacts/read": "look", // dogfood-ux-2: one kept file's words, as /api/artifacts/file shows a picture
   "/api/artifacts/page": "task POST",
   "/api/artifacts/save": "task POST",
@@ -241,6 +242,7 @@ export const ROUTES = {
   // are the owner's alone, and every change is the owner's.
   "/api/delight": "look",
   "/api/delight/achievements": "secret-read",
+  "/api/weekly-recap": "owner GET,POST", // private counts and the owner's explicit manual-time estimate
   "/api/delight/noticed": "owner POST",
   "/api/delight/settings": "owner POST",
   "/api/delight/told": "owner POST",
@@ -309,6 +311,11 @@ export const ROUTES = {
   "/api/flows/check": "other POST",
   "/api/flows/runs/:id": "look",
   "/api/folder-trust": "owner POST",
+  "/api/github-device": "owner POST", // SELF-021: the owner's GitHub device connection (client ID, and what is connected)
+  "/api/github-device/begin": "owner POST", // SELF-021: starts GitHub's device sign-in
+  "/api/github-device/cancel": "owner POST",
+  "/api/github-device/disconnect": "owner POST", // SELF-021: the token taken out of the locker
+  "/api/github-device/poll": "owner POST", // SELF-021: finishes the sign-in and keeps the token in the locker
   "/api/gitlab": "owner POST", // RES-719: the GitLab switch
   "/api/gitlab/connect": "owner POST", // RES-719: a token checked with GitLab, then kept in the locker
   "/api/gitlab/disconnect": "owner POST", // RES-719: the token taken out of the locker
@@ -552,12 +559,15 @@ export const ROUTES = {
   "/api/personal/signin/google": "secret-read",
   "/api/personal/signin/google/start": "owner POST",
   "/api/personal/signin/google/secret": "owner POST",
+  "/api/personal/signin/google/test": "owner POST",
   "/api/personal/signin/microsoft": "secret-read",
   "/api/personal/signin/microsoft/start": "owner POST",
   "/api/personal/signin/microsoft/secret": "owner POST",
+  "/api/personal/signin/microsoft/test": "owner POST",
   "/api/personal/signin/spotify": "secret-read",
   "/api/personal/signin/spotify/start": "owner POST",
   "/api/personal/signin/spotify/secret": "owner POST",
+  "/api/personal/signin/spotify/test": "owner POST",
   "/api/personal/spotify/now": "other POST",
   "/api/personal/switch": "owner POST",
   "/api/personal/tunnel": "secret-read",
@@ -905,6 +915,9 @@ export const ROUTES = {
   "/api/people/me/pin": "other POST",
   "/api/people/me/sign-out": "other POST",
   "/api/people/oidc/callback": "pre-auth GET",
+  "/api/people/rooms": "look",
+  "/api/people/rooms/:id": "look",
+  "/api/people/rooms/:id/message": "other POST",
   "/api/people/settings": "secret-read",
   "/api/people/shares": "owner POST",
   "/api/people/shares/export": "secret-read",
@@ -1139,6 +1152,8 @@ export const ROUTES = {
   "/api/self-development/requests/:id/approve": "owner POST",
   "/api/self-development/requests/:id/decline": "owner POST",
   "/api/self-development/requests/:id/diff": "secret-read", // the change to Branch's own source, for the owner to read before a yes
+  "/api/self-development/requests/:id/draft": "secret-read", // the committed draft, for the owner to review before publishing
+  "/api/self-development/requests/:id/publish": "owner POST",
   "/api/sessions": "look",
   "/api/sessions/": "prefix",
   "/api/sessions/:id": "look",
@@ -1183,6 +1198,8 @@ export const ROUTES = {
   "/api/skill-installs": "look",
   "/api/skill-installs/": "prefix",
   "/api/skill-installs/export": "look",
+  "/api/skill-installs/github": "owner POST", // looks at a GitHub skill and holds a preview; the owner's alone
+  "/api/skill-installs/github/install": "owner POST",
   "/api/skill-installs/inspect": "owner POST",
   "/api/skill-installs/install": "owner POST",
   "/api/skill-installs/remove": "owner POST",
@@ -1299,6 +1316,7 @@ export const ROUTES = {
   "/api/panels/browser/action": "owner POST",
   "/api/panels/browser/disconnect": "owner POST",
   "/api/panels/browser/stop": "owner POST",
+  "/api/self-development/ci": "owner POST",
   "/api/usage/glance": "look",
   "/api/usage/by-trunk": "look", // models-ui: who spent what, read as the usage glance is
   "/api/usage/glance/settings": "secret-read",
@@ -1317,6 +1335,7 @@ export const ROUTES = {
   "/api/voice/transcribe": "task POST",
   "/api/voice/voices": "look",
   "/api/web-pages": "owner POST", // w911 (A0743, A1452) hook: the switch for reading and crawling web pages
+  "/api/web-search": "owner POST", // wire-greyed: where web searches go (Settings › Advanced › Web search)
   // mac7/wake-pins: the word that starts a turn. Reading says what this computer could do; changing is the owner's.
   "/api/voice/wake": "secret-read",
   // mac7/live-voice: speaking and seeing the words. Reading says which speech program is here and

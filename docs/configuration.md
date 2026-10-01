@@ -1,5 +1,11 @@
 # Configuration
 
+### Weekly recap
+
+Overview shows completed Trunk tasks from the last seven days, grouped by their recorded Trunk. Helpers, engine activity, temporary chats and deleted conversations are excluded. Completion uses the retained task's finish timestamp, so work started before the week can count when it finishes during it. The scan is bounded to the latest 5,000 completed records and the card says when older records were left out. This is retained activity, not an audit of work that has been erased.
+
+There is no invented time-saving figure. Set your usual manual minutes per Trunk task on the card to get an explicitly labeled estimate of manual work avoided; clear it to show no estimate. Running time is recorded activity, not your attention time and is not treated as a saving. This estimate applies to completed Trunk tasks only. `GET /api/weekly-recap` reads the recap and `POST /api/weekly-recap` sets `{ "manualMinutesPerTask": 10 }` (0–1,440, or `null`); both belong to the owner at the app and refuse short-lived keys and household profiles. No message is sent or recurring job created.
+
 ## Practice runs in the window
 
 The Permissions page's **Practice runs** switch controls availability and defaults on. In the
@@ -507,6 +513,8 @@ The free fallback reads a public results page rather than an interface meant for
 ```
 
 `searchEndpoint` still sets the address the free fallback uses, so anything already set up keeps working.
+
+The window can pick the service too, under Settings › Advanced › Web search (`GET`/`POST /api/web-search`, owner only). Once the owner picks one there, that pick wins over the launch settings file; until then the file decides. Without a `keySecret`, a paid service looks for its usual secret name (`BRAVE_SEARCH_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY` or `SERPER_API_KEY`), and the row says whether that secret is saved.
 
 ### Pinned skills and memory retention
 
@@ -1260,6 +1268,18 @@ Use `"type": "instagram"` for Instagram, with the professional account's id as `
 ### Sending without being asked
 
 Two tools send on the assistant's own initiative rather than answering somebody. `channels.broadcast` sends one message to several linked chats at once — leave the list empty to reach every chat that has talked to the assistant — and `channels.digest` sends the morning brief as it stands right now to one chat on any connected service. Both go through the same waiting line every reply uses, so quiet hours, splitting and retries apply unchanged: during quiet hours the message is written down and sent when they end. Both are the owner's alone: somebody else using this computer under their own profile is refused, because the chats belong to the owner. Neither is available to a task started from a chat message, so somebody you have paired cannot make the assistant write to everyone else.
+
+### Correcting or removing Branch's own messages
+
+From your own task in the app, ask Branch to correct or remove an earlier message it sent. `channels.own_messages`
+lists up to 50 retained own text deliveries in one exact channel and chat, including message IDs and edit/delete
+availability. `channels.edit_message` replaces one recorded message's text; `channels.delete_message` removes it.
+They require `channels.send` and the owner's profile, and refuse tasks from chat apps, schedules, triggers,
+short-lived keys or borrowed conversations. Edits pass the outbound secret and safety checks and must fit in one
+message. Actions pause while Branch is locked, paused, in Lockdown or in quiet hours. Service failures and time
+limits are reported, and success is recorded only after the service accepts the action. The original send and its
+stable deduplication key remain, so deletion does not resend the message after reconnect. Sent deliveries are kept
+for seven days; unknown, expired, already deleted or other people's message IDs are refused.
 
 ### Who may change the chat apps
 
@@ -2463,6 +2483,9 @@ Everyone answers or Only who I tag. A checked, sufficiently confident pick is wr
 does not ask again; an unknown or unsure pick falls back to the room rule. Tagged messages are never rerouted.
 `inbox` enables `POST /api/decisions/urgency { items }`, an owner-only action that scores Needs you rows from
 1 to 10, at most eight new rows per call. Scores are cached by row key and content; changed words are scored again.
+The `lists` switch (on by default) filters a long list a tool hands back (search results, files, messages) before
+the task reads it, keeping what the task could need. It acts only with a decision model on this computer or one chosen
+apart from the task's own; a list shorter than `listMin` lines (20 to 2000, default 60) is read whole.
 Switching it off refuses scoring with 409 and restores the inbox's original order.
 
 ## Teams, linked chats, registries and evaluation
@@ -2536,7 +2559,8 @@ them on a task in a suite file as `"scorers": [...]`:
 `exact` (the answer, once case, spacing and trailing punctuation are taken off), `contains`,
 `regex`, `json-schema`, `numeric` (with a tolerance), `url` (a pattern the address must match),
 `file-exists` and `file-contains` (inside the workspace), `tool-called` (optionally `withArgs`, so
-you can say a tool must have been used with particular arguments), `budget` (`maxSteps`, `maxMs`,
+you can say a tool must have been used with particular arguments), `helper-runs` (`min`, `max`,
+`completed`, `output`: the helpers the engine actually recorded for the task), `budget` (`maxSteps`, `maxMs`,
 `maxTokens`, `maxDollars` — the rounds, time, tokens and money a task may use), `finished` (did it
 actually do the work, or did it say it could not — the completion checks you already use, plus the
 phrases an answer uses when it has quietly given up), `f1`, `passage`, `html`, `trajectory`, and
@@ -3757,6 +3781,28 @@ The assistant has these tools, each of which asks first whether the connected pr
 - `media.info` — how long an MP4 video or a WAV sound file runs, what kind it is and how many tracks it carries, read from the file's own headers.
 
 **What is deliberately not here.** On its own the assistant does not make videos (switch on *Making videos* under *Reach and platform* to use OpenAI's or Google's video service with your own key), and on its own it cannot pull still frames out of one: that needs a video decoder this app does not ship. With your own ffmpeg and the switch below turned on, it can (see *Watching and saving videos*). `media.info` exists so it can still reason about a video's length and shape. Sound editing is limited to trimming uncompressed WAV.
+
+**Pictures through your ChatGPT sign-in** use `gpt-image-2` through the native JSON picture route
+used by Codex, after your existing sign-in opt-in. Branch's existing **unofficial, may stop working**
+standing for that third-party sign-in remains; reading the official client's request format does
+not mean OpenAI endorses Branch. Settings offers `gpt-image-2` when the signed-in primary
+connection is eligible, without reading a token. Clear another picture-model override before
+using this route. `media.image` makes a picture or edits one PNG/JPEG/WebP from the workspace;
+masked edits are refused. Output is one decoded PNG up to 5 MB; the result reports its actual
+dimensions separately from the size requested. A practice run reads no token and
+makes no request.
+
+Only the owner's own task can use this route. Local-only tasks, household profiles, short-lived
+keys, outside task sources, pinned helpers, a separately chosen conversation connection/account,
+and Trunks with separately chosen or unpermitted sign-ins refuse it. It uses the one enabled
+primary account, with no account fallback; a multi-account or account-capped pool is refused.
+Task/monthly dollar caps and enabled model cost thresholds also refuse it because picture usage
+and any charge are not attributed to those budgets. Cost stays **unknown**, never free; the plan's
+picture allowance is not measured here. Tokens remain private, the address is fixed to the
+original ChatGPT backend, requests pass through the network rules with redirects refused, and
+errors contain only the status. A real account, picture output and plan allowance still need
+acceptance proof. Turning off that sign-in or choosing an API-key picture connection restores
+the ordinary picture route.
 
 Reading a file is `media.read` and counts as looking, not changing; making a picture, speaking and trimming are `media.write` and are held to your approval rules like any other change. Each of those tools tells the approval rules the workspace path it would write (`media/poster.png`), so a rule about that folder fires on the path the file really gets rather than the bare name that was asked for. Every result is signed by the ordinary tool receipt, so what was made and where it was saved can be checked afterwards. A practice run reports what it would have made without calling the provider.
 
@@ -6601,6 +6647,12 @@ plainest example — something for you to do by hand. `GET /api/deferred` lists 
 `POST /api/deferred/settle` with the id and what came of it brings the answer back into the
 conversation as an ordinary follow-up message.
 
+`user.task` keeps the small core API for manual handoffs. Typed handoffs are available through
+`user.later` in the agents toolbox: `kind: "signing"` waits for your report that you signed,
+and the default `kind: "later"` records unfinished work for the **Finish now** action.
+Neither performs or verifies a signature, sets a timer, or grants the continuation new permissions.
+Earlier `user.task` calls with `kind: "signing"` remain accepted.
+
 All the routes in this batch — flows, the handed-over jobs, the programs left running, and the
 three switches above — belong to the owner. With somebody else's profile switched on they answer
 "belongs to the owner", exactly as saved workflows and the waiting line do, and so does the
@@ -8233,19 +8285,40 @@ Every field of `VoiceSettingsSchema` (`src/voice.ts`), which is what **Settings 
 | `useProviderVoice` | Prefer the connected service's higher-quality voice over the browser's. |
 | `sttRoute` | Who writes out what you say: `auto`, `openai`, `gemini`, or `local` (a speech program here). |
 | `sttModel` | The model name to use for writing speech out, when the route wants one. |
-| `ttsRoute` | Who reads replies aloud: `auto`, `openai`, `gemini`, or `windows` (the voices Windows ships). |
+| `ttsRoute` | Who reads replies aloud: `auto`, `openai`, `gemini`, `windows` (the computer's voice), or `piper` (an installed CLI and model). Auto prefers an available Piper model for the default local voice; an explicit system or provider route keeps that choice. Local voices still obey `systemVoice`. Piper reuses one external process across sentences and releases it after two idle minutes. |
 | `ttsModel` | The model name to use for reading aloud, when the route wants one. |
 | `keepAudioOnThisComputer` | Nothing containing sound may leave. Both cloud routes then refuse in plain words, and so does a live conversation. |
 | `replyWithVoiceOnChannels` | Answer a voice note on a chat app with a voice note back. Telegram only, today. |
 | `localSpeechExecutable` | The full path to whisper.cpp, or to the Python that has faster-whisper. Empty: Branch looks for faster-whisper where `uv tool install faster-whisper-cli` or `pipx install faster-whisper-cli` put it. Branch downloads nothing. |
 | `localSpeechModel` | The model file whisper.cpp should use; for faster-whisper a model name (`base.en`) or folder. Empty: the fastest faster-whisper model already on this computer. |
 | `localSpeechKind` | Which of the two it is: `whisper-cpp` or `faster-whisper`. faster-whisper runs as a small worker kept loaded while it is used, offline. |
+| `localVoiceExecutable` | Absolute path to an already installed Piper CLI. Empty looks for `piper` or `piper.exe` on PATH. Branch does not install it. |
+| `localVoiceModel` | Absolute path to an existing Piper `.onnx` voice with an adjacent `.onnx.json`; empty uses `PIPER_VOICE`. No model is downloaded. The voice's license remains the owner's responsibility. |
 | `localSpeechStream` | The full path to a streaming speech program that is handed sound on its standard input and writes words out as it hears them, for live dictation. Empty means none, and Branch looks for `whisper-stream` or sherpa-onnx on your search path instead. Branch downloads nothing. |
 | `liveMaxMinutes` | How many minutes one live conversation may last. 10 by default. |
 | `liveMaxDollars` | How much one live conversation may cost. $1.00 by default. |
 | `liveVoiceDetection` | Let the service decide when you have stopped speaking, rather than waiting for the button. |
 | `keepLiveRecordings` | Note in the task's record how much sound a live conversation carried — the size of each piece and nothing else. The sound itself is never kept either way. |
 | `liveView` | `off` (the default) or `on`. On: Talk live opens a view of its own, like the voice modes of ChatGPT and Codex: a circle that moves with the real sound going up and coming back, what each side says as it is said, Mute (the sound stops leaving this computer), Show the chat, and End; the send button offers Talk live while the message box is empty. A question the assistant asks mid-conversation folds the view away so its card can be answered. The microphone is asked for only when you press Talk live. Off: Talk live is the plain button it always was. Talk live is never offered in a room or a conversation a Trunk answers in. |
+
+Local faster-whisper captions and completed recordings prefer the installed package's Silero VAD.
+The existing offline worker keeps the VAD and speech model warm, excludes neural-classified silence,
+and preserves 400 ms of speech padding. If its local VAD asset or runtime cannot load, recognition
+continues without neural filtering and the Voice status reports that fallback after first use.
+No model or package is fetched. Installed sherpa VAD dictation also accepts complete Whisper ONNX
+bundles (`<name>-encoder[.int8].onnx`, matching decoder, `<name>-tokens.txt`, `silero_vad.onnx`)
+alongside transducer bundles. An explicitly named streaming program still wins.
+
+When the selected connection is a ChatGPT subscription, Talk live uses its existing selected account
+for `gpt-live-1-codex`, with a browser WebRTC audio offer and engine-owned sideband. No provider token
+is given to the page. The existing owner/profile, app-lock, Lockdown, conversation and local-audio
+refusals still apply. This route requires automatic voice detection; its provider controls interruption
+when you speak. Requests needing Branch actions go through the ordinary delegated runtime, using
+the exact selected account and usual approval cards. Answer a waiting card in Inbox; spoken agreement
+does not grant approval. End or a new consultation cancels pending work and retires its unanswered cards.
+With account pooling off, the connection's primary account remains selected. A later account/model
+change ends the live conversation. The time limit applies, but subscription quota/dollar usage is
+unavailable and the dollar cap cannot be enforced for this route. WebRTC audio size recording is unavailable.
 
 ### The rest
 
@@ -8682,7 +8755,7 @@ wait at once.
 | Suggested automations | Automations → Scheduled | A catalogue of 13 blueprints with checked blanks, and up to five suggestions worked out from what Branch remembers and what is connected, without asking a model (`automation.ideas`, `automation.propose`, `/suggestions`, `/blueprint`) |
 | Standing orders | Automations → Scheduled | A named programme: what it may do, when it starts, what needs a yes, when to stop and ask. A reply starting `ESCALATE:` pauses it and asks you (`orders.list`, `orders.propose`) |
 | Repeating in a conversation | Automations → Scheduled | `/loop every 10m <what> [--times n] [--until …]` (1 minute apart at least, 10 turns unless said, 100 at most, stops on `LOOP_COMPLETE`) and `/heartbeat every 30m <what>` (5 minutes apart at least, adds a note only with news). Owner only |
-| Sub-goals, background tasks, handing on | The message box | `/subgoal` adds to the conversation's goal (the judge sees them); `/bg` runs a task in its own conversation, three at most; `/handoff <chat app>` points a chat that has talked to Branch at this conversation, and `/handoff terminal` or `assistant <name>` uses Interop's hand-on, behind its own switch |
+| Sub-goals, background tasks, handing on | The message box | `/subgoal` adds to the conversation's goal (the judge sees them); `/bg` runs a task in its own conversation, three at most; Conversation → Share → Hand off selects an exact available Telegram owner DM and rechecks both conversation pointers before linking. The chooser considers the latest 50 Telegram chats and their latest 20 runs. Busy tasks, waiting questions, changed destinations and unavailable chats are refused. `/handoff terminal` shows the attach command to run; `/handoff assistant <name>` reports the remote assistant's returned state and answer, behind Interop's own switch. A chat app name alone does not choose a destination. |
 | Procedures that start themselves | Automations → Procedures | Steps that start on a clock, after one of your tasks, or by hand; each asks before every step, before it starts (the default), or runs on its own. A step marked `confirm` always asks; an "on its own" procedure under 50% after four runs goes back to asking (`procedures.auto.list`, `procedures.auto.propose`, `procedures.auto.suggest_change`, which the owner answers in the flow editor) |
 | What skills need | Customize → Skills | Programs, keys and systems a skill declares in its `metadata` (`requires-bins`, `requires-any-bins`, `requires-keys`, `os`, `install-brew`/`-apt`/`-winget`/`-npm`/`-pip`, or OpenClaw's `openclaw` block), and whether this computer has them (`skills.readiness`). Programs are looked for on `PATH` without running anything; install lines are only shown |
 | "From now on" instructions | Settings → Assistant | "From now on, …" in one of your messages is kept, after one yes, as a standing instruction for the assistant, every specialist, or one specialist (`instructions.list`, `instructions.propose`) |
@@ -9228,6 +9301,44 @@ is sent only to OpenRouter, and selecting Cheapest or Fastest clears that list.
 
 The planning, difficulty and OpenRouter ideas come from aider, cline, gemini-cli and Hermes Agent
 (Apache-2.0 and MIT); no code was copied.
+
+### Recorded cost thresholds
+
+The owner can set a **stop-next-round estimate** through `POST /api/model-savings`, initially off:
+
+```json
+{"card":"costThresholds","values":{"mode":"on","activatedAt":"2026-09-30T12:00:00.000Z","rules":[
+  {"provider":"openai","model":"gpt-4o","maxMonthlyDollars":10,"fallbackPreset":"my-small-model"}
+]}}
+```
+
+Use `connections[].thresholdProvider` and `connections[].model` from `GET /api/model-savings`:
+the provider key is the catalogue service id, or the preset id for a custom connection. A null
+`model` counts every model on that service. The named fallback must already be set up; null stops
+the round. This API is owner-only, including reads; there is no dedicated window control yet.
+
+`activatedAt` (ISO 8601 timestamp or null) records when the guard was last enabled; the system uses it
+to determine which month's rounds to count. The field is set automatically when the guard is turned on
+and cleared when it is turned off. Changing rules while the guard is on retains the current `activatedAt`.
+
+Estimates count completed runtime rounds from when the owner enables the guard, resetting at the
+start of each UTC month. Turning it off and on starts a new counting period; changing rules while
+it is on retains that period. Prices are the current catalogue or owner correction and tokens use
+the larger of Branch's estimate and the service's reported count, including cache-read, cache-write,
+and one-hour cache-write tokens. Kept answers cost nothing. Unknown prices or unreadable receipts
+stop an enabled matching guard instead of counting as zero.
+
+Only the owner's explicitly named fallback is considered, and its own thresholds, known price,
+tool/picture/JSON capabilities, local-only routing and Trunk sign-in rules still apply. A pinned
+helper model/account is stopped rather than moved to another account. Household and short-key
+callers receive no dollar figures from a threshold refusal.
+
+This is not an API billing ceiling: it reserves nothing for concurrent or in-flight requests and
+a completed round can cross the figure before the next round stops. Failed/interrupted requests,
+direct provider calls, mixture members and cache keep-alive pings are not attributed separately.
+Plan subscription list-price estimates are not subscription bills. Disable the guard or reset this
+card to roll back its routing effect. The cost guard is original Branch code: Hermes's similarly
+named `model_thresholds` sets context-compression ratios, not dollar limits.
 
 **macOS and Linux.** Nothing here depends on the system: the cards, the routing and the pings behave
 the same on Windows, macOS and Linux, and the keep-alive timers never keep the app from closing.
@@ -9794,6 +9905,26 @@ looked at, so no more than this is ever in memory, and it is thrown away again e
 switch and `sureness` are in the settings catalogue, so a whole-app preset or a settings file can
 turn listening off or make it stricter but can **never choose what this computer listens for**: the
 word is set by you, in the card, and nowhere else.
+
+**Installed streaming keyword spotter.** Branch prefers
+`sherpa-onnx-keyword-spotter-microphone` when its complete model bundle and a tokenized
+keyword file are already present. The owner-only wake settings API accepts `keywordModel`
+(model folder), `keywordFile` (defaults to `keywords.txt` in that folder), and
+`confirmationFrames` (1–20, default 3 trailing blank frames in the native decoder).
+The bundle needs `tokens.txt` plus encoder, decoder and joiner ONNX files. The keyword
+file must contain a tokenized entry with an `@DISPLAY_NAME` matching your word in
+uppercase with spaces replaced by underscores. Prepare that entry with the installed
+spotter's vocabulary tools; Branch does not tokenize or download models for you.
+Check the license of the model you choose: no pretrained model is included, and
+openWakeWord's noncommercial pretrained models are never used.
+
+This program holds the microphone open continuously while the wake word is On, keeps
+its model loaded, and stops on lock, Lockdown, switch-off or application exit. Matches
+have a two-second cooldown and start ordinary turns with the existing permissions.
+If only faster-whisper is available, Branch uses its existing worker instead of passing
+whisper-cli flags to Python. That fallback still records separate windows and can miss
+speech while a window is being recognized. The new model/file settings currently have
+no dedicated controls in the Voice card; configure them through the owner settings API.
 
 **Your word stays yours.** `GET /api/voice/wake` is readable by anybody using this computer, so it
 never carries the word itself to anybody but you: somebody on a household profile is told only
@@ -10739,6 +10870,21 @@ The Gardener extends this record with the following settings when its feature is
 | `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
 | `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |
 
+
+### Thirty-day usage insights
+
+`/insights` reports completed-task tokens, estimated cost, unknown prices, recorded failures, top models and task sources for the last thirty days. It works in the window, phone, terminal, dashboard and supported chat commands, without invoking a model. In chat or with a restricted key, it reports only the current conversation. With the owner key on other surfaces, it reports the owner's conversations; `/insights conversation` narrows it, and `/insights all` explicitly requests the owner aggregate. Household profiles cannot request the owner's aggregate. Costs are estimates rather than bills, and running tasks are excluded.
+
+
+`/history` also works in the window and phone conversation composer. It reads the current conversation only, shows the last twenty user/assistant turns with bounded previews, and scrubs known secrets. Household profiles can read their own current conversation; unknown or another person's conversation is refused. It does not invoke a model and can be used while a task runs.
+
+### Price-drop watches
+
+Automations > Running on its own > Watches can add a price watch and show its retained price history. Choose the exact item/variant, page, one unique literal label, source currency marker/code, decimal format and threshold. A supported field looks like `Total: $199.95`; the label is `Total:` and the marker is `$`. Multiple copies of the label, a missing marker or an invalid amount fail closed. This deterministic field reader does not infer a variant, taxes, shipping, stock, discounts, exchange rates, or browser login state. Choose a label that identifies the intended price. Dynamic/login-only pages without that text remain unsupported.
+
+The first successful fetch establishes a baseline before the watch is saved. The watch is quiet unless the numeric price drops from the last good observation and is strictly below the threshold. Equal prices, rises and unrelated page changes do not alert. The UI sends to Activity; `monitor.create` may specify an existing approved chat destination under the existing channels-send and Trunk rules. A failed fetch, parse or delivery preserves the prior baseline and price history for retry. A stable delivery key suppresses duplicate chat delivery on a retry of the same transition. History keeps the latest 100 successfully committed observations; removing the watch deletes it.
+
+Example tool input: `{ "url": "https://example.com/item", "every": "6h", "price": { "item": "Specific item and variant", "currency": "USD", "currencyMarker": "$", "label": "Total:", "below": 200, "decimals": 2, "decimalSeparator": "." } }`. Decimal commas use `decimalSeparator: ","`. `monitor.prices` reads creator-scoped retained observations; the owner-only window route is `GET /api/monitors/<id>/prices`. No watch is started until explicitly created.
 
 ### Agent-written scheduled dashboards
 

@@ -11,6 +11,8 @@ import { planUndo, undoSettingsChange, whySetting } from "./undo.js"; // Q49
 import { lockedDown } from "../lockdown.js";
 import { clarifyRequest } from "./clarify.js";
 import type { ToolLister } from "../preset-moves.js";
+import type { PolicyRule } from "../policy.js";
+import { ordinarySettingsRule } from "./ordinary-approval.js";
 
 /**
  * Changing Branch's own settings by asking for it: "turn the wake word on", "switch off the learning
@@ -25,8 +27,8 @@ import type { ToolLister } from "../preset-moves.js";
  *   - `settings.list` reads the catalogue (src/settings-kit/catalogue.ts): every switch, choice and
  *     number the owner can change, with what it is set to now. Nothing else in the settings table —
  *     connections, keys, people, Lockdown — is ever listed or changed here.
- *   - `settings.change` makes ordinary changes. The runtime asks the owner first, whatever the rules
- *     say (`settingsHold`); "yes for this conversation" is remembered like any other answer.
+ *   - `settings.change` makes ordinary changes. The runtime asks the owner first unless the owner
+ *     explicitly opted into this tool's ordinary changes; broader settings category allows do not count.
  *   - `settings.loosen` is the only way to make a change that leaves Branch less careful or lets it
  *     reach further. It is asked about every time, a yes is never kept, and the model cannot answer
  *     it: the question goes to the owner. `settings.change` refuses such a change and says so.
@@ -51,11 +53,17 @@ const undoReason = "Branch asks before it undoes a change to its own settings";
 const loosenReason = "This makes Branch less careful, so it is asked about every time";
 
 /** Why a settings tool call must be put to the owner whatever the rules say, or null. */
-export function settingsHold(tool: string, args?: unknown): { reason: string; onceOnly: boolean } | null {
+export function settingsHold(tool: string, args?: unknown,
+  approval?: { store: Store; context: ToolContext; rule: PolicyRule | null }): { reason: string; onceOnly: boolean } | null {
   if (tool === "settings.loosen") return { reason: loosenReason, onceOnly: true };
   // A change that may leave Branch less careful is asked about every time, in the one question: the owner's yes to it
   // is what lets settings.change make it, so a less careful change never needs a second tool and a second yes.
-  if (tool === "settings.change") return mayLoosen(args) ? { reason: loosenReason, onceOnly: true } : { reason: changeReason, onceOnly: false };
+  if (tool === "settings.change") {
+    if (mayLoosen(args)) return { reason: loosenReason, onceOnly: true };
+    if (approval && ChangeSchema.safeParse(args).success && ordinarySettingsRule(approval.rule)
+      && !lockedDown(approval.store, approval.context.owner) && ownerIsHere(approval.store, approval.context)) return null;
+    return { reason: changeReason, onceOnly: false };
+  }
   if (tool === "settings.undo") return { reason: undoReason, onceOnly: false };
   return null;
 }
@@ -298,7 +306,7 @@ export function registerSettingsTools(registry: ToolRegistry, store: Store, writ
   });
   registry.register({
     name: "settings.change", permission: "settings.write",
-    description: "Change some of Branch's own settings, by the names settings.list gives (for example wake-word.mode to \"on\"). Use the id when you have it (from settings.list); only when the owner described a setting in their own words and you do not know which id they mean, call settings.find first and ask its question if it has one. The owner is asked first; a change that makes Branch less careful is asked about every time, and the owner's yes makes it.",
+    description: "Change some of Branch's own settings, by the names settings.list gives (for example wake-word.mode to \"on\"). Use the id when you have it (from settings.list); only when the owner described a setting in their own words and you do not know which id they mean, call settings.find first and ask its question if it has one. The owner is asked first unless they explicitly allowed ordinary settings changes. A change that makes Branch less careful is asked about every time, and the owner's yes makes it.",
     parameters: ChangeSchema,
     target: (input: ChangeInput) => describe(input),
     execute: changeTool(false, store, writers, registry),

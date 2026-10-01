@@ -9,6 +9,8 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolDefinition, ToolContext } from '../contracts.js';
 import { McpConfigSchema, makeTransport, type McpConfig } from './mcp-config.js';
+import { openStatelessMcp, LegacyMcpFallback } from './mcp-stateless-client.js';
+import { StatelessError } from '../mcp-stateless.js';
 import { remoteMcpError, RemoteMcpError } from './mcp-errors.js';
 import { mcpContent, mcpDescription, type McpContentPolicy } from './mcp-content.js';
 
@@ -206,6 +208,8 @@ export async function openMcp(
 ) {
   const config = McpConfigSchema.parse(input);
   if (new Set(config.tools).size !== config.tools.length) throw new Error('Duplicate MCP tool allowlist entry');
+  const modern = await tryStateless(config, env, policy, cache, startupTimeoutMs);
+  if (modern) return modern;
   const { transport, secrets } = await makeTransport(config, env, policy);
   const client = new (await mcpClient())({ name: 'branch', version: '0.1.0' });
   try {
@@ -223,6 +227,27 @@ export async function openMcp(
   } catch {
     await client.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');
+  }
+}
+
+async function tryStateless(config: McpConfig, env: NodeJS.ProcessEnv, policy: { guard(base: typeof fetch): typeof fetch } | undefined,
+  cache: McpToolCache | undefined, timeout: number): Promise<Awaited<ReturnType<typeof openStatelessMcp>> | undefined> {
+  if (config.transport !== 'http' || (config.protocol ?? 'legacy') === 'legacy') return undefined;
+  let opened: Awaited<ReturnType<typeof openStatelessMcp>> | undefined;
+  try {
+    opened = await openStatelessMcp(config, env, policy, timeout);
+    if (JSON.stringify(redact(opened.found, opened.secrets)) !== JSON.stringify(opened.found))
+      throw new Error('MCP discovery contains a configured credential');
+    cache?.write(config.id, cacheable(opened.found));
+    return opened;
+  } catch (error) {
+    await opened?.close();
+    const supported = error instanceof StatelessError && error.code === -32022 && error.data && typeof error.data === 'object'
+      ? (error.data as { supported?: unknown }).supported : undefined;
+    const compatible = Array.isArray(supported) && supported.some((version) => ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'].includes(String(version)));
+    if (config.protocol !== 'auto' || !(error instanceof LegacyMcpFallback || compatible)) throw error;
+    // Only a read-only discovery probe can negotiate down. Tool calls are never automatically retried.
+    return undefined;
   }
 }
 
