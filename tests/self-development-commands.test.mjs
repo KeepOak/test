@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBranch, savePolicy } from "../dist/index.js";
 import { loadIntegrations } from "../dist/integrations/bootstrap.js";
@@ -168,19 +168,21 @@ function realGit() {
 test("on Linux a held command sees /run and the home empty, but for the folders of the programs it runs",
   { skip: process.platform !== "linux" || !(await wallReport()).available }, async (t) => {
   const branch = await withSource(t, { project: "worktree", permissions: ["shell.execute"] });
-  // Full paths: this shell is given no search path. The home is read from the system, not the environment.
+  // Full paths: this shell is given no search path. Check the account home AND an overridden HOME.
   const script = [
     'h=$(/usr/bin/getent passwd "$(/usr/bin/id -u)" | /usr/bin/cut -d: -f6)',
-    'echo "HOME=$h"', "/bin/ls -A /run", "echo SPLIT", '/bin/ls -A "$h"', "echo END"].join("; ");
-  const { failed, result } = await branch.command({ executable: "sh", cwd: `${worktree}/src/ui`, args: ["-c", script] });
+    'echo "HOME=$h"', "/bin/ls -A /run || exit", "echo SPLIT", '/bin/ls -A "$h" || exit', "echo ALTERNATE", '/bin/ls -A "$1" || exit', "echo END"].join("; ");
+  const { failed, result } = await branch.command({ executable: "sh", cwd: `${worktree}/src/ui`, args: ["-c", script, "held-home-check", homedir()] });
   assert.equal(failed, null, failed);
   const out = String(result?.stdout ?? "");
+  assert.equal(result?.exitCode, 0, String(result?.stderr ?? ""));
   assert.match(out, /^HOME=\/\S+\n[\s\S]*SPLIT\n[\s\S]*END\n$/, `the listing really ran: ${out} ${String(result?.stderr ?? "")}`);
-  const [run, home] = out.replace(/^HOME=.*\n/, "").replace(/END\n$/, "").split("SPLIT\n");
+  const [run, homes] = out.replace(/^HOME=.*\n/, "").replace(/END\n$/, "").split("SPLIT\n");
   assert.equal(run.trim(), "", "nothing of /run shows: no message bus, no package daemon, no per-user sockets");
   // Only the first folder on the way to a program's own folder (a version manager's, say) may show in the home.
   const allowed = new Set([".nvm", ".local", ".volta", ".asdf", ".fnm", ".n", "bin", "lib"]);
-  for (const name of home.trim().split("\n").filter(Boolean)) assert.ok(allowed.has(name), `${name} in the home is hidden`);
+  for (const home of homes.split("ALTERNATE\n")) for (const name of home.trim().split("\n").filter(Boolean))
+    assert.ok(allowed.has(name), `${name} in either home is hidden`);
 });
 
 test("on Linux a held command given a file it could not see is refused before it runs, saying why and what works instead",

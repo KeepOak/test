@@ -11,6 +11,7 @@ import { defaultJobObjects, type Job, type JobObjects } from './job-object.js';
 import { scrubSecrets } from '../locker.js';
 import { sandboxShape, shapeChoice, type WallContext } from '../sandbox.js';
 import { openWall } from '../sandbox-backends.js'; // wave mac3 (os-sandbox)
+import { accountHome } from '../sandbox-bwrap.js';
 import { withPassedEnvironment } from '../knobs/environment.js'; // R17-S10
 import { checkRunner, heldCover, npmScript, wslHeldPlan, wslHeldRunner, wslHeldStart, wslOnlyName, wslProbe, wslReadiness } from './wsl-held.js';
 
@@ -204,7 +205,7 @@ export class BranchShell {
     // On Linux itself a held command gets the same view as under WSL: /mnt, /run and the home shown
     // empty, with only its own programs' folders and the worktree's Git folder bound back read-only.
     const cover = scratch && run.wall && !held && process.platform === 'linux'
-      ? await heldCover({ home: homedir(), programs: [run.executable.path], args: [...run.executable.args, ...run.args],
+      ? await heldCover({ home: homedir(), systemHome: accountHome(), programs: [run.executable.path], args: [...run.executable.args, ...run.args],
         searchPath: (env as NodeJS.ProcessEnv).PATH ?? '', workspace: run.workspace }) : null;
     if (cover?.refusal) throw new Error(cover.refusal);
     const walled = run.wall && cover ? { ...run.wall, readOnly: [...(run.wall.readOnly ?? []), ...cover.restored] } : run.wall;
