@@ -17,6 +17,19 @@ const transport = {
   SSL_CERT_FILE: "/certs/roots.pem", SSL_CERT_DIR: "/certs", NODE_EXTRA_CA_CERTS: "/certs/node.pem",
   REQUESTS_CA_BUNDLE: "/certs/requests.pem", CURL_CA_BUNDLE: "/certs/curl.pem",
 };
+// Windows environment names are case-insensitive: conflicting lowercase values cannot
+// coexist with their uppercase names there. Plain-object coverage above still proves both.
+const processTransport = process.platform === "win32"
+  ? Object.fromEntries(Object.entries(transport).filter(([key]) => key === key.toUpperCase()))
+  : transport;
+function assertProcessTransport(actual) {
+  const copied = codexTransportEnvironment(actual);
+  if (process.platform !== "win32") return assert.deepEqual(copied, processTransport);
+  for (const [key, value] of Object.entries(copied))
+    assert.equal(value, processTransport[key.toUpperCase()], key);
+  for (const [key, value] of Object.entries(processTransport))
+    assert.ok(Object.entries(copied).some(([name, got]) => name.toUpperCase() === key && got === value), key);
+}
 const excluded = {
   OPENAI_API_KEY: "fixture-not-a-key", OPENAI_BASE_URL: "https://not-used.test", BRANCH_MASTER_KEY: "fixture",
   ANTHROPIC_API_KEY: "fixture", NODE_TLS_REJECT_UNAUTHORIZED: "0", NODE_OPTIONS: "--require=/not-used.js",
@@ -61,13 +74,13 @@ test("Codex transport copies only configured names, preserving no-proxy and CA v
 });
 
 test("primary app-server uses the explicit CODEX_HOME and never reuses another home's child", async (t) => {
-  environment(t, { ...transport, ...excluded });
+  environment(t, { ...processTransport, ...excluded });
   t.after(closeWarmCodex);
   const fake = server();
   const provider = new CliAgentProvider(row(), {}, async () => assert.fail("no exec"));
   provider.appServer = fake.start;
   await provider.complete(request());
-  assert.deepEqual(codexTransportEnvironment(fake.starts[0].env), transport);
+  assertProcessTransport(fake.starts[0].env);
   for (const key of Object.keys(excluded)) assert.equal(fake.starts[0].env[key], undefined, key);
   process.env.CODEX_HOME = "/isolated/another-home";
   await provider.complete(request());
@@ -88,12 +101,12 @@ test("a spawned stand-in exec receives configured transport and explicit account
   t.after(() => discardTemp(root));
   const script = join(root, "stand-in.cjs");
   await writeFile(script, 'process.stdin.resume(); process.stdin.on("end", () => console.log(JSON.stringify(process.env)));');
-  environment(t, { ...transport, ...excluded });
+  environment(t, { ...processTransport, ...excluded });
   const standIn = { ...row(), command: process.execPath, args: [script] };
   const limits = { timeoutMs: 5000, maxOutputChars: 20000 };
   const run = (home) => runCliAgent(standIn, "fixture", AbortSignal.timeout(5000), limits, home);
   const primary = JSON.parse((await run()).stdout);
-  assert.deepEqual(codexTransportEnvironment(primary), transport);
+  assertProcessTransport(primary);
   for (const key of Object.keys(excluded)) assert.equal(primary[key], undefined, key);
   const account = JSON.parse((await run({ name: "CODEX_HOME", path: join(root, "account") })).stdout);
   assert.equal(account.CODEX_HOME, join(root, "account"));

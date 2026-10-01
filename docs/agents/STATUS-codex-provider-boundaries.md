@@ -41,3 +41,5 @@ Validation results:
 - Total targeted coverage: 48 passed, one Windows-only skipped, no failures
 - `git diff --check`: passed
 - No full repository suite or live-account/inference test was run
+
+Native Windows pre-push validation (2026-10-01): TypeScript --noEmit and npm run build passed. The eight named mock fixture files passed 47 tests with one existing POSIX stand-in skip, 14.942 seconds. Windows process-environment fixtures use nonconflicting case aliases and assert every allowed value plus exclusions; the plain-object fixture still independently covers different uppercase/lowercase values. No real accounts or live inference used.
