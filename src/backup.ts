@@ -133,6 +133,9 @@ export const thisComputerSettings: readonly string[] = [
   // RES-719: which GitLab this computer is connected to and where its token sits; the token itself is in the locker, which
   // no backup carries, so the account stays with it.
   "gitlab-account",
+  // SELF-021: which GitHub account the device sign-in connected and the locker name of its token; the token itself is in
+  // the locker, which no backup carries, so the account stays with it.
+  "github.device.account",
   // NAS 49b183b's unchecked class: this computer's OS sandbox, whether its emergency stop is pressed (letting it go
   // needs the authenticator code, which a replacing restore would skip), and which tools need that code.
   "os-sandbox", "safety-emergency-stop", "safety-code-approvals-setup",
@@ -154,7 +157,7 @@ export const thisComputerSettings: readonly string[] = [
   // NAS dd7589d: running code names its Python program in full, the same class. And the records Branch writes about
   // its own state here, which the catalogue never touches either: the switch migration and which chat service is
   // being turned away (a file must never say a service is fine while it is refused).
-  "code-run", "feature-switches-migration", "webhook-waits",
+  "code-run", "feature-switches-migration", "policy-commands-allow-migration", "webhook-waits",
   // NAS 360099c: a program on this disk and its arguments, which the decision judge starts as they are, and the folder
   // the vector store makes its database in. Both only mean something on this computer.
   "jev-decisions", "vector-store",
@@ -167,6 +170,8 @@ export const thisComputerSettings: readonly string[] = [
   "studies", "trunk-receipts",
   // Q230, keys worked out in code: the shell a coding task snapshots, and this computer's memory-history status.
   "coding-shell-snapshot", "memory-history-status",
+  // RES-251: which hand-placed plugins on this disk were kept running inside Branch when the wall began shipping on.
+  "add-ons-plugin-wall-kept",
 ];
 /** NAS 23e7382: one row per add-on file on this disk, its fingerprint (src/safety-extras/wasm-add-ons.ts). */
 const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
@@ -178,6 +183,9 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   // Q230 (NAS eba8bd8): a conversation's live waiting line, whose words run by themselves; this computer's MCP tool
   // cache, plugins and their fingerprints; and a running task's shared notes.
   "followups:", "mcp-tools:", "plugin-catalog:", "plugin:", "scratch:",
+  // #890: this computer's installed plugin and add-on code versions kept for rollback, a staged candidate's local
+  // folder, the evaluation evidence and the "not yet proven" mark: a file must never supply code or clear the mark.
+  "plugin-version:", "plugin-review:", "plugin-evaluation:", "add-on-version:", "add-on-candidate:",
   // workbench (SELF-305): a wake-up set in a conversation, whose words later run as the owner's own task; like the
   // waiting line, a file must never put one in place.
   "wakeup:",
@@ -195,7 +203,15 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   "desktop-apps-used:",
   // RES-408: the last check of a personal sign-in (src/personal/signin.ts): this computer's own recent result, gone in
   // 15 minutes; a file putting one in place would show a connection as working that was never checked here.
-  "personal-connection-health:"];
+  "personal-connection-health:",
+  // CHAT-081: a /topic request's outcome, kept so an uncertain Telegram write is never sent twice; this computer's chat record.
+  "topic-request:",
+  // CHAT-082: a chat's idle and age limits, set from the owner's own direct chat; this computer's chat record.
+  "chat-session-lifecycle:",
+  // CHAT-202: a chat's reply tone, chosen from the owner's own direct chat; this computer's chat record.
+  "chat-personality:",
+  // CHAT-041: how much of each step one chat is shown (/verbose), set from that chat here.
+  "chat-steps-detail:"];
 /** The restore's own list of rows waiting for the owner's yes (src/restore-held.ts): about this computer, so it stays too. */
 export const restoreHeldKey = "restore-held";
 /**
@@ -257,7 +273,9 @@ export const heldSettings: readonly string[] = ["accounts", "model-connections",
   "knowledge", "live-scoring", "local-models", "mcp-connections", "mcp-sharing", "media", "memory-consolidation",
   "memory-retrieval", "metering", "model-profiles", "models", "orchestration", "page-notes", "page-notes:list",
   "projects", "repository-context", "retention", "routing", "screen-watch", "second-opinion", "session-limits", "helper-defaults", "codex-models",
-  "slack-automations", "tool-meaning-search", "troubleshoot", "trunk-routines", "update-keeper", "web-pages"];
+  "slack-automations", "tool-meaning-search", "troubleshoot", "trunk-routines", "update-keeper", "web-pages",
+  // wire-greyed: where web searches go and the name of the secret sent with them.
+  "web-search"];
 /** One row per automatic job: a loop, a heartbeat, a standing order or a procedure runs its words by itself (as a schedule does, Q168 C). */
 const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "autonomy-loop:", "autonomy-heartbeat:", "autonomy-order:", "autonomy-procedure:",
   // NAS f30facf: each outside service the assistant may call, by its address.
@@ -268,7 +286,11 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   // Q230: a chat made known for sends, a plan the next message carries on, a project's every-turn instructions and
   // branch, a registry address, a conversation's connection, and a skill's trial, origin and package.
   "channel-session:", "plan:", "project:", "registry-index:", "session-model:", "skill-candidate:", "skill-draft:",
+  // CHAT-096: a chat's /voice choice; "always" speaks every reply there, which a paid speech service charges for.
+  "channel-voice:",
   "skill-origin:", "skill-package:",
+  // #890: an API skill learned from a browser recording names an outside address and the request it sends.
+  "captured-api-skill:",
   // A registry signing key the owner trusted: a file must never make a key trusted by itself.
   "registry-key:",
   // Q230, keys worked out in code: each coding, interop, learning-more, Trunks and model-savings part (they run

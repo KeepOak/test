@@ -42,7 +42,7 @@ export function saveLifecycleSettings(store: Store, scope: string, input: unknow
   return value;
 }
 
-export interface McpConnection { close(): Promise<void>; check?: () => Promise<void> }
+export interface McpConnection { close(): Promise<void>; check?: (signal?: AbortSignal) => Promise<void> }
 export type ConnectionState = "connecting" | "ready" | "warm" | "failed" | "idle";
 export interface ServerHealth {
   id: string;
@@ -119,11 +119,13 @@ export class McpConnections {
     return [...this.openers.keys()];
   }
   /** Ping an existing session only. Checking never invokes an opener, acquires a task or restarts a program. */
-  async check(id: string): Promise<void> {
+  async check(id: string, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     const entry = this.entries.get(id), connection = entry?.connection;
     if (!entry || !connection || entry.closed || dead(connection) || !connection.check)
       throw new Error("This MCP session is not open. Use one of its tools before checking it.");
-    await connection.check();
+    await connection.check(signal);
+    signal?.throwIfAborted();
     if (this.entries.get(id)?.connection !== connection || entry.closed)
       throw new Error("This MCP session closed during the check.");
   }

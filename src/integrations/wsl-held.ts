@@ -11,8 +11,16 @@ import { wslPath, type SandboxProbe, type SandboxStart } from '../sandbox-backen
  * what `wsl.exe` is started with; `wsl-held-runner.ts` builds the wall on the Linux side.
  */
 
-/** The programs a held command may run under WSL, matched by the alias's file name alone. */
-export const wslHeldPrograms = ['node', 'npm', 'npx', 'git'] as const;
+/**
+ * The programs a held command may run under WSL, matched by the alias's file name alone. SELF-015: besides Node and
+ * Git, the ones that download into the worktree: Python and its installers, and curl and wget. They reach the network
+ * only in the owner's selected Full Access (`open`), and their writes are held to the worktree like any held command's.
+ */
+export const wslHeldPrograms = ['node', 'npm', 'npx', 'git', 'python3', 'pip', 'pip3', 'pipx', 'uv', 'curl', 'wget'] as const;
+/** SELF-015: the programs a worktree's own `.venv/bin` stands in for (wsl-held-runner.ts `heldProgram`). */
+export const venvPrograms: readonly string[] = ['python3', 'pip', 'pip3'];
+/** Windows names that are one of the programs above under another name. */
+const sameProgram: Record<string, WslHeldProgram> = { python: 'python3' };
 export type WslHeldProgram = (typeof wslHeldPrograms)[number];
 
 export const wslNotSetUp = 'This command runs inside WSL (the Linux in Windows) so Branch can hold it to its folder, and WSL is not set up on this computer, so it did not run. Ask the owner; with their yes, WSL is turned on with `wsl --install` in Windows.';
@@ -36,6 +44,11 @@ export interface WslHeldPlan {
   /** selfdev: the owner's selected Full Access: any site is reachable (writes stay held to the worktree). */
   open?: boolean;
   timeoutMs: number;
+  /** Tool scripts use stdin replies and framed stdout requests, never Windows descriptor 3. */
+  interactive?: boolean;
+  /** Untrusted plugin evaluations may read only scratch and interpreter/runtime files. */
+  scratchOnly?: boolean;
+  unreadable?: string[];
 }
 
 /**
@@ -48,11 +61,45 @@ export function npmScript(argument: string | undefined): 'npm' | 'npx' | null {
 }
 
 /** The Linux program an alias stands for, by its file name; anything else is refused. */
-export function wslProgram(windowsPath: string): WslHeldProgram {
-  const name = windowsPath.split(/[\\/]/).pop()!.toLowerCase().replace(/\.(cmd|exe|bat|ps1)$/, '');
-  const found = wslHeldPrograms.find((program) => program === name);
-  if (!found) throw new Error(`On Windows a command held to its folder runs inside WSL, where only node, npm, npx and git are available, so ${name} did not run.`);
-  return found;
+export function wslProgram(windowsPath: string, args: readonly string[] = []): WslHeldProgram {
+  const name = programName(windowsPath);
+  const found = sameProgram[name] ?? wslHeldPrograms.find((program) => program === name);
+  if (found) return found;
+  if (/^apt(-get)?$/.test(name)) throw new Error(aptRefusal(args));
+  throw new Error(`On Windows a command held to its folder runs inside WSL, where only ${wslHeldPrograms.join(', ')} (python for python3) are available, so ${name} did not run.`);
+}
+
+/** A program's name from its path or alias, without a Windows ending. */
+export const programName = (path: string): string => path.split(/[\\/]/).pop()!.toLowerCase().replace(/\.(cmd|exe|bat|ps1)$/, '');
+
+/**
+ * SELF-015: whether a name a held command gives with no alias of its own on Windows is one WSL runs (or apt, which is
+ * refused with the owner's line). Such a command never runs a Windows program, so it needs no Windows alias.
+ */
+export function wslOnlyName(name: string): boolean {
+  const program = programName(name);
+  return Object.hasOwn(sameProgram, program) || (wslHeldPrograms as readonly string[]).includes(program) || /^apt(-get)?$/.test(program);
+}
+
+/**
+ * SELF-015: apt installs for the whole system and needs root, which a command held to its folder never has, so it is
+ * never run. The owner is given the exact line to run themselves.
+ */
+export function aptRefusal(args: readonly string[]): string {
+  const at = args.indexOf('install');
+  const packages = at < 0 ? [] : args.slice(at + 1).filter((arg) => !arg.startsWith('-') && /^[a-z0-9][a-z0-9+.:=~-]*$/i.test(arg));
+  const line = packages.length ? `sudo apt-get install ${packages.join(' ')}` : 'sudo apt-get install <the packages>';
+  return 'apt installs for the whole system and needs root, which a command held to its folder never has, so it did not run. '
+    + `The owner can install it by running this in Ubuntu (WSL) themselves: ${line}`;
+}
+
+/** SELF-015: the sentence for a program WSL does not have, with how the owner could add it. */
+export function wslNoProgram(program: string): string {
+  const setUp: Record<string, string> = { python3: 'sudo apt-get install python3 python3-venv', pip: 'sudo apt-get install python3-pip',
+    pip3: 'sudo apt-get install python3-pip', pipx: 'sudo apt-get install pipx', curl: 'sudo apt-get install curl', wget: 'sudo apt-get install wget',
+    git: 'sudo apt-get install git', node: 'sudo apt-get install nodejs npm', npm: 'sudo apt-get install nodejs npm', npx: 'sudo apt-get install nodejs npm' };
+  const how = Object.hasOwn(setUp, program) ? `it is set up with \`${setUp[program]}\` in Ubuntu` : `it is installed by ${program}'s own instructions`;
+  return `This command runs inside WSL (the Linux in Windows) so Branch can hold it to its folder, and WSL here has no ${program}, so it did not run. Ask the owner; with their yes, ${how}.`;
 }
 
 /** Names never carried into WSL: the Windows paths, and anything that reaches back out of WSL. */
@@ -62,7 +109,7 @@ export function wslHeldPlan(input: {
   executable: { path: string; args: readonly string[] }; args: readonly string[]; cwd: string; workspace: string;
   env: NodeJS.ProcessEnv; secrets: readonly string[]; registry: boolean; open?: boolean; timeoutMs: number;
 }): WslHeldPlan {
-  const named = wslProgram(input.executable.path), all = [...input.executable.args, ...input.args];
+  const all = [...input.executable.args, ...input.args], named = wslProgram(input.executable.path, all);
   // Windows' npm alias (node.exe npm-cli.js) is Linux's npm: the Windows script path never goes into WSL.
   const script = named === 'node' ? npmScript(all[0]) : null;
   const program: WslHeldProgram = script ?? named, args = script ? all.slice(1) : all;
