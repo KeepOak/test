@@ -128,6 +128,8 @@ interface RunEntry {
   shown?: Set<string> | undefined;
   /** A recording started by Settings' "Record browser tasks", kept by itself when the task ends. */
   autoRecording?: boolean | undefined;
+  /** Serializes recording startup/stop with adoption before any awaited work begins. */
+  recordingTransition?: Promise<void> | undefined;
   /** Whether this task's Trunk's own saved sign-in was looked for (trunkProfile). */
   trunkChecked?: boolean;
   /**
@@ -382,25 +384,28 @@ export class BranchBrowser {
    */
   async adoptRun(owner: string, conversation: string, runId: string, clientId: string): Promise<BrowserControl> {
     const key = this.key({ owner, runId }), entry = this.sessions.get(key);
-    if (entry?.control) {
-      if (entry.control.binding.conversation !== conversation) throw new Error('This browser belongs to another conversation.');
-      return entry.control;
-    }
-    if (!entry || !entry.session.started()) throw new Error('That task has no browser page open.');
-    if (entry.borrowed || entry.session.isBorrowed()) throw new Error('That task is working in your own browser, so there is nothing to take over here.');
-    if (entry.held) throw new Error('A benchmark window cannot be taken over.');
-    // A recording Settings started is kept before the owner drives, so nothing the owner types is in it.
-    if (entry.autoRecording) await this.keepAutoRecording(runId, entry);
-    if (entry.session.isRecording()) throw new Error('That task is keeping a recording of its browser. Stop the recording before taking over.');
-    if (this.sessions.get(key) !== entry || entry.control) throw new Error('That task\'s browser changed; try again.');
-    const control = this.controls.adopt({ owner, conversation, profile: entry.profile }, clientId, runId, entry.session.tabs().length);
-    entry.control = control;
-    entry.tabIds = control.view().tabs;
-    entry.budgets = new Map([[runId, { actions: entry.actions, origins: entry.origins }]]);
-    entry.trunkChecked = true;
-    this.controlled.set(control.id, entry);
-    this.sessions.set(this.key({ owner, runId: `browser-control:${control.id}` }), entry);
-    return control;
+    if (!entry) throw new Error('That task has no browser page open.');
+    return this.withRecordingTransition(entry, async () => {
+      if (entry.control) {
+        if (entry.control.binding.conversation !== conversation) throw new Error('This browser belongs to another conversation.');
+        return entry.control;
+      }
+      if (!entry.session.started()) throw new Error('That task has no browser page open.');
+      if (entry.borrowed || entry.session.isBorrowed()) throw new Error('That task is working in your own browser, so there is nothing to take over here.');
+      if (entry.held) throw new Error('A benchmark window cannot be taken over.');
+      // A recording Settings started is kept before the owner drives, so nothing the owner types is in it.
+      if (entry.autoRecording) await this.finishAutoRecording(runId, entry);
+      if (entry.session.isRecording()) throw new Error('That task is keeping a recording of its browser. Stop the recording before taking over.');
+      if (this.sessions.get(key) !== entry || entry.control) throw new Error('That task\'s browser changed; try again.');
+      const control = this.controls.adopt({ owner, conversation, profile: entry.profile }, clientId, runId, entry.session.tabs().length);
+      entry.control = control;
+      entry.tabIds = control.view().tabs;
+      entry.budgets = new Map([[runId, { actions: entry.actions, origins: entry.origins }]]);
+      entry.trunkChecked = true;
+      this.controlled.set(control.id, entry);
+      this.sessions.set(this.key({ owner, runId: `browser-control:${control.id}` }), entry);
+      return control;
+    });
   }
   /** Creates a kept Branch-owned session before its first page; routes retain their existing caller/tool gates. */
   async createControlled(binding: BrowserBinding, clientId: string, context: ToolContext) {
@@ -1078,27 +1083,30 @@ export class BranchBrowser {
   /** Starts keeping a recording of this task's browser window. */
   async startRecording(context: ToolContext) {
     return this.writeFor(context, async (write) => {
-    const entry = this.entry(context);
-    if (entry.control && await this.ownedRecordingPrivate(entry))
-      throw new Error('This shared browser holds or has handled private values, so a recording cannot start.');
-    // A recording's pictures are the browser's own and cannot be covered, so none starts while a saved sign-in's
-    // value is still in a box of the window.
-    // A box that cannot be asked counts as holding one, as it does for a saved page (holdsSecret).
-    const boxes = [...entry.filled.values()].flatMap(kept => kept.boxes);
-    const typed = await Promise.all(boxes.map(box => box.evaluateAll(found => found.some(one => !!(one as HTMLInputElement).value)).catch(() => true)));
-    if (typed.some(Boolean))
-      throw new Error('A saved sign-in is still typed into a box of this window, so a recording cannot start yet. Start it once the sign-in is done.');
-    // A recording photographs every tab in the window it is made in, so it is never made in the
-    // owner's own window: their other tabs are none of Branch's business.
-    if (entry.borrowed)
-      throw new Error('This task is working in your own browser, so a recording would photograph your other tabs too. Give your browser back first, then start a recording.');
-    await this.trunkProfile(context, entry); // a recording that opens the window opens it with the Trunk's own sign-in
-    write?.check();
-    await entry.session.record(startRecording);
-    // The same boxes page text leaves out (secretValues), so what a step reads is what the recording writes down.
-    entry.session.options.beforeAction = page => clearSecretValues(page);
-    return { recording: true,
-      note: 'Pictures of each step are kept; the page\'s own markup is not, and password and one-time-code boxes are emptied before every step, so no password or code can get into the file.' };
+    const entry = this.entry(context), control = entry.control;
+    return this.withRecordingTransition(entry, async () => {
+      if (entry.control !== control) throw new Error('Browser control changed before recording could start.');
+      if (entry.control && await this.ownedRecordingPrivate(entry))
+        throw new Error('This shared browser holds or has handled private values, so a recording cannot start.');
+      // A recording's pictures are the browser's own and cannot be covered, so none starts while a saved sign-in's
+      // value is still in a box of the window.
+      // A box that cannot be asked counts as holding one, as it does for a saved page (holdsSecret).
+      const boxes = [...entry.filled.values()].flatMap(kept => kept.boxes);
+      const typed = await Promise.all(boxes.map(box => box.evaluateAll(found => found.some(one => !!(one as HTMLInputElement).value)).catch(() => true)));
+      if (typed.some(Boolean))
+        throw new Error('A saved sign-in is still typed into a box of this window, so a recording cannot start yet. Start it once the sign-in is done.');
+      // A recording photographs every tab in the window it is made in, so it is never made in the
+      // owner's own window: their other tabs are none of Branch's business.
+      if (entry.borrowed)
+        throw new Error('This task is working in your own browser, so a recording would photograph your other tabs too. Give your browser back first, then start a recording.');
+      await this.trunkProfile(context, entry); // a recording that opens the window opens it with the Trunk's own sign-in
+      write?.check();
+      await entry.session.record(startRecording);
+      // The same boxes page text leaves out (secretValues), so what a step reads is what the recording writes down.
+      entry.session.options.beforeAction = page => clearSecretValues(page);
+      return { recording: true,
+        note: 'Pictures of each step are kept; the page\'s own markup is not, and password and one-time-code boxes are emptied before every step, so no password or code can get into the file.' };
+    });
     });
   }
   private async ownedRecordingPrivate(entry: RunEntry): Promise<boolean> {
@@ -1114,12 +1122,15 @@ export class BranchBrowser {
     const artifacts = this.artifacts;
     if (!artifacts) throw new Error('Recordings are switched off because there is nowhere to keep the file');
     const entry = this.entry(context);
-    const bytes = await entry.session.keepRecording();
-    write?.check();
-    entry.session.options.beforeAction = undefined;
-    const kept = await artifacts.write(context.runId, `browser-recording-${randomUUID().slice(0, 8)}.zip`,
-      'application/zip', bytes);
-    return { ...kept, note: 'Open this in Playwright\'s trace viewer to watch what the browser did.' };
+    return this.withRecordingTransition(entry, async () => {
+      try {
+        const bytes = await entry.session.keepRecording();
+        write?.check();
+        const kept = await artifacts.write(context.runId, `browser-recording-${randomUUID().slice(0, 8)}.zip`,
+          'application/zip', bytes);
+        return { ...kept, note: 'Open this in Playwright\'s trace viewer to watch what the browser did.' };
+      } finally { if (!entry.session.isRecording()) entry.session.options.beforeAction = undefined; }
+    });
     });
   }
   async tab(action: 'list' | 'open' | 'select' | 'close', index: number | undefined, context: ToolContext) {
@@ -1498,37 +1509,52 @@ export class BranchBrowser {
     const key = this.key(context), entry = this.sessions.get(key);
     if (!entry || entry.held) return; // w911 (A1726): a benchmark window is closed by the benchmark
 
-    if (entry.control) {
-      this.controls.finishRun(context.owner, context.runId);
-      entry.budgets?.delete(context.runId);
-      this.sessions.delete(key);
-      return;
-    }
+    await this.withRecordingTransition(entry, async () => {
+      if (entry.control) {
+        this.controls.finishRun(context.owner, context.runId);
+        entry.budgets?.delete(context.runId);
+        this.sessions.delete(key);
+        return;
+      }
 
-    entry.detach();
-    await this.keepAutoRecording(context.runId, entry);
-    await this.keepSignIn(context.owner, entry);
-    await entry.session.close();
-    if (this.sessions.get(key) === entry) this.sessions.delete(key);
+      entry.detach();
+      await this.finishAutoRecording(context.runId, entry);
+      await this.keepSignIn(context.owner, entry);
+      await entry.session.close();
+      if (this.sessions.get(key) === entry) this.sessions.delete(key);
+    });
+  }
+  /** Reserve the entry's next transition synchronously, including secret reads, trace startup and trace stop. */
+  private withRecordingTransition<T>(entry: RunEntry, action: () => Promise<T>): Promise<T> {
+    const work = (entry.recordingTransition ?? Promise.resolve()).then(action);
+    entry.recordingTransition = work.then(() => undefined, () => undefined);
+    return work;
   }
   /**
    * Settings' "Record browser tasks": once a task's first page has opened, its window keeps a recording, as
    * browser.recording "start" would, unless a saved sign-in's value is still typed in, the window is the owner's own,
    * or it is the conversation's kept browser (which the owner may take over and type into). Skipped quietly then.
    */
-  private async autoRecord(context: ToolContext, entry: RunEntry): Promise<void> {
+  private autoRecord(context: ToolContext, entry: RunEntry): Promise<void> {
+    return this.withRecordingTransition(entry, () => this.startAutoRecording(context, entry));
+  }
+  private async startAutoRecording(context: ToolContext, entry: RunEntry): Promise<void> {
     if (!this.care(context.owner).recordTasks || !this.artifacts || entry.control || entry.borrowed || entry.held
       || entry.session.isBorrowed() || entry.session.isRecording() || entry.autoRecording !== undefined) return;
     const boxes = [...entry.filled.values()].flatMap(kept => kept.boxes);
     const typed = await Promise.all(boxes.map(box => box.evaluateAll(found => found.some(one => !!(one as HTMLInputElement).value)).catch(() => true)));
-    if (typed.some(Boolean)) return;
+    if (typed.some(Boolean) || entry.control || this.sessions.get(this.key(context)) !== entry) return;
     entry.autoRecording = false;
     await entry.session.record(startRecording);
+    if (entry.control || this.sessions.get(this.key(context)) !== entry) {
+      await entry.session.keepRecording();
+      return;
+    }
     entry.session.options.beforeAction = page => clearSecretValues(page);
     entry.autoRecording = true;
   }
   /** A recording Settings started is kept beside the task's other files when the task ends or the owner takes over. */
-  private async keepAutoRecording(runId: string, entry: RunEntry): Promise<{ path: string } | null> {
+  private async finishAutoRecording(runId: string, entry: RunEntry): Promise<{ path: string } | null> {
     if (!entry.autoRecording || !entry.session.isRecording() || !this.artifacts) return null;
     entry.autoRecording = false;
     try {
@@ -1536,6 +1562,7 @@ export class BranchBrowser {
       entry.session.options.beforeAction = undefined;
       return await this.artifacts.write(runId, `browser-recording-${randomUUID().slice(0, 8)}.zip`, 'application/zip', bytes);
     } catch { return null; } // a recording that could not be kept never holds up the end of a task
+    finally { if (!entry.session.isRecording()) entry.session.options.beforeAction = undefined; }
   }
   /** A run that used a saved sign-in writes what it learned back, so the person stays signed in. */
   private async keepSignIn(owner: string, entry: RunEntry): Promise<void> {
