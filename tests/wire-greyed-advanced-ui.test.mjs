@@ -37,8 +37,9 @@ async function advancedPage(t) {
   await page.locator(".settings").waitFor();
   await page.locator('[data-act="setlevel"][data-v="technical"]').first().click();
   await page.locator('[data-act="setpage"][data-v="advanced"]').click();
+  // The page is shown once its reads are back (settings.js waitFirst), so its mark is waited for, not a fixed time.
+  await page.locator('[data-act="setpage"][data-v="advanced"][aria-current="true"]').waitFor({ timeout: 20000 });
   await page.locator('[data-act="ad-search"]').first().waitFor({ timeout: 20000 });
-  await page.waitForTimeout(800);
   const read = (path = "web-search") => fetch(new URL(`/api/${path}`, server.url), { headers: { authorization: `Bearer ${server.token}` } }).then((r) => r.json());
   const post = (path, body) => fetch(new URL(`/api/${path}`, server.url), { method: "POST",
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
@@ -55,6 +56,50 @@ test("Web search is a live choice the engine keeps, and the row names the key it
   assert.equal((await read()).chosen.backend, "brave");
   const row = page.locator(".ctl", { has: brave });
   assert.match(await row.innerText(), /BRAVE_SEARCH_KEY/);
+  assert.deepEqual(errors, []);
+});
+
+/* Drawn before its reads were back, Web search showed no choice pressed: on a slow runner the case above saw
+   DuckDuckGo unpressed (stack-a, 2 of 3 runs on base). The engine's answer is held back here so the gap is always there. */
+test("Advanced is shown with the engine's search choice pressed, even when its read is slow", async (t) => {
+  const slow = (page) => page.route("**/api/web-search", async (route) => {
+    if (route.request().method() === "GET") await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+  const { page, errors } = await settingsWindow(t, { name: "wire-advanced-slow-read", route: slow });
+  await openSettingsPage(page, "general");
+  await setLevel(page, "advanced");
+  await openSettingsPage(page, "advanced");
+  const duck = page.locator('[data-act="ad-search"][data-v="duckduckgo"]');
+  await duck.waitFor();
+  assert.equal(await duck.getAttribute("aria-pressed"), "true", "the engine's choice is pressed when the page is first shown");
+  assert.deepEqual(errors, []);
+});
+
+/* A live reload puts the open page back and draws it before any read (shell/liveupdate.js restoreOpen). Until the
+   engine's choice is back, the choices wait and cannot be pressed; none is shown as the choice. */
+test("Advanced drawn before its read shows the search choices waiting, then the engine's choice", async (t) => {
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const { page, errors } = await settingsWindow(t, { name: "wire-advanced-restore" });
+  t.after(() => release());
+  await openSettingsPage(page, "general");
+  await setLevel(page, "advanced");
+  await page.route("**/api/web-search", async (route) => {
+    if (route.request().method() === "GET") await held;
+    await route.continue();
+  });
+  await page.evaluate(() => sessionStorage.setItem("branch-live-restore",
+    JSON.stringify({ view: "settings", setPage: "advanced", at: Date.now() })));
+  await page.reload();
+  const brave = page.locator('[data-act="ad-search"][data-v="brave"]');
+  await brave.waitFor();
+  assert.equal(await brave.isDisabled(), true, "waiting for the engine, a choice cannot be pressed");
+  assert.equal(await brave.getAttribute("aria-busy"), "true");
+  release();
+  await page.locator('[data-act="ad-search"][data-v="duckduckgo"][aria-pressed="true"]:not([disabled])').waitFor();
+  assert.equal(await brave.isDisabled(), false);
+  assert.equal(await brave.getAttribute("aria-busy"), null);
   assert.deepEqual(errors, []);
 });
 

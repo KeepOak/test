@@ -78,7 +78,9 @@ function searchRow() {
     : service?.needsKey ? t(service.hasKey ? "window.settings.advanced.search-has-key" : "window.settings.advanced.search-needs-key", { name: esc(service.keySecret ?? "") })
     : t("window.settings.advanced.duckduckgo-needs-no-key-so-search");
   const from = D.search?.fromLaunchFile ? ` ${t("window.settings.advanced.search-from-file")}` : "";
-  const buttons = SEARCH.map(([v, words]) => `<button type="button" aria-pressed="${D.search ? chosen === v : false}" data-act="ad-search" data-v="${v}">${words}</button>`).join("");
+  // Before the engine's choice is read (a live reload's restore draws first), the choices wait and cannot be pressed.
+  const state = (v) => (D.search ? `aria-pressed="${chosen === v}"` : 'aria-pressed="false" disabled aria-busy="true"');
+  const buttons = SEARCH.map(([v, words]) => `<button type="button" ${state(v)} data-act="ad-search" data-v="${v}">${words}</button>`).join("");
   const address = `<span class="right num15"><input class="inp" id="ad-searx" value="${esc(D.search?.chosen?.searxngUrl ?? "")}" placeholder="https://search.example.org" aria-label="${t("window.settings.advanced.search-address")}"></span>`;
   return `<div class="ctl"><b>${label}</b><span class="right"><span class="seg" role="group" aria-label="${label}">${buttons}</span></span><small>${sub}${from}</small></div>`
     + `<div class="ctl"><b>${t("window.settings.advanced.search-address")}</b>${address}<small></small></div>`;
@@ -301,8 +303,12 @@ export function init() {
     try { await wire[1](e.target.checked); } catch (error) { toast(error.message); }
     await loadAll();
   });
-  loadAll();
+  return loadAll();
 }
+
+/* The page's switches and choices are drawn from what the engine keeps, so it is shown once its first read is back:
+   drawn before, every one read off or unpressed until the reads arrived (settings.js waitFirst). */
+export const waitFirst = true;
 
 export async function load() { await Promise.all([loadAll(), load17()]); }
 
