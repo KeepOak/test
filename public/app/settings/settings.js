@@ -156,9 +156,10 @@ export const openPage = (id) => go(id);
 
 export function draw() {
   const lv = level();
-  if (!started.has(S.setPage) || shownPage !== S.setPage) {
-    shownPage = S.setPage; // before reading: a read may schedule another draw
-    open(S.setPage);
+  const pageId = (S.setPage === "advanced" && lv < 1) || (S.setPage === "developer" && lv < 2) ? "general" : S.setPage;
+  if (!started.has(pageId) || shownPage !== pageId) {
+    shownPage = pageId; // before reading: a read may schedule another draw
+    open(pageId);
   }
   const q = searchText.trim().toLowerCase();
   const rows = q ? findSettings(searchText) : [];
@@ -166,17 +167,16 @@ export function draw() {
   const groups = NAV.map(([g, items]) => [g, g === "Care" ? [...items, ...extra] : items])
     .map(([g, items]) => [g, items.filter(([id, l]) => !q || say(l).toLowerCase().includes(q) || rows.some((r) => r.page === id))])
     .filter(([, items]) => items.length);
-  if ((S.setPage === "advanced" && lv < 1) || (S.setPage === "developer" && lv < 2)) S.setPage = "general";
 
   const nav = groups
     .map(([g, items]) =>
       `<div class="grp">${esc(say(g))}</div>${items
-        .map(([id, l]) => `<button class="nav" type="button" data-act="setpage" data-v="${id}" aria-current="${S.setPage === id}">${esc(say(l))}</button>`)
+        .map(([id, l]) => `<button class="nav" type="button" data-act="setpage" data-v="${id}" aria-current="${pageId === id}">${esc(say(l))}</button>`)
         .join("")}`
     )
     .join("") || `<p class="hint" data-css="padding:0 10px">${t("window.settings.settings.no-page-matches")}</p>`;
 
-  const page = PAGES[S.setPage];
+  const page = PAGES[pageId];
   const pageContent = q && ownerHere() ? found(searchText, rows) : page?.draw?.() ?? "";
 
   return `${lockBanner()}<div class="settings">
@@ -188,7 +188,7 @@ export function draw() {
         <span>${t("appearance.howMuch")}</span>
         <span class="seg" role="group" aria-label="${t("appearance.howMuch")}">
           ${[["regular", t("settingsGrown.level.regular")], ["advanced", t("settings.page.advanced")], ["technical", t("settingsGrown.level.technical")]]
-            .map(([v, l]) => `<button type="button" data-act="setlevel" data-v="${v}" aria-pressed="${S.level === v}" data-tip="${
+            .map(([v, l]) => `<button type="button" data-act="setlevel" data-v="${v}" aria-pressed="${["regular", "advanced", "technical"][lv] === v}" data-tip="${
               v === "regular" ? t("settingsGrown.level.regular.note")
               : v === "advanced" ? t("settingsGrown.level.advanced.note")
               : t("window.settings.settings.file-paths-raw-keys-launch-variables")
