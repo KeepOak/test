@@ -194,3 +194,48 @@ test("the owner takes over a paired computer and clicks, right-clicks and types 
   assert.deepEqual(sent[4], ["drive", false]);
   assert.deepEqual(errors, []);
 });
+
+test("two quick clicks on different spots of a paired computer's picture are never sent as one double-click", async (t) => {
+  const device = { id: TOWER, name: "Tower", platform: "linux", publicKey: "k".repeat(44), pairedAt: "2026-09-26T00:00:00.000Z", lastSeen: null, offers: ["screen", "input"], enabled: ["screen", "input"], folder: null, sharedWith: [] };
+  const w = await windowWith(t, (app) => app.store.save("settings", app.runtime.owner, "devices-book", { mode: "off", requests: [], devices: [device] }));
+  await w.page.route(`**/api/devices/pick/${w.run.sessionId}`, (route) => route.fulfill({ json: { sessionId: w.run.sessionId, picked: TOWER, allowed: [TOWER] } }));
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+  const state = { driving: false, frames: 0 };
+  const clicks = [];
+  await w.page.route("**/api/panels/screen/device?*", (route) => {
+    state.frames += 1;
+    route.fulfill({ contentType: "application/x-ndjson", body: `${JSON.stringify({ frame: `data:image/png;base64,${png}`, device: TOWER, frameId: `f${state.frames}`, driving: state.driving, inputNote: null, at: "now" })}\n` });
+  });
+  await w.page.route("**/api/panels/screen/device/drive", (route) => { state.driving = route.request().postDataJSON().on; route.fulfill({ json: { driving: state.driving } }); });
+  await w.page.route("**/api/panels/screen/device/input", (route) => { const { input } = route.request().postDataJSON(); if (input.action === "click") clicks.push(input); route.fulfill({ json: { done: true } }); });
+  await w.open();
+  const { page, errors } = w;
+  await page.locator('.head [data-act="stage"][data-v="computer"]').first().click();
+  await page.locator("#stage7 .devscr-img[src^='data:image/png']").waitFor({ timeout: 15000 });
+  await page.locator('#stage7 [data-act="device-control"]:not([disabled])').click();
+  await page.getByText("You're driving Tower").waitFor({ timeout: 15000 });
+  // The 1x1 picture is drawn as the largest square that fits, in the middle of its box: both spots are on it.
+  const box = await page.locator("#stage7 .devscr-img").boundingBox();
+  const side = Math.min(box.width, box.height), middle = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await page.mouse.click(middle.x - side * 0.15, middle.y);
+  await page.mouse.click(middle.x + side * 0.15, middle.y);
+  for (let i = 0; i < 100 && !clicks.length; i++) await page.waitForTimeout(50);
+  await page.waitForTimeout(600);
+  assert.ok(clicks.length >= 1 && clicks.every((click) => click.count === 1), `each is a click of its own: ${JSON.stringify(clicks)}`);
+  assert.ok(Math.abs(clicks[0].x - 0.35) < 0.02, `the first lands where it was aimed (${clicks[0].x})`);
+  // The second waits for the next picture (one press per picture), so it may be refused here; it is never a double-click.
+  assert.ok(clicks.slice(1).every((click) => Math.abs(click.x - 0.65) < 0.02));
+  // A real double-click, on the next picture, is still sent as one.
+  const seen = state.frames;
+  for (let i = 0; i < 100 && state.frames === seen; i++) await page.waitForTimeout(50);
+  await page.waitForTimeout(300);
+  const before = clicks.length;
+  await page.mouse.dblclick(middle.x, middle.y);
+  for (let i = 0; i < 100 && clicks.length === before; i++) await page.waitForTimeout(50);
+  await page.waitForTimeout(400);
+  const doubled = clicks.slice(before);
+  assert.equal(doubled.length, 1, `one press: ${JSON.stringify(doubled)}`);
+  assert.equal(doubled[0].count, 2);
+  assert.ok(Math.abs(doubled[0].x - 0.5) < 0.02 && Math.abs(doubled[0].y - 0.5) < 0.02);
+  assert.deepEqual(errors, []);
+});

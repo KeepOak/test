@@ -116,6 +116,9 @@ export class DeviceScreen {
         const started = Date.now();
         try {
           this.guard(access, deviceId);
+          // A window that stopped reading gets no new picture (none is even asked for) until it has taken the last
+          // one, so a stalled view never piles pictures up here.
+          if (response.writableNeedDrain) { await pause(this.deps.paceMs ?? deviceScreenPaceMs, life.signal); continue; }
           const shot = await this.deps.capture(deviceId, life.signal);
           this.guard(access, deviceId);
           if (!/^image\/(png|jpeg)$/.test(shot.mime) || !shot.bytes.length) refuse('That computer did not send a picture.');
