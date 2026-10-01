@@ -1,3 +1,4 @@
+import { processAlive as stillAlive } from "./process-alive.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { clearRunning, readRunning, sessionTokenFileName } from "./running.js";
@@ -58,9 +59,6 @@ export interface StopReport {
   message: string;
 }
 
-const stillAlive = (pid: number): boolean => {
-  try { process.kill(pid, 0); return true; } catch (error) { return (error as { code?: string }).code === "EPERM"; }
-};
 const pause = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
 
 async function waitForExit(pid: number, deps: StopDeps): Promise<boolean> {
