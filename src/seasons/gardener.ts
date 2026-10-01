@@ -51,6 +51,14 @@ export class Gardener {
   private sameRevision(skillId: string, revision: number): boolean {
     try { return this.store.skills.view(this.owner, skillId).revision === revision; } catch { return false; }
   }
+  private growable(seed: Seed): boolean {
+    if (seed.pinned || !this.sameSeed(seed)) return false;
+    if (!seed.skillId || !seed.document) return true;
+    try {
+      const skill = this.store.skills.view(this.owner, seed.skillId);
+      return skill.activeVersion === null && this.store.skills.read(this.owner, skill.id, { version: skill.headVersion }).document === seed.document;
+    } catch { return false; } // A draft the owner removed also needs their attention.
+  }
   private async proof(preset: ModelPreset, request: ProofRequest, allowed: () => boolean): Promise<Proof | null> {
     try { return await prove(this.store, this.runtime, preset, request, this.parts(preset), allowed); }
     catch (error) { if (error instanceof GardenPaused || !allowed()) return null; throw error; }
@@ -77,10 +85,15 @@ export class Gardener {
     const allowed = () => this.allowed(step.preset, step.stillQuiet);
     if (!allowed()) return report;
     report.planted = this.plantFromTriggers().length;
-    for (const seed of this.book.seeds().filter((entry) => entry.status === "waiting").slice(0, perNight)) {
+    let attempts = 0;
+    for (const seed of this.book.seeds().filter((entry) => entry.status === "waiting")) {
       if (!allowed()) return report;
+      if (attempts >= perNight) break;
+      if (!this.growable(seed)) continue;
+      // Skipped owner-protected drafts cost no model work; an interrupted attempt still uses a night's slot.
+      attempts++;
       const grown = await this.grow(seed, step.preset, step.now, step.stillQuiet);
-      if (grown.status !== "adopted" && grown.status !== "discarded") return report;
+      if (grown.status !== "adopted" && grown.status !== "discarded") continue;
       report[grown.status === "adopted" ? "adopted" : "discarded"]++;
     }
     if (allowed() && await this.recheck(step)) report.rolledBack++;
