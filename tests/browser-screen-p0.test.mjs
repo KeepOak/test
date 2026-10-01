@@ -219,7 +219,7 @@ test("UP-SCREEN-004: a check met by a browser step pauses the task, offers Take 
   await assert.rejects(h.run("browser.act", { action: "click", selector: "#human" }, ctx), /Take over/);
   assert.equal(state.pressed, 0, "the task never pressed the check");
 
-  const control = h.browser.adoptRun("test", "conv-1", ctx.runId, "owner-window");
+  const control = await h.browser.adoptRun("test", "conv-1", ctx.runId, "owner-window");
   await control.takeOver(control.view().epoch, "owner-window");
   state.solved = true; // the owner finishes the check in the live browser
   await new Promise((r) => setTimeout(r, 300));
@@ -282,7 +282,7 @@ test("UP-SCREEN-004: web.page's browser route meets the check once and reads the
   const reading = app.registry.execute("web.page", { url: `${origin}/`, route: "browser" }, ctx);
   const challenges = () => app.store.events(run.id).filter((e) => e.kind === "web.challenge");
   await waitUntil("the owner was told", () => challenges().length === 1);
-  const control = h.browser.adoptRun(owner, session, run.id, "owner-window");
+  const control = await h.browser.adoptRun(owner, session, run.id, "owner-window");
   await control.takeOver(control.view().epoch, "owner-window");
   state.solved = true;
   await new Promise((r) => setTimeout(r, 300));
