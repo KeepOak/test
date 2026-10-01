@@ -185,6 +185,8 @@ export interface PlanFacts {
   updaterPhase?: string | undefined;
   /** Which release the updater is talking about (its tag), so one whose install failed is not tried again by itself. */
   updaterTag?: string | undefined;
+  /** The owner asked for an update now (update-now.ts): installed at the next safe moment, updating by itself or not. */
+  installRequested?: boolean;
   /** Tasks still busy after the update waited `maxBusyHoldMs` for them (updateHold): it goes ahead, and says so. */
   overdueTasks?: number;
   now?: Date;
@@ -193,7 +195,8 @@ export interface PlanFacts {
 /** What is due, in plain words. */
 export function updatePlan(store: Pick<Store, "get">, owner: string, facts: PlanFacts): UpdatePlan {
   const settings = readComfort(store, owner, "notify");
-  const mode = settings.autoUpdate;
+  const requested = facts.installRequested === true;
+  const mode = requested ? "install" : settings.autoUpdate;
   const lastCheckedAt = lastUpdateCheck(store, owner);
   const plan = (step: UpdateStep, reason: string, until?: string): UpdatePlan => ({ mode, step, reason, lastCheckedAt, ...(until ? { until } : {}) });
   if (mode === "off") return plan("nothing", "Updates are only looked for when you press Check.");
@@ -205,7 +208,7 @@ export function updatePlan(store: Pick<Store, "get">, owner: string, facts: Plan
   const install = mode === "install";
   if (install && facts.updaterPhase === "available") {
     // NAS a870cea: a failed release is not tried again, but looking goes on as usual, or the next one would never be found.
-    if (facts.updaterTag && failedInstall(store, owner) === facts.updaterTag)
+    if (!requested && facts.updaterTag && failedInstall(store, owner) === facts.updaterTag)
       return due ? plan("check", "Looking past the version that did not install here for a newer one.")
         : plan("nothing", "The newest version did not install here last time, so it is not tried again by itself. The next one is, as soon as it lands; Update tries this one now.", "a newer version lands");
     // Lockdown: nothing starts by itself, and swapping in new code is the most far-reaching of all. It waits; the owner's
@@ -218,6 +221,10 @@ export function updatePlan(store: Pick<Store, "get">, owner: string, facts: Plan
         ? plan("nothing", "A newer version is ready; it installs once no task is working.", "no task is working")
         : plan("nothing", "A newer version is ready; it installs once the questions asked in the last hour are answered.", "the questions asked in the last hour are answered");
     }
+    // A release that keeps waiting stays "available" and would be taken again every turn, never looking past it (the
+    // owner's copy retried one for 7.5 hours while newer builds landed). When a look is due, look first; the loop then
+    // installs what that look found. The owner's own request, and a plan with no look on record, go on as before.
+    if (!requested && lastCheckedAt !== null && due) return plan("check", "Looking for a newer version before installing the one found.");
     if (facts.overdueTasks) return plan("install", `A newer version has waited three hours for ${facts.overdueTasks} task(s), so it is installed now; the work carries on after it.`);
     return plan("install", "A newer version is ready and nothing is working, so it is installed now, safely.");
   }
@@ -236,8 +243,8 @@ export function updatePlan(store: Pick<Store, "get">, owner: string, facts: Plan
  * then does). A loop that stopped is a problem said in Settings › Updates and in the activity log, never silence.
  */
 const lookedKey = "comfort-update-looked";
-export function noteUpdateLook(store: Store, owner: string, now = new Date()): void {
-  store.save("settings", owner, lookedKey, { at: now.toISOString() });
+export function noteUpdateLook(store: Store, owner: string, now = new Date(), said?: { step: string; reason: string }): void {
+  store.save("settings", owner, lookedKey, { at: now.toISOString(), ...(said ? { step: said.step, reason: said.reason } : {}) });
 }
 export const stalledWords = "Branch has not looked for an update since";
 /** How long without a look before the loop counts as stopped: three of its slowest looks, or three hours on Stable's check-only. */

@@ -17,6 +17,8 @@ export const MemoryDataSchema = z.object({
   text: z.string().min(1).max(4000),
   source: z.string().min(1).max(500).default("Saved by workspace owner"),
   sourceRunId: z.string().max(200).default(""),
+  /** A local conversation attachment, never image bytes, a disk path or an outside URL. */
+  image: z.object({ sessionId: z.string().uuid(), attachmentId: z.string().regex(/^[a-f0-9]{16}$/) }).strict().optional(),
   /** The run that first saved the fact; survives later edits so a conversation can be forgotten precisely. */
   originRunId: z.string().max(200).optional(),
   /** Who or what the fact is about, and which detail, so facts can change over time. */

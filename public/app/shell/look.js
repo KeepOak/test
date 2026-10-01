@@ -10,6 +10,7 @@ import { api } from "../core/api.js";
 import { toast } from "../core/ui.js";
 import { noticed } from "./scene.js";
 import { followLook } from "./language.js";
+import { applyReadingFont } from "../core/reading-font.js";
 
 const KEY = "branch-looks";
 export const BASE = "slate";
@@ -102,6 +103,7 @@ export function applyLook() {
   document.documentElement.dataset.palette = id;
   document.documentElement.classList.toggle("contrast17", more()); /* More contrast keeps full-strength lines (app.css) */
   keepEarly(id, own);
+  applyReadingFont(E.state?.preferences, true);
 }
 /* UP-UI-051: what was worn, for /app/look-early.js to put on the next page before its first paint. Slate (nothing set)
    is kept too, so going back to it never paints the old look first. */
@@ -156,6 +158,7 @@ async function rereadLook() {
   try { L.look = await api("look"); } catch (error) { toast(error.message); return; }
   const spoke = await followLook(L.look);
   applyMode();
+  applyReadingFont(E.state?.preferences);
   if (!spoke && JSON.stringify(L.look) === was && document.documentElement.dataset.theme === mode) return;
   applyLook();
   renderNow();
@@ -179,6 +182,7 @@ export async function savePrefs(change) {
   if (!prefs) return;
   const follows = change.followSystem === true && !prefs.followSystem;
   try { E.state.preferences = await api("preferences", { ...prefs, ...change }); } catch (error) { toast(error.message); return; }
+  applyReadingFont(E.state.preferences);
   if (follows) await noticed({ what: "flag", flag: "follow-system" });
 }
 export async function setContrast(on) {

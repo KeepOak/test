@@ -131,7 +131,7 @@ const raw = [
 ].join("\r\n");
 
 /** A loopback IMAP server that answers just the commands the inbox search sends. */
-async function fakeImap(t) {
+async function fakeImap(t, { readOnly = true } = {}) {
   const commands = [];
   const server = createServer((socket) => {
     socket.write("* OK ready\r\n");
@@ -150,7 +150,7 @@ async function fakeImap(t) {
         else if (command.includes("RFC822.SIZE")) body = `* 1 FETCH (UID 7 RFC822.SIZE ${raw.length})\r\n`;
         else if (command.includes("BODY.PEEK[])")) body = `* 1 FETCH (UID 7 BODY[] {${raw.length}}\r\n${raw})\r\n`;
         else if (command.startsWith("UID FETCH")) body = `* 1 FETCH (UID 7 BODY[HEADER] {${header.length}}\r\n${header} BODY[TEXT]<0> {${text.length}}\r\n${text})\r\n`;
-        socket.write(`${body}${tag} OK done\r\n`);
+        socket.write(`${body}${tag} OK ${command === "EXAMINE INBOX" && readOnly ? "[READ-ONLY] " : ""}done\r\n`);
       }
     });
   });
@@ -195,6 +195,26 @@ test("R17-031: the inbox is searched and opened without marking anything read, a
   await assert.rejects(mail.saveAttachment({ uid: 7, index: 0 }), /no attachment with that number/);
   assert.equal(imap.commands.some((c) => /STORE|\\Seen|EXPUNGE|DELETE/.test(c)), false, "nothing is marked or removed");
   await assert.rejects(mail.search({ text: "café" }), /plain letters/);
+});
+
+test("RES-408: the inbox check only EXAMINEs the inbox and needs the server to confirm it is read-only", async (t) => {
+  const check = async (options) => {
+    const imap = await fakeImap(t, options);
+    const { files } = await workspace(t);
+    const store = fakeStore();
+    const mail = new MailSearch({ store, owner: "local", files, secret: async () => "pw", assertHost: async () => {},
+      imap: (server) => new ImapClient({ ...server, host: "127.0.0.1", port: imap.port, tls: false }) });
+    on(store, "mail-search");
+    mail.save({ host: "imap.example.com", user: "me@example.com" });
+    return { health: await mail.test(), commands: imap.commands };
+  };
+  const good = await check();
+  assert.equal(good.health.ok, true);
+  assert.ok(good.commands.includes("EXAMINE INBOX"));
+  assert.equal(good.commands.some((c) => /^(SELECT|UID|STORE|SEARCH|FETCH)/.test(c)), false, "no message is read or marked");
+  const unconfirmed = await check({ readOnly: false });
+  assert.equal(unconfirmed.health.ok, false, "a server that does not confirm read-only is not proven");
+  assert.doesNotMatch(JSON.stringify(unconfirmed.health), /pw/);
 });
 
 test("R17-031: MIME parts decode, and nesting is bounded", () => {

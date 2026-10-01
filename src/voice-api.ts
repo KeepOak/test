@@ -2,7 +2,9 @@ import { z } from "zod";
 import type { ModelRouter } from "./models.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { Store } from "./store.js";
-import { saveVoiceSettings } from "./voice.js";
+import { saveVoiceSettings, VoiceSettingsSchema } from "./voice.js";
+import { findPiper } from "./voice-piper.js";
+import { piperFiles } from "./voice-piper-files.js";
 import { recordedWrite } from "./settings-kit/recorded-write.js";
 import { audioPricedAt, sttPricesPerMinute } from "./voice-stt.js";
 import { speechPricedAt, ttsPricesPerThousand } from "./voice-tts.js";
@@ -36,6 +38,8 @@ export interface VoiceApiDeps {
   liveRefusal?: (sessionId: string) => string | null;
   /** The task a live conversation hangs off waits for its socket to open it, and is stopped if none does. */
   liveWaits?: (runId: string) => void;
+  /** Recheck the host's App lock around installed-file listing awaits. */
+  localFilesRefusal?: () => string | null;
 }
 
 const switchBody = z.object({ sessionId: z.string().uuid(), model: z.string().trim().min(1).max(120) }).strict();
@@ -46,11 +50,39 @@ export async function voiceApi(
   deps: VoiceApiDeps, method: string, path: string, body: () => Promise<unknown>,
 ): Promise<unknown> {
   const { store, models, owner, voice } = deps;
+  if (method === "POST" && path === "/api/voice/piper/files") {
+    const scope = store.profiles.scope();
+    const authorize = () => {
+      store.profiles.requireOwner("Installed Piper files");
+      const refused = deps.localFilesRefusal?.();
+      if (refused) throw new HttpError(423, refused);
+      if (store.profiles.scope() !== scope) throw new HttpError(403, "The person using Branch changed. Open the file picker again.");
+    };
+    authorize();
+    const input = await body();
+    authorize();
+    const files = await piperFiles(input);
+    authorize();
+    return files;
+  }
   if (method === "GET" && path === "/api/voice/plan") return voicePlan(deps);
   if (method === "POST" && path === "/api/voice/settings") {
+    store.profiles.requireOwner("The speech settings");
+    const scope = store.profiles.scope();
     const input = await body();
+    store.profiles.requireOwner("The speech settings");
+    const refused = deps.localFilesRefusal?.();
+    if (refused) throw new HttpError(423, refused);
+    if (store.profiles.scope() !== scope) throw new HttpError(403, "The person using Branch changed. Open Voice settings again.");
+    const patch = VoiceSettingsSchema.partial().parse(input);
+    const proposed = VoiceSettingsSchema.parse({ ...voice.settings(owner), ...patch });
+    if (proposed.ttsRoute === "piper" && proposed.systemVoice !== "off"
+      && ("localVoiceExecutable" in patch || "localVoiceModel" in patch || "ttsRoute" in patch || "systemVoice" in patch)
+      && !findPiper(proposed)) {
+      throw new HttpError(400, "Choose an executable Piper program and a readable .onnx voice model with its matching .onnx.json file on the computer running Branch. Use absolute paths, or leave them empty for PATH and PIPER_VOICE.");
+    }
     return recordedWrite(store, owner, { writer: "owner-in-window", source: "card", detail: "voice" }, ["voice"],
-      () => saveVoiceSettings(store, owner, input));
+      () => saveVoiceSettings(store, owner, patch));
   }
   if (method === "GET" && path === "/api/voice/voices") return systemVoices(voice, owner);
   // Wave 8: a live conversation hangs off a task like everything else, so the browser is given one
@@ -112,7 +144,8 @@ export function voicePlan(deps: VoiceApiDeps) {
     settings: plan.settings,
     speechToText: { route: plan.stt.kind, reason: plan.stt.reason, ready: plan.stt.kind === "local" || plan.stt.provider !== null },
     readAloud: { route: plan.tts.kind, reason: plan.tts.reason,
-      ready: plan.tts.kind === "windows" ? plan.settings.systemVoice !== "off" : plan.tts.provider !== null },
+      ready: plan.tts.kind === "windows" ? plan.settings.systemVoice !== "off" : plan.tts.kind === "piper"
+        ? plan.tts.ready === true && plan.settings.systemVoice !== "off" : plan.tts.provider !== null },
     whereAudioGoes: whereAudioGoes(plan.stt.kind, plan.tts.kind, deps.voice.platform),
     // mac2/desktop-ui: the words this computer uses, without asking it for its voices.
     systemVoice: systemVoiceLabels(deps.voice.platform),
@@ -152,7 +185,8 @@ export function microphoneHelp(platform: string): string {
 /** One sentence about where recordings and spoken replies travel, in the owner's own terms. */
 export function whereAudioGoes(stt: string, tts: string, platform: string = process.platform): string {
   const isWindows = platform === "win32";
-  const both = stt === "local" && tts === "windows";
+  const both = stt === "local" && (tts === "windows" || tts === "piper");
+  if (both && tts === "piper") return "Nothing leaves this computer: recordings are written out here, and replies use an installed Piper voice.";
   if (both) return isWindows
     ? "Nothing leaves this computer: recordings are written out here, and replies are read aloud by a voice that comes with Windows."
     : "Nothing leaves this computer: recordings are written out here, and replies are read aloud by your computer's own voice.";
@@ -160,7 +194,7 @@ export function whereAudioGoes(stt: string, tts: string, platform: string = proc
   parts.push(stt === "local"
     ? "Your recordings are written out on this computer."
     : "Your recordings are sent to your model provider to be written out, and you are charged for the minutes.");
-  parts.push(tts === "windows"
+  parts.push(tts === "piper" ? "Replies use an installed Piper voice on this computer, which costs nothing." : tts === "windows"
     ? (isWindows ? "Replies are read aloud by a voice that comes with Windows, which costs nothing." : `Replies are read aloud by ${systemVoiceWords(platform).chosen}, which costs nothing.`)
     : "The words of a reply are sent to your model provider to be read aloud, and you are charged for the characters.");
   return parts.join(" ");

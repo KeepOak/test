@@ -441,3 +441,32 @@ test("a position saved just now: an answered update Telegram was not yet told ab
   assert.deepEqual(received, ["new since"]);
   assert.ok(bot.state.calls.filter((c) => c.method === "getUpdates").every((c) => c.body.offset === 6 || c.body.offset === 7));
 });
+
+test("CHAT-252: the card's Telegram is switched off with its token kept, and Undo brings the same bot back", async (t) => {
+  const bot = await fakeBotApi(t);
+  const root = await mkdtemp(join(tmpdir(), "branch-telegram-off-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model(), telegramApiBase: bot.base });
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  app.web.policy.configure({ allowPrivateAddresses: true });
+  const call = async (path, body) => {
+    const response = await fetch(`${server.url}/api/${path}`, { method: body ? "POST" : "GET",
+      headers: { authorization: `Bearer ${server.token}`, origin: server.url, ...(body ? { "content-type": "application/json" } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}) });
+    return { status: response.status, json: await response.json() };
+  };
+  assert.equal((await call("never-break/telegram", { mode: "on", token })).status, 200);
+  assert.equal(await app.neverBreak.telegram.connect(), null);
+  let card;
+  await until(async () => (card = (await call("never-break/telegram")).json).card, "the card's bot connected");
+  const off = { action: "off", channel: card.card.channel, revision: card.card.revision, expectedMode: card.mode, expectedSettingsRevision: card.settingsRevision };
+  const done = await call("never-break/telegram", off);
+  assert.equal(done.status, 200, JSON.stringify(done.json));
+  assert.deepEqual([done.json.mode, done.json.connected, done.json.tokenSaved], ["off", false, true], "off, with the token kept");
+  assert.equal((await call("never-break/telegram", off)).status, 400, "a second off from the old card is refused");
+  const undone = await call("never-break/telegram", { action: "undo", receipt: done.json.receipt });
+  assert.equal(undone.status, 200, JSON.stringify(undone.json));
+  assert.equal(undone.json.mode, card.mode);
+  await until(async () => (await call("never-break/telegram")).json.connected, "the same bot back after Undo");
+  assert.equal((await call("never-break/telegram", { action: "undo", receipt: done.json.receipt })).status, 400, "an undo works once");
+});

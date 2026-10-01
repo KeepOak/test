@@ -1,3 +1,4 @@
+import { assertHealthCurrent, healthSignal } from "../health-check.js";
 import { setTimeout as wait } from "node:timers/promises";
 import { z } from "zod";
 import { matchingPublication, publicationLookupPath, type PublicationLookup } from "../self-development-publication-lookup.js";
@@ -7,6 +8,7 @@ import type { NetworkPolicy } from "../network-policy.js";
 import type { TrackerIssue } from "./issue-context.js";
 import { readGitHubChecks, type GitHubChecks } from "./github-checks.js";
 import { readGitHubReviews, type ReviewReadInput } from "./github-reviews.js";
+import { readCiQueue } from "../self-development-ci.js";
 import { ChecksPending, mergeEvidence, mergeOrEnqueue, markReadyForReview, queueStanding, type MergeEvidence, type MergeLine, type MergePin, type MergeResult } from "./github-merge.js";
 
 /**
@@ -49,16 +51,28 @@ export class GitHubAccess {
     return matchingPublication(input, await this.request("GET", publicationLookupPath(input), undefined, undefined, signal));
   }
 
+  /** Owner-triggered read, through the existing authenticated network policy. */
+  async ciQueue(repo: string, selected: number[] = []): Promise<Awaited<ReturnType<typeof readCiQueue>>> {
+    return readCiQueue((method, path) => this.request(method, path), repositoryPath.parse(repo), selected);
+  }
+
+  /** Authenticated account metadata only; no repository contents or identity leave this check.
+   * https://docs.github.com/en/rest/users/users#get-the-authenticated-user */
+  async checkAccount(): Promise<void> {
+    z.object({ id: z.number().int().positive(), login: z.string().min(1) }).parse(await this.request("GET", "user"));
+  }
+
   /** One REST call: the network policy decides whether the address may be reached at all. */
   private async request(method: string, path: string, body?: unknown, beforeSend?: () => void, signal?: AbortSignal): Promise<unknown> {
     const token = await this.token();
     const url = new URL(path.replace(/^\//, ""), this.config.apiBase.replace(/\/?$/, "/"));
     await this.policy.assertAllowed(url, "GitHub address");
+    assertHealthCurrent();
     beforeSend?.();
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
-        method, redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.config.timeoutMs)]) : AbortSignal.timeout(this.config.timeoutMs),
+        method, redirect: "error", signal: healthSignal(signal ? AbortSignal.any([signal, AbortSignal.timeout(this.config.timeoutMs)]) : AbortSignal.timeout(this.config.timeoutMs))!,
         headers: {
           authorization: `Bearer ${token}`, accept: "application/vnd.github+json",
           "user-agent": this.userAgent, "x-github-api-version": "2022-11-28",
@@ -67,12 +81,14 @@ export class GitHubAccess {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     } catch (error) {
+      assertHealthCurrent();
       // A redirect is refused on purpose (the address must be the one asked for); anything else never reached GitHub.
       const why = error instanceof Error ? `${error.message}${error.cause instanceof Error ? `: ${error.cause.message}` : ""}` : String(error);
       if (/redirect/i.test(why)) throw error;
       throw new GitHubUnreachable(`GitHub could not be reached just now (${why.slice(0, 160)}).`);
     }
     const text = scrubSecrets((await response.text()).slice(0, this.config.maxBytes), { [this.config.tokenSecret]: token });
+    assertHealthCurrent();
     if (!response.ok) throw Object.assign(response.status >= 500 ? new GitHubUnreachable(explainGitHub(response.status, text))
       : new Error(explainGitHub(response.status, text)), { status: response.status });
     return text ? JSON.parse(text) : {};

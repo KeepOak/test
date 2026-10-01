@@ -56,6 +56,27 @@ export const NetworkSchema = z.object({
   clear: z.boolean().default(false),
 }).strict();
 
+export const ImagesSchema = z.object({
+  /** Only images whose address or words contain these. */
+  filter: z.string().min(1).max(200).optional(),
+  /** Only those at least this wide, in page pixels, to skip icons and spacers. */
+  minWidth: z.number().int().min(0).max(4000).default(0),
+  limit: z.number().int().min(1).max(100).default(40),
+}).strict();
+/** The images the page shows: address without its query, the words it gives for them, and their drawn size. */
+export async function listImages(page: Page, input: z.infer<typeof ImagesSchema>) {
+  const found = await page.evaluate(() => [...document.images].map(image => {
+    const box = image.getBoundingClientRect();
+    return { src: image.currentSrc || image.src, alt: (image.alt || image.title || '').replace(/\s+/g, ' ').trim().slice(0, 300),
+      width: Math.round(box.width), height: Math.round(box.height) };
+  }).filter(image => /^https?:/.test(image.src)));
+  const filter = input.filter?.toLowerCase();
+  const wanted = found.filter(image => image.width >= input.minWidth
+    && (!filter || image.src.toLowerCase().includes(filter) || image.alt.toLowerCase().includes(filter)));
+  return { url: page.url(), images: wanted.slice(0, input.limit).map(image => ({ ...image, src: plainAddress(image.src) })),
+    more: Math.max(0, wanted.length - input.limit) };
+}
+
 export interface ConsoleRecord { level: string; text: string; at: string }
 export interface RequestRecord { method: string; url: string; kind: string; status: number | null; failure: string | null; at: string }
 const KEPT = 200;

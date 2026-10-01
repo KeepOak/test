@@ -22,7 +22,7 @@ import { networkLearningButtons, initNetworkLearning } from './network-learning.
 const B = { sid: null, clientId: crypto.randomUUID(), profile: null, control: null, page: null, found: null, foundAt: 0,
   frameId: "", tabId: "", ready: false, frame: "", pending: null, reading: null, timer: 0, shown: false,
   busy: false, onChange: null, meta: "", pointer: null, textJob: null, wheel: null, lockWatch: false,
-  error: "", typed: "", opening: false, names: { name: "", runId: null } };
+  error: "", typed: "", opening: false, findOpen: false, findText: "", findStatus: "", touch: "scroll", downloadsOpen: false, composition: null, names: { name: "", runId: null } };
 const MAX_TABS = 5;
 const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
 const visible = () => B.shown && !document.hidden && !locked();
@@ -89,12 +89,14 @@ function applyView(answer) {
   B.control = answer.control; B.page = answer.page ?? B.page;
   B.frameId = answer.frameId ?? ""; B.tabId = answer.tabId ?? ""; B.ready = answer.ready === true;
   B.frame = answer.page?.frame ? `data:image/jpeg;base64,${answer.page.frame}` : "";
-  const meta = JSON.stringify([B.control, B.page?.url, B.page?.title, B.page?.tabs, B.ready, !!B.frame, B.error]);
+  const meta = JSON.stringify([B.control, B.page?.url, B.page?.title, B.page?.tabs, B.page?.downloads, B.ready, !!B.frame, B.error]);
   const redraw = B.meta !== meta; B.meta = meta; changed(redraw);
 }
 function disconnect() {
   forgetDemonstration();
   clearTimeout(B.timer); B.timer = 0;
+  if (B.composition) B.composition.target.value = "";
+  B.composition = null;
   B.reading?.abort(); B.reading = null; clearFrame();
   if (B.pending) { B.pending = null; closeDlg(); }
   if (hasOwnerBrowser() && owned() && B.sid) void api("panels/browser/disconnect", bound()).catch(() => undefined);
@@ -104,7 +106,7 @@ export function watchOwnerBrowser(sid, show, onChange, names = {}) {
   B.onChange = onChange;
   B.names = { name: names.name ?? "", runId: names.runId ?? null };
   const next = show && sid ? sid : null;
-  if (B.sid && next && B.sid !== next) { disconnect(); Object.assign(B, { control: null, page: null, meta: "", found: null, error: "", profile: null }); }
+  if (B.sid && next && B.sid !== next) { disconnect(); Object.assign(B, { control: null, page: null, meta: "", found: null, error: "", profile: null, findOpen: false, findText: "", findStatus: "", downloadsOpen: false }); }
   if (next) B.sid = next;
   B.shown = !!next;
   if (!visible()) { if (B.reading || B.timer || owned()) disconnect(); return; }
@@ -141,6 +143,21 @@ export function ownerBrowserHolder(name) {
 }
 
 const canDrive = () => visible() && (owned() || free() || !hasOwnerBrowser()) && !B.pending;
+// Composition grant capture adapted from OpenClaw browser-panel-controller-input.ts (MIT).
+function captureInputCurrent() {
+  const sid = B.sid, id = B.control?.id, epoch = B.control?.epoch, tabId = B.tabId, url = B.page?.url;
+  return () => canDrive() && B.sid === sid && B.control?.id === id && B.control?.epoch === epoch
+    && B.tabId === tabId && B.page?.url === url;
+}
+/** Preserve the native IME node only while this conversation and input grant remain current. */
+export function ownerBrowserComposing(sid) {
+  const composition = B.composition;
+  if (!composition) return false;
+  if (sid !== B.sid || !composition.target.isConnected || !composition.current()) {
+    composition.target.value = ""; B.composition = null; return false;
+  }
+  return composition.target === document.activeElement;
+}
 /* The owner's input is sent in the order it was given, one request at a time: nothing typed or clicked while an earlier
    request is still going is dropped. */
 let chain = Promise.resolve();
@@ -171,6 +188,17 @@ function statusHTML() {
   const title = B.opening ? "" : `<b>${t("window.chat.stage.opening-failed")}</b>`;
   return `<div class="browser-status7 ob7-status" role="status">${title}<small>${esc(said)}</small></div>`;
 }
+function extrasHTML() {
+  const drive = canDrive() && hasOwnerBrowser() && B.ready, zoom = B.page?.tabs?.find(tab => tab.active)?.zoom;
+  const button = (act, label, accessible = label) => `<button type="button" class="btn ghost sm" aria-label="${esc(accessible)}" data-act="owner-browser-${act}"${drive ? "" : " disabled"}>${esc(label)}</button>`;
+  const find = `<button type="button" class="btn ghost sm" data-act="owner-browser-find-show" aria-expanded="${B.findOpen}">${esc(t("window.chat.stage.ob.find"))}</button>`;
+  const zoomed = typeof zoom === "number" ? `${Math.round(zoom * 100)}%` : t("window.chat.stage.ob.zoom");
+  const bar = `<div class="ob7-extras">${find}${button("zoom-out", "−", t("window.chat.stage.ob.zoom-out"))}${button("zoom-reset", zoomed, t("window.chat.stage.ob.zoom-reset"))}${button("zoom-in", "+", t("window.chat.stage.ob.zoom-in"))}${button("pdf", t("window.chat.stage.ob.pdf"))}</div>`;
+  if (!B.findOpen) return bar;
+  return bar + `<form class="ob7-find" data-form="owner-browser-find"><input id="ob7-find" autocomplete="off" maxlength="300" aria-label="${esc(t("window.chat.stage.ob.find"))}" value="${esc(B.findText)}">
+    <button type="submit" class="btn ghost sm"${drive ? "" : " disabled"}>${esc(t("window.chat.stage.ob.find-next"))}</button>${button("find-prev", t("window.chat.stage.ob.find-prev"))}
+    <button type="button" class="btn ghost sm" data-act="owner-browser-find-close">${esc(t("window.chat.stage.ob.find-close"))}</button><small role="status">${esc(B.findStatus)}</small></form>`;
+}
 function pageHTML() {
   const ready = !!B.frame, input = owned() || free();
   const empty = !hasOwnerBrowser() ? t("window.chat.stage.ob.empty") : B.page?.borrowed ? t("window.chat.stage.borrowed-preview")
@@ -181,9 +209,73 @@ function pageHTML() {
     <img class="shot7 owner-browser7-img" draggable="false" alt="${esc(B.page?.title || t("window.chat.stage.ob.page"))}"${ready ? "" : " hidden"}>
     ${ready ? "" : `<div class="browser-status7 owner-browser7-empty" role="status"><small>${empty}</small></div>`}</div>`;
 }
+/** Session-only completions: workspace paths and file sizes, or a truthful refused-download state. */
+function downloadsHTML() {
+  const downloads = B.page?.downloads ?? [];
+  if (!downloads.length) return "";
+  const rows = [...downloads].reverse().map(file => `<li><b>${esc(file.saved
+    ? file.file || t("window.chat.stage.ob.download-path-hidden") : t("window.chat.stage.ob.download-not-saved"))}</b>
+    <small>${esc(file.from)}${file.saved ? ` · ${esc(t("window.chat.stage.ob.download-bytes", { count: file.bytes }))}` : ""}</small></li>`).join("");
+  return `<details class="ob7-downloads"${B.downloadsOpen ? " open" : ""}><summary>${esc(t("window.chat.stage.ob.downloads", { count: downloads.length }))}</summary><ol>${rows}</ol></details>`;
+}
 /** The whole browser, drawn at the stage's 1280 × 800 like the task's live view. */
 export function ownerBrowserHTML() {
-  return `<div class="desk7 brfull7 live7 owner-browser7"><div class="dk-win br7">${tabsHTML()}${barHTML()}${statusHTML()}${pageHTML()}</div></div>`;
+  return `<div class="desk7 brfull7 live7 owner-browser7"><div class="dk-win br7">${tabsHTML()}${barHTML()}${extrasHTML()}${statusHTML()}${downloadsHTML()}${pageHTML()}</div></div>`;
+}
+/** What the page is waiting for, when it is waiting for a person rather than the task. */
+export function ownerBrowserNeeds() {
+  return hasOwnerBrowser() && B.control.writer?.kind === "agent" ? B.page?.needs ?? null : null;
+}
+/**
+ * "Needs you": the page in front is a sign-in (Branch never types a password) or a "prove you're a person" check. Drawn
+ * over the live picture, unscaled, with the two ways on: take the browser (Branch waits), or stop the task.
+ */
+export function needsHTML(needs, url, take, runId) {
+  if (!needs) return "";
+  const host = (() => { try { return new URL(url).hostname; } catch { return ""; } })();
+  const title = t(needs === "captcha" ? "window.chat.stage.ob.needs-captcha" : "window.chat.stage.ob.needs-sign-in");
+  const stop = runId ? `<button class="btn ghost" type="button" data-act="stage-stop" data-id="${esc(runId)}">${t("window.chat.stage.ob.stop-task")}</button>` : "";
+  return `<div class="needs7" role="alertdialog" aria-label="${title}"><div class="needs7-card"><span class="pill warn"><i></i>${t("window.chat.stage.ob.needs-you")}</span>
+    <b>${title}</b>${host ? `<small>${esc(host)}</small>` : ""}<p>${t("window.chat.stage.ob.needs-why")}</p>
+    <div class="needs7-acts"><button class="btn pri" type="button" data-act="${take.act}"${take.id ? ` data-id="${esc(take.id)}"` : ""}>${t("window.chat.stage.ob.take-control")}</button>${stop}</div></div></div>`;
+}
+/**
+ * "You're in control": touch-sized tools over the page, unscaled so they stay usable on a phone. The keyboard opens the
+ * page's own key box (a phone's keyboard comes up), Scroll or Point says what a finger drag does, Copy and Paste use the
+ * owner's own clipboard, the tick hands back (or lets go), and the red button stops the task or closes the browser.
+ */
+export function ownerBrowserToolbar(runId, name) {
+  if (!hasOwnerBrowser() || !owned()) return "";
+  const task = B.control.paused ?? B.control.waiting;
+  const done = task ? `<button class="tb7-btn tb7-done" type="button" data-act="owner-browser-handback" data-id="${esc(task)}" aria-label="${t("window.chat.stage.hand-back-to", { name: esc(name) })}" title="${t("window.chat.stage.hand-back-to", { name: esc(name) })}">${ic("check")}</button>`
+    : `<button class="tb7-btn tb7-done" type="button" data-act="owner-browser-release" aria-label="${t("window.chat.stage.ob.done")}" title="${t("window.chat.stage.ob.done")}">${ic("check")}</button>`;
+  const stop = runId ? `<button class="tb7-btn tb7-stop" type="button" data-act="stage-stop" data-id="${esc(runId)}" aria-label="${t("window.chat.stage.ob.stop-task")}" title="${t("window.chat.stage.ob.stop-task")}">${ic("stop")}</button>`
+    : `<button class="tb7-btn tb7-stop" type="button" data-act="owner-browser-stop" aria-label="${t("window.chat.stage.ob.close-browser")}" title="${t("window.chat.stage.ob.close-browser")}">${ic("stop")}</button>`;
+  const tool = (act, icon, words, pressed) => `<button class="tb7-btn" type="button" data-act="${act}" aria-label="${words}" title="${words}"${pressed === undefined ? "" : ` aria-pressed="${pressed}"`}>${ic(icon)}</button>`;
+  return `<div class="tb7" role="toolbar" aria-label="${t("window.chat.stage.ob.in-control")}"><span class="tb7-host">${esc(hostOf(B.page?.url ?? ""))}</span>
+    ${tool("owner-browser-keys", "keyboard", t("window.chat.stage.ob.keyboard"))}${tool("owner-browser-touch", B.touch === "scroll" ? "touch16" : "cursor16", t(B.touch === "scroll" ? "window.chat.stage.ob.touch-scroll" : "window.chat.stage.ob.touch-point"), B.touch === "point")}
+    ${tool("owner-browser-copy", "copy", t("window.chat.stage.ob.copy"))}${tool("owner-browser-paste", "clip", t("window.chat.stage.ob.paste"))}${done}${stop}</div>`;
+}
+/** From the conversation's card: take the browser a working task is in, whether it is still the task's own window or
+    already the conversation's kept browser. */
+export async function takeControl(sid, runId) {
+  if (!sid) return;
+  if (B.sid !== sid) Object.assign(B, { sid, control: null, page: null, meta: "", found: null, error: "", profile: null });
+  await inOrder(async () => {
+    if (!hasOwnerBrowser()) await find(sid);
+    if (hasOwnerBrowser()) await send("control", { ...bound(), operation: "takeover" });
+    else await send("start", { ...scope(), runId });
+  });
+}
+async function copy() {
+  const answer = await inOrder(() => action("browser.owner_input", { kind: "copy" }));
+  const text = answer?.result?.text ?? "";
+  if (!text) { toast(t("window.chat.stage.ob.nothing-selected")); return; }
+  try { await navigator.clipboard.writeText(text); toast(t("window.chat.stage.ob.copied")); }
+  catch (error) { toast(error.message); }
+}
+async function paste() {
+  try { typeText(await navigator.clipboard.readText()); } catch (error) { toast(error.message); }
 }
 /** The small window shows only the page. */
 export const ownerBrowserPip = () => `<div class="desk7 brfull7 live7"><div class="dk-win br7"><img class="shot7 owner-browser7-img" alt=""></div></div>`;
@@ -200,6 +292,10 @@ function accept(answer, path, body) {
   const failed = answer.status === "refused" || answer.status === "failed" || answer.ok === false;
   if (failed) B.error = answer.reason || answer.error || t("window.chat.stage.ob.failed");
   else if (path === "action") B.error = "";
+  if (path === "action" && answer.status === "ran" && body.arguments?.kind === "find" && typeof answer.result?.found === "boolean")
+    B.findStatus = t(answer.result.found ? "window.chat.stage.ob.find-found" : "window.chat.stage.ob.find-missing");
+  if (path === "action" && answer.status === "ran" && body.tool === "browser.pdf" && answer.result?.path)
+    toast(t("window.chat.stage.ob.pdf-saved", { path: answer.result.path }));
   // An input's answer carries the page as it is now: drawn at once, and the next input is aimed at it.
   if (path === "action" && answer.view?.status === "ready" && B.control) { applyView(answer.view); return; }
   if (B.control && !failed) staleFrame(); else clearFrame();
@@ -232,22 +328,23 @@ async function ensureDriving() {
   return false;
 }
 async function action(tool, args, retried = false) {
-  if (!B.sid || B.pending || !(await ensureDriving())) return;
+  if (!B.sid || B.pending || !(await ensureDriving())) return null;
   const body0 = { sid: B.sid };
   // Input goes to the page the owner can see: a fresh frame first (a picture can miss while the page is busy).
   for (let tries = 0; tries < 6 && (!B.frameId || (tool === "browser.owner_input" && !B.ready)); tries++) {
     await drain();
     if (tries) await pause(150);
-    if (!visible() || B.sid !== body0.sid) return;
+    if (!visible() || B.sid !== body0.sid) return null;
     await readView();
   }
-  if (!B.frameId || (tool === "browser.owner_input" && !B.ready)) return;
+  if (!B.frameId || (tool === "browser.owner_input" && !B.ready)) return null;
   const body = { ...bound(), frameId: B.frameId, tabId: B.tabId, sequence: B.control.sequence + 1, tool, arguments: args };
   const answer = await send("action", body);
   // The page moved on between the frame and the input (checked before anything reaches the page): read it and try once more.
   if (!retried && answer?.status === "error" && answer.code === 409 && /refresh/i.test(answer.error ?? "")) {
-    B.error = ""; await readView(); await action(tool, args, true);
+    B.error = ""; await readView(); return action(tool, args, true);
   }
+  return answer;
 }
 function confirm() {
   const pending = B.pending; B.pending = null; closeDlg();
@@ -274,13 +371,14 @@ function point(event, img) {
    still waiting its turn, so fast typing is a few inputs rather than one per letter, and nothing waits on a timer.
    Any other input (a key, click, scroll or address) seals it first, so the page gets everything in the order it was made. */
 function flushText() { B.textJob = null; }
-function typeText(text) {
-  if (!text) return;
-  if (B.textJob) { B.textJob.text += text; return; }
-  const job = { text };
+function typeText(text, current = null) {
+  if (!text || (current && !current())) return;
+  if (B.textJob && B.textJob.current === current) { B.textJob.text += text; return; }
+  const job = { text, current };
   void inOrder(async () => {
     if (B.textJob === job) B.textJob = null;
     while (B.pending && visible()) await pause(100);
+    if (job.current && !job.current()) return;
     if (job.text.length > 8192) { toast(t("window.chat.stage.ob.paste-long")); return; }
     await action("browser.owner_input", { kind: "text", text: job.text });
   });
@@ -297,7 +395,7 @@ function flushWheel() {
 }
 const KEYS = ["Enter", "Tab", "Escape", "Backspace", "Delete", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"];
 function key(event) {
-  if (!visible() || !(owned() || free()) || B.pending || event.isComposing) return;
+  if (!visible() || !(owned() || free()) || B.pending || event.isComposing || event.keyCode === 229 || ownerBrowserComposing(B.sid)) return;
   const modifiers = [event.ctrlKey && "Control", event.metaKey && "Meta", event.altKey && "Alt", event.shiftKey && "Shift"].filter(Boolean);
   const name = event.key === " " ? "Space" : event.key;
   if (modifiers.some((m) => m !== "Shift") && /^[a-zA-Z0-9]$/.test(name)) {
@@ -308,9 +406,21 @@ function key(event) {
   if (!modifiers.some((m) => m !== "Shift") && event.key.length === 1) return;
   if (KEYS.includes(name)) { event.preventDefault(); flushText(); void inOrder(() => action("browser.owner_input", { kind: "key", key: [...modifiers, name].join("+") })); }
 }
+/* A finger in Scroll mode moves the page like a phone's own browser: its drag becomes scrolling, a tap a click. */
+function pointerMove(event) {
+  const start = B.pointer;
+  if (!start || start.type !== "touch" || B.touch !== "scroll") return;
+  const at = point(event, start.img) ?? start.last;
+  const size = { w: start.img.naturalWidth || 1280, h: start.img.naturalHeight || 720 };
+  const dx = (start.last.x - at.x) * size.w, dy = (start.last.y - at.y) * size.h;
+  if (Math.hypot(dx, dy) < 2) return;
+  start.last = at; start.scrolled = true;
+  B.wheel = { dx: (B.wheel?.dx ?? 0) + dx, dy: (B.wheel?.dy ?? 0) + dy };
+  setTimeout(flushWheel, 40);
+}
 function pointerUp(event) {
   const start = B.pointer; B.pointer = null;
-  if (!start || !canDrive()) return;
+  if (!start || !canDrive() || start.scrolled) return;
   const end = point(event, start.img); if (!end) return;
   const moved = Math.hypot(end.x - start.x, end.y - start.y) > 0.012;
   const args = moved ? { kind: "drag", x: start.x, y: start.y, toX: end.x, toY: end.y }
@@ -320,13 +430,53 @@ function pointerUp(event) {
 }
 const inPage = (event) => event.target.closest?.("#stage7 .owner-browser7-page");
 
+function initBrowserExtras() {
+  const showFind = () => { B.findOpen = true; changed(true); document.getElementById("ob7-find")?.focus(); };
+  const findText = (backwards = false) => {
+    const text = B.findText;
+    if (text.trim()) void inOrder(() => action("browser.owner_input", { kind: "find", text, backwards }));
+  };
+  const zoom = (by) => {
+    void inOrder(() => {
+      const current = B.page?.tabs?.find(tab => tab.active)?.zoom ?? 1;
+      const factor = by === 0 ? 1 : Math.max(0.5, Math.min(2, Math.round((current + by) * 100) / 100));
+      return action("browser.owner_input", { kind: "zoom", factor });
+    });
+  };
+  on("owner-browser-find-show", showFind);
+  on("owner-browser-find-close", () => { B.findOpen = false; changed(true); });
+  on("owner-browser-find-prev", () => findText(true));
+  on("owner-browser-zoom-out", () => zoom(-0.1)); on("owner-browser-zoom-in", () => zoom(0.1)); on("owner-browser-zoom-reset", () => zoom(0));
+  on("owner-browser-pdf", () => { void inOrder(() => action("browser.pdf", {})); });
+  document.addEventListener("submit", event => {
+    if (event.target.matches?.('#stage7 form[data-form="owner-browser-find"]')) { event.preventDefault(); findText(); }
+  }, true);
+  document.addEventListener("input", event => { if (event.target.id === "ob7-find") { B.findText = event.target.value; B.findStatus = ""; } }, true);
+  document.addEventListener("keydown", event => {
+    if (event.isComposing || event.keyCode === 229 || !event.target.closest?.("#stage7 .owner-browser7")) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") { event.preventDefault(); event.stopImmediatePropagation(); showFind(); }
+    else if (event.target.id === "ob7-find" && event.key === "Escape") { event.preventDefault(); B.findOpen = false; changed(true); }
+  }, true);
+}
+
 export function initOwnerBrowser() {
+  document.addEventListener("toggle", (event) => {
+    if (event.target.matches?.("#stage7 .ob7-downloads")) B.downloadsOpen = event.target.open;
+  }, true);
   initNetworkLearning({ bound: () => ({ ...bound(), tabId: B.tabId }), available: owned, onChange: changed });
   initDemonstrations({ bound: () => ({ ...bound(), tabId: B.tabId }), available: owned, onChange: changed,
     inOrder: work => { flushText(); return inOrder(work); } });
   markLive(["owner-browser-adopt", "owner-browser-stop", "owner-browser-take", "owner-browser-handback",
     "owner-browser-tab", "owner-browser-tab-close", "owner-browser-new-tab", "owner-browser-back", "owner-browser-forward",
-    "owner-browser-reload", "owner-browser-yes", "owner-browser-no", "sw:ob7-keys"]);
+    "owner-browser-reload", "owner-browser-yes", "owner-browser-no", "sw:ob7-keys", "sw:ob7-find", "owner-browser-keys", "owner-browser-touch",
+    "owner-browser-copy", "owner-browser-paste", "owner-browser-release",
+    "owner-browser-find-show", "owner-browser-find-close", "owner-browser-find-prev", "owner-browser-zoom-out", "owner-browser-zoom-reset", "owner-browser-zoom-in", "owner-browser-pdf"]);
+  initBrowserExtras();
+  on("owner-browser-keys", () => { document.getElementById("ob7-keys")?.focus(); });
+  on("owner-browser-touch", () => { B.touch = B.touch === "scroll" ? "point" : "scroll"; changed(true); });
+  on("owner-browser-copy", () => { void copy(); });
+  on("owner-browser-paste", () => { void paste(); });
+  on("owner-browser-release", () => { if (hasOwnerBrowser() && owned()) void inOrder(() => send("disconnect", bound())); });
   on("owner-browser-adopt", (el) => { if (B.sid && !hasOwnerBrowser()) void inOrder(() => send("start", { ...scope(), runId: el.dataset.id })); });
   on("owner-browser-stop", () => { if (hasOwnerBrowser()) void inOrder(() => send("stop", bound())); });
   on("owner-browser-take", () => { if (hasOwnerBrowser()) void inOrder(() => send("control", { ...bound(), operation: "takeover" })); });
@@ -347,8 +497,9 @@ export function initOwnerBrowser() {
     if (!img || !canDrive()) return;
     const at = point(event, img); if (!at) return;
     event.preventDefault(); document.getElementById("ob7-keys")?.focus({ preventScroll: true });
-    B.pointer = { ...at, img, button: event.button === 2 ? "right" : event.button === 1 ? "middle" : "left" };
+    B.pointer = { ...at, img, last: at, type: event.pointerType, button: event.button === 2 ? "right" : event.button === 1 ? "middle" : "left" };
   }, true);
+  document.addEventListener("pointermove", (event) => { if (B.pointer) pointerMove(event); }, true);
   document.addEventListener("pointerup", (event) => { if (B.pointer) pointerUp(event); }, true);
   // Pressing on the picture never takes the keys away from the page: they stay in its own box.
   document.addEventListener("mousedown", (event) => {
@@ -368,13 +519,22 @@ export function initOwnerBrowser() {
     event.preventDefault(); typeText(event.clipboardData?.getData("text/plain") ?? "");
   }, true);
   // Words put together with an input method (Chinese, Japanese, Korean, accents) arrive whole when composing ends.
+  document.addEventListener("compositionstart", (event) => {
+    if (event.target.id === "ob7-keys" && canDrive()) B.composition = { target: event.target, current: captureInputCurrent() };
+  }, true);
   document.addEventListener("compositionend", (event) => {
     if (event.target.id !== "ob7-keys") return;
-    if (canDrive()) typeText(event.data ?? "");
+    const composition = B.composition; B.composition = null;
+    if (composition?.target === event.target && composition.target.isConnected && composition.current()) typeText(event.data ?? "", composition.current);
     event.target.value = "";
+    queueMicrotask(() => changed(true));
+  }, true);
+  document.addEventListener("focusout", (event) => {
+    if (B.composition?.target !== event.target) return;
+    B.composition = null; event.target.value = ""; queueMicrotask(() => changed(true));
   }, true);
   document.addEventListener("input", (event) => {
-    if (event.target.id !== "ob7-keys" || event.isComposing) return;
+    if (event.target.id !== "ob7-keys" || event.isComposing || ownerBrowserComposing(B.sid)) return;
     if (event.inputType === "insertText" && canDrive()) typeText(event.data ?? "");
     if (!event.isComposing) event.target.value = "";
   }, true);

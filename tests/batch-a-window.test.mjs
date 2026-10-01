@@ -123,6 +123,8 @@ function png(width, height) {
 /* A conversation whose task used the computer (a desktop.screenshot step with its picture), paused by the owner. */
 async function usedTheComputer(app) {
   const run = app.store.createRun(app.runtime.owner, "Check the spreadsheet on screen");
+  app.store.event(run.id, "run.started", { source: "owner", permissions: [app.registry.permissionOf("desktop.screenshot")],
+    deadlineMs: 30_000, depth: 0, delegates: false, dryRun: false, ownCopy: false });
   const sid = run.sessionId;
   app.store.message(sid, { role: "user", content: run.prompt });
   app.store.message(sid, { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "desktop.screenshot", arguments: "{}" }] });

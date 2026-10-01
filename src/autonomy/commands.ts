@@ -1,11 +1,13 @@
 import type { Call, Reply } from "../commands/handlers.js";
 import { handOff } from "../interop/handoff.js";
+import { parseChatHandoff } from "../channels/handoff-target.js";
 import { autonomyFor, type Autonomy } from "./index.js";
 import type { LoopKind } from "./loops.js";
 import { offSentence, quoteLine, type AutonomyPart } from "./settings.js";
 import { addSubgoal, saveSubgoals, subgoalsOf } from "./subgoals.js";
 import { catalogue } from "./blueprints.js";
 import { conversationModeSettings, readConversationMode, type ConversationMode } from "../conversation-mode.js";
+import { ownerChatMark } from "../key-context.js"; // owner-dm-full
 
 /**
  * R17-B: what `/loop`, `/heartbeat`, `/subgoal`, `/bg`, `/handoff`, `/suggestions` and `/blueprint`
@@ -80,7 +82,7 @@ function backgroundMode(call: Call): ConversationMode | null {
   const runtime = call.host.runtime;
   if (call.sessionId)
     return readConversationMode(runtime.store, runtime.owner, runtime.modeFollows(call.sessionId) ?? call.sessionId)?.mode ?? null;
-  if (call.surface !== "window") return null;
+  if (call.surface !== "window" && !call.ownerChat) return null; // owner-dm-full: the owner's own chat starts as the window does
   const chosen = conversationModeSettings(runtime.store, runtime.owner).newConversation;
   return chosen === "follow" ? null : chosen;
 }
@@ -100,41 +102,48 @@ const bg: Handler = async (call) => {
   const mode = backgroundMode(call);
   // A separate conversation, not awaited: this one stays free. It is a task like any the owner starts.
   await new Promise<void>((resolve) => {
-    // CHAT-185: from the owner's own chat it is that chat's task, never the owner's own (a chat cannot prove who typed).
-    void runtime.run({ prompt, source: call.surface === "chat" ? "channel" : "owner", onTextDelta: () => undefined, ...(call.permissions ? { permissions: call.permissions } : {}),
+    // CHAT-185: from a chat it is that chat's task, never the owner's own (a chat cannot prove who typed). owner-dm-full:
+    // from the owner's own verified direct chat with full access it is the owner's, and carries that chat's mark so it
+    // is checked again at every step (src/key-context.ts `ownerChatMark`).
+    const chat = call.surface === "chat" ? call.ownerChat : undefined;
+    void runtime.run({ prompt, source: call.surface === "chat" && !chat ? "channel" : "owner", onTextDelta: () => undefined, ...(call.permissions ? { permissions: call.permissions } : {}),
       ...(mode ? { conversationMode: mode } : {}),
-      onStarted: (run) => { sessionId = run.sessionId; runId = run.id; working.add(run.id); resolve(); } })
+      onStarted: (run) => {
+        if (chat) runtime.store.event(run.id, ownerChatMark, { ...chat, chatKind: "direct" });
+        sessionId = run.sessionId; runId = run.id; working.add(run.id); resolve();
+      } })
       .catch(() => undefined).finally(() => { working.delete(runId); resolve(); });
   });
   return say(sessionId ? `Working on it in a separate conversation (${sessionId.slice(0, 8)}). It will be in Inbox, Finished.` : "The background task could not start.");
 };
 
 async function handoffToChat(autonomy: Autonomy, call: Call, target: string): Promise<Reply> {
-  const { chats } = autonomy.deps, owner = autonomy.owner;
-  const wanted = target.toLowerCase();
-  const ids = new Set(chats.summary().channels.filter((c) => c.id.toLowerCase() === wanted || c.kind.toLowerCase() === wanted).map((c) => c.id));
-  const chat = chats.chats(owner).filter((c) => ids.has(c.channel)).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).pop();
-  if (!chat) return say(`No chat on ${quoteLine(target, 40)} has talked to Branch yet. Send the bot a message there first.`);
-  chats.link(owner, { channel: chat.channel, chatId: chat.chatId, sessionId: call.sessionId });
-  const last = autonomy.store.messages(call.sessionId!).filter((m) => m.role === "assistant").pop();
-  const note = `This conversation carries on here.${last ? ` Last reply: ${call.host.runtime.hideSecrets(String(last.content)).slice(0, 500)}` : ""}`;
-  await chats.deliver(chat.channel, chat.chatId, note).catch(() => undefined);
-  return say(`Handed to ${quoteLine(chat.title, 60)} on ${chat.channel}. Messages there now carry on this conversation.`);
+  const destination = parseChatHandoff(target), { chats } = autonomy.deps;
+  if (!destination || !chats.handoff) return say("Choose an exact Telegram destination under Conversation → Share → Hand off. Name the owner's own account there first.");
+  const result = await chats.handoff(autonomy.owner, { ...destination, sourceSessionId: call.sessionId });
+  const note = result.sent ? "The notification was sent." : result.queued ? "The notification is waiting for delivery." : "The notification could not be confirmed.";
+  return say(`Linked to ${quoteLine(result.title, 60)} on Telegram. Future messages there carry on this conversation. ${note}`);
 }
 
 const handoff: Handler = async (call) => {
   const autonomy = reach(call, "session-commands");
   if (typeof autonomy === "string") return say(autonomy);
   if (!call.sessionId) return say(needSession);
+  if (!autonomy.deps.chats.assertHandoffSource) return say("This copy cannot validate the conversation handoff.");
+  autonomy.deps.chats.assertHandoffSource(autonomy.owner, call.sessionId);
+  const held = autonomy.runner.sessionHeld(call.sessionId);
+  if (held) return say(held);
   const [where = "", ...rest] = call.argument.trim().split(/\s+/);
-  if (!where) return say("Say where to: /handoff telegram (or another chat app), /handoff terminal, or /handoff assistant <name>.");
+  if (!where) return say("Choose an exact chat under Conversation → Share → Hand off, or use /handoff terminal or /handoff assistant <name>.");
   if (where === "terminal" || where === "assistant") {
     const parts = autonomy.deps.handoff;
     if (!parts) return say("Handing on to a terminal or another assistant is not in this copy.");
     const done = await handOff(parts, { sessionId: call.sessionId, to: where, ...(rest.length ? { agent: rest.join(" ") } : {}) }, "");
-    return say("command" in done ? `Run this in a terminal: ${done.command}` : `Handed to ${String((done as { agent?: string }).agent)}.`);
+    if ("command" in done) return say(`Run this in a terminal: ${done.command}`);
+    if ("agent" in done) return say(`Assistant ${quoteLine(done.agent, 60)} reported ${quoteLine(String(done.state ?? "no state"), 40)}.${done.answer ? `\n\n${done.answer.slice(0, 2000)}` : ""}`);
+    return say("The handoff did not return a terminal command or an assistant response.");
   }
-  return handoffToChat(autonomy, call, where);
+  return handoffToChat(autonomy, call, where === "chat" ? rest.join(" ") : "");
 };
 
 const suggestions: Handler = (call) => {

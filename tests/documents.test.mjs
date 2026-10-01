@@ -76,6 +76,26 @@ function zip(entries) {
   end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16);
   return Buffer.concat([...locals, directory, end]);
 }
+/** Word as a streaming writer packs it: the local header's sizes stay zero (flag bit 3) and a data descriptor follows
+ * the data; only the central directory holds the real sizes. `claimed` overrides the directory's unpacked size. */
+function descriptorZip(name, text, claimed) {
+  const raw = Buffer.from(text, "utf8"), body = deflateRawSync(raw), nameBytes = Buffer.from(name, "utf8");
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x08, 6); local.writeUInt16LE(8, 8);
+  local.writeUInt16LE(nameBytes.length, 26);
+  const descriptor = Buffer.alloc(16);
+  descriptor.writeUInt32LE(0x08074b50, 0); descriptor.writeUInt32LE(body.length, 8); descriptor.writeUInt32LE(raw.length, 12);
+  const directory = Buffer.alloc(46);
+  directory.writeUInt32LE(0x02014b50, 0); directory.writeUInt16LE(20, 4); directory.writeUInt16LE(20, 6);
+  directory.writeUInt16LE(0x08, 8); directory.writeUInt16LE(8, 10);
+  directory.writeUInt32LE(body.length, 20); directory.writeUInt32LE(claimed ?? raw.length, 24);
+  directory.writeUInt16LE(nameBytes.length, 28); directory.writeUInt32LE(0, 42);
+  const offset = local.length + nameBytes.length + body.length + descriptor.length;
+  const central = Buffer.concat([directory, nameBytes]), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(central.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([local, nameBytes, body, descriptor, central, end]);
+}
 const docxFixture = () => zip([["word/document.xml",
   "<w:document><w:body><w:p><w:r><w:t>Holiday policy</w:t></w:r></w:p>" +
   "<w:p><w:r><w:t>Staff get twenty days</w:t></w:r><w:tab/><w:r><w:t>each year &amp; more</w:t></w:r></w:p></w:body></w:document>",
@@ -313,4 +333,29 @@ test("the documents routes list, add, search, re-read, remove and hold the answe
   assert.match(shell, /\["library", "book", "Library"\]/, "the side list has a way in to the Library");
   const page = await (await fetch(server.url + "/")).text();
   assert.match(page, /src="\/app\/main\.js"/, "the page loads the window that draws them");
+});
+
+test("a Word file written with data descriptors is read from its directory's sizes, and a wrong size is refused", () => {
+  const words = "<w:document><w:body><w:p><w:r><w:t>Streamed by a phone app</w:t></w:r></w:p></w:body></w:document>";
+  assert.match(docxText(descriptorZip("word/document.xml", words)), /Streamed by a phone app/);
+  assert.throws(() => docxText(descriptorZip("word/document.xml", words, 5)), /Damaged document entry size/);
+});
+
+test("TRUNK-197: a document keeps who first added it: the owner from the window, Branch from a task, unknown for old rows", async (t) => {
+  const { app, root } = await fixture(t);
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(() => server.close());
+  const response = await fetch(`${server.url}/api/documents`, { method: "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ name: "Owner notes", text: "The owner wrote this." }) });
+  assert.equal(response.status, 200);
+  const byTool = await app.runtime.executeTool("documents.add", { text: "Branch wrote this.", name: "Task notes" });
+  const old = await app.documents.add("local", { name: "Old notes", text: "Added before anyone was recorded." });
+  const listed = new Map(app.documents.list("local").map((document) => [document.name, document.addedBy]));
+  assert.equal(listed.get("Owner notes")?.kind, "person");
+  assert.equal(listed.get("Owner notes")?.role, "owner");
+  assert.equal(listed.get("Task notes")?.kind, "assistant");
+  assert.ok(listed.get("Task notes")?.runId, "the task that added it is kept");
+  assert.equal(byTool.addedBy?.kind, "assistant");
+  assert.equal(listed.get("Old notes"), null, "a row with nothing recorded says so, never a guess");
+  assert.equal(old.addedBy ?? null, null);
 });

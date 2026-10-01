@@ -117,17 +117,33 @@ export function findLocalWhisper(choice: WhisperChoice, given: WhisperLookup = {
  */
 export const whisperWorkerScript = `
 import base64, io, json, sys
+import numpy as np
 from faster_whisper import WhisperModel
+from faster_whisper.audio import decode_audio
 model = WhisperModel(sys.argv[1], device="cpu", compute_type="int8", local_files_only=True)
-print(json.dumps({"ready": True}), flush=True)
+vad = False
+try:
+    from faster_whisper.vad import get_vad_model, get_speech_timestamps
+    get_vad_model()  # installed package asset only; cached in this existing worker
+    vad = True
+except Exception:
+    pass  # old/missing installed VAD keeps the existing non-neural path
+print(json.dumps({"ready": True, "vad": "silero" if vad else "none"}), flush=True)
 for line in sys.stdin:
     ask = {}
     try:
         ask = json.loads(line)
-        sound = io.BytesIO(base64.b64decode(ask["audio"]))
+        sound = decode_audio(io.BytesIO(base64.b64decode(ask["audio"])), sampling_rate=16000)
         quick = bool(ask.get("partial"))
+        if vad:
+            speech = get_speech_timestamps(sound, min_silence_duration_ms=200, speech_pad_ms=400)
+            if not speech:
+                print(json.dumps({"id": ask.get("id"), "text": "", "language": ask.get("language")}), flush=True)
+                continue
+            # Apply speech spans before language detection, matching faster-whisper's VAD path.
+            sound = np.concatenate([sound[segment["start"]:segment["end"]] for segment in speech])
         segments, info = model.transcribe(sound, language=ask.get("language") or None, beam_size=1 if quick else 5,
-                                          condition_on_previous_text=False, vad_filter=not quick)
+                                          condition_on_previous_text=False, vad_filter=False)
         text = " ".join(part.text.strip() for part in segments).strip()
         print(json.dumps({"id": ask.get("id"), "text": text, "language": info.language}), flush=True)
     except Exception as error:
@@ -151,6 +167,18 @@ export function whisperEnvironment(source: NodeJS.ProcessEnv = process.env): Nod
     PYTHONIOENCODING: "utf-8", PYTHONDONTWRITEBYTECODE: "1" };
 }
 
+const cancelled = (): Error => new Error("faster-whisper was cancelled.");
+/** Waits for the worker to be ready, or stops waiting as soon as the request is aborted (the worker keeps starting). */
+function untilReadyOrAborted(ready: Promise<void>, signal?: AbortSignal): Promise<void> {
+  if (!signal) return ready;
+  if (signal.aborted) return Promise.reject(cancelled());
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => reject(cancelled());
+    signal.addEventListener("abort", onAbort, { once: true });
+    ready.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
 export interface WhisperHeard { text: string; language: string | null }
 interface Pending { id: number; resolve: (heard: WhisperHeard) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
 
@@ -168,6 +196,7 @@ export class LocalWhisper {
   private busy = false;
   private nextId = 1;
   private idle: NodeJS.Timeout | null = null;
+  private vad: "silero" | "none" | null = null;
   private errors = "";
   private found: { at: number; key: string; value: LocalWhisperFound } | null = null;
 
@@ -177,10 +206,16 @@ export class LocalWhisper {
   /** What `findLocalWhisper` says, remembered for ten seconds so a screen that asks often reads no disk. */
   find(choice: WhisperChoice): LocalWhisperFound {
     const key = JSON.stringify(choice);
-    if (this.found && this.found.key === key && this.now() - this.found.at < 10_000) return this.found.value;
+    if (this.found && this.found.key === key && this.now() - this.found.at < 10_000) return this.withVad(this.found.value);
     const value = findLocalWhisper(choice, this.lookup);
     this.found = { at: this.now(), key, value };
-    return value;
+    return this.withVad(value);
+  }
+  private withVad(value: LocalWhisperFound): LocalWhisperFound {
+    if (!value.available || !this.vad || this.running !== `${value.python}\n${value.model}`) return value;
+    return { ...value, how: `${value.how} ${this.vad === "silero" ?
+      "Installed Silero VAD filters live captions and finished recordings; speech and quiet are distinguished by the neural model." :
+      "Neural VAD is unavailable in this installed environment; speech recognition continues without it."}` };
   }
 
   /** Whether a worker is running this moment. */
@@ -188,31 +223,41 @@ export class LocalWhisper {
 
   /**
    * Writes one recording out. `partial` is a live caption: it is answered quickly, or not at all (null) when
-   * the worker is still busy with the last one.
+   * the worker is still busy with the last one. The `signal` aborts the transcription immediately without waiting.
    */
-  async transcribe(found: LocalWhisperFound, bytes: Uint8Array, options: { language?: string | null; partial?: boolean } = {}): Promise<WhisperHeard | null> {
+  async transcribe(found: LocalWhisperFound, bytes: Uint8Array, options: { language?: string | null; partial?: boolean } = {}, signal?: AbortSignal): Promise<WhisperHeard | null> {
+    if (signal?.aborted) throw cancelled();
     if (!found.available || !found.python || !found.model) throw new Error(found.how);
     if (bytes.byteLength === 0) throw new Error("That recording has no sound in it.");
     if (bytes.byteLength > whisperMostBytes) throw new Error("That recording is too long to write out here. Keep it under ten minutes.");
     if (options.partial && this.busy) return null;
-    const mine = this.turn.then(() => this.ask(found, bytes, options));
+    const mine = this.turn.then(() => this.ask(found, bytes, options, signal));
     this.turn = mine.catch(() => undefined);
     return mine;
   }
 
-  private async ask(found: LocalWhisperFound, bytes: Uint8Array, options: { language?: string | null; partial?: boolean }): Promise<WhisperHeard> {
+  private async ask(found: LocalWhisperFound, bytes: Uint8Array, options: { language?: string | null; partial?: boolean }, signal?: AbortSignal): Promise<WhisperHeard> {
+    // Aborted while waiting its turn: nothing is started or written.
+    if (signal?.aborted) throw cancelled();
     this.busy = true;
     if (this.idle) { clearTimeout(this.idle); this.idle = null; }
+    let onAbort: (() => void) | null = null;
     try {
-      await this.ensure(found.python!, found.model!);
+      await untilReadyOrAborted(this.ensure(found.python!, found.model!), signal);
+      if (signal?.aborted || !this.child) throw cancelled();
+      // This request and the worker serving it, held for this call alone: a later abort of a finished request
+      // can never end the worker that is serving the next one.
+      const child = this.child, id = this.nextId++;
       return await new Promise<WhisperHeard>((resolve, reject) => {
-        const id = this.nextId++;
-        const timer = setTimeout(() => this.fail(new Error("faster-whisper took more than two minutes, so Branch stopped it.")), whisperRequestMs);
+        const timer = setTimeout(() => this.fail(new Error("faster-whisper took more than two minutes, so Branch stopped it."), child), whisperRequestMs);
         this.pending = { id, resolve, reject, timer };
+        onAbort = () => { if (this.pending?.id === id) this.fail(cancelled(), child); };
+        signal?.addEventListener("abort", onAbort, { once: true });
         const line = JSON.stringify({ id, audio: Buffer.from(bytes).toString("base64"), language: options.language || null, partial: !!options.partial });
-        this.child!.stdin.write(`${line}\n`);
+        child.stdin.write(`${line}\n`);
       });
     } finally {
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
       this.busy = false;
       if (this.child) { this.idle = setTimeout(() => this.stop(), whisperIdleMs); this.idle.unref?.(); }
     }
@@ -232,6 +277,7 @@ export class LocalWhisper {
     });
     let partial = "";
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      if (this.child !== child) return;
       const lines = (partial + chunk).split("\n");
       partial = lines.pop()!.slice(-65_536);
       for (const line of lines) if (line.trim()) this.answer(line);
@@ -250,11 +296,14 @@ export class LocalWhisper {
   }
 
   private answer(line: string): void {
-    let said: { ready?: boolean; id?: number; text?: string; language?: string; error?: string };
+    let said: { ready?: boolean; vad?: string; id?: number; text?: string; language?: string; error?: string };
     try { said = JSON.parse(line); } catch { return; }
     const pending = this.pending;
     if (!pending) return;
-    if (said.ready && pending.id === 0) { this.settle(); pending.resolve({ text: "", language: null }); return; }
+    if (said.ready && pending.id === 0) {
+      this.vad = said.vad === "silero" ? "silero" : "none";
+      this.settle(); pending.resolve({ text: "", language: null }); return;
+    }
     if (said.id !== pending.id) return;
     this.settle();
     if (said.error) pending.reject(new Error(`faster-whisper could not write that out: ${said.error}`));
@@ -282,6 +331,7 @@ export class LocalWhisper {
     this.child = null;
     this.ready = null;
     this.running = "";
+    this.vad = null;
     this.settle();
     if (child) { child.stdin.end(); child.kill(); }
     pending?.reject(new Error("faster-whisper was stopped before it finished."));

@@ -9,7 +9,11 @@ import { branchWorkerGuard } from './browser-worker-guard.js';
 /** A message box the website put up. It is always dismissed; the words are kept so they can be reported. */
 export interface DialogRecord { kind: string; message: string; at: string }
 /** A file the website sent, after it was saved inside the workspace. */
-export interface DownloadRecord { file: string; bytes: number; from: string }
+export interface DownloadRecord {
+  file: string; bytes: number; from: string;
+  /** Downloads ask each time: the file waits outside the workspace under this id until browser.keep_download is answered. */
+  held?: string | undefined; name?: string | undefined;
+}
 /** A request held before Chromium sends it, including every hop of a redirect. */
 export interface BrowserRequest {
   url: string;
@@ -124,6 +128,9 @@ export class BrowserSession {
   /** What the tabs logged and asked the network for (browser.console, browser.network). */
   readonly log = new PageLog();
   private downloads: DownloadRecord[] = [];
+  // Completion metadata approach: Browser Use downloads_watchdog.py (MIT); original Branch session storage.
+  /** Completed downloads for the owner's live view, separate from once-only tool events. */
+  private downloadHistory: DownloadRecord[] = [];
   private pending: Promise<void>[] = [];
   options: SessionOptions = {};
   constructor(private readonly launch: () => Promise<Browser>,
@@ -542,14 +549,20 @@ export class BrowserSession {
   }
   private async collect(download: Download): Promise<void> {
     const from = download.url().slice(0, 300);
+    let record: DownloadRecord;
     try {
       if (!this.options.saveDownload) throw new Error('Saving files from websites is switched off');
-      this.downloads.push(await this.options.saveDownload(download));
+      record = await this.options.saveDownload(download);
     } catch (error) {
       await download.cancel().catch(() => undefined);
-      this.downloads.push({ file: '', bytes: 0, from: `${from} — not saved: ${error instanceof Error ? error.message : String(error)}` });
+      record = { file: '', bytes: 0, from: `${from} — not saved: ${error instanceof Error ? error.message : String(error)}` };
     }
+    this.downloads.push(record);
+    this.downloadHistory.push({ ...record, from });
+    if (this.downloadHistory.length > 50) this.downloadHistory.shift();
   }
+  /** Newest 50 completions, retained only for this browser session; reading never consumes events. */
+  completedDownloads(): DownloadRecord[] { return this.downloadHistory.map(record => ({ ...record })); }
   /** Message boxes and saved files since the last action, handed over once and then cleared. */
   takeEvents(): { dialogs: DialogRecord[]; downloads: DownloadRecord[] } {
     const events = { dialogs: this.dialogs, downloads: this.downloads };
