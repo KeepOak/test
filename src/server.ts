@@ -152,7 +152,9 @@ import { projectsApi, secretsApi } from "./owner-data-api.js";
 import { HttpError, readJsonBody as readBody } from "./server-http.js";
 import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
+import { handlesSourceDraftPath, sourceDraftApi } from "./self-development-drafts.js";
 import { handlesSourceMergePath, sourceMergeApi } from "./self-development-merge.js";
+import { sourceCiApi } from "./self-development-ci-api.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
 import { handlesSeasonsPath, seasonsApi, SeasonsHttpError } from "./seasons/api.js"; // Seasons
@@ -292,7 +294,8 @@ import { guardsApi, GuardsApiError, handlesGuardsPath } from "./run-guards.js";
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
 import { syncMixtures } from "./model-savings/mixture.js"; // a forgotten connection takes its mixtures with it
-import { readChatIntake, saveChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
+import { channelMessageOrigins } from "./channels/message-origin.js";
+import { readChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
 import { channelFormats, saveChannelFormatting } from "./channels/formatting-settings.js";
 import { replyStyles, saveReplyStyle } from "./channels/reply-style.js";
 import { practiceRunsEnabled, savePracticeRuns } from "./practice-runs.js";
@@ -342,6 +345,7 @@ import { gitlabApi, GitLabApiError, handlesGitLabPath } from "./gitlab-connectio
 import { githubDeviceApi, handlesGitHubDevicePath } from "./github-device-connection.js";
 import { GitHubDeviceError } from "./integrations/github-device-auth.js";
 import { webPagesApi, WebPagesApiError } from "./web-pages.js"; // w911 (A0743, A1452) hook
+import { webSearchApi, WebSearchApiError } from "./web-search-choice.js"; // wire-greyed
 import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
@@ -1074,7 +1078,12 @@ async function api(
   // A change to Branch itself asked for from a chat (src/self-development-requests.ts): reading the requests
   // and answering them is the owner's alone, in the app window. Short-lived keys and household persons are
   // refused before this (src/short-lived-keys.ts, src/household-routes.ts), and each answer checks again.
+  if (handlesSourceDraftPath(path)) {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
+    return sourceDraftApi(app.sourceDrafts, request.method ?? "GET", path, () => readBody(request));
+  }
   if (handlesSourceRequestPath(path)) {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
     app.store.profiles.requireOwner("The list of requests to change Branch itself");
     return sourceRequestsApi(app.sourceRequests, request.method ?? "GET", path, () => readBody(request));
   }
@@ -1098,6 +1107,9 @@ async function api(
     if (throughADoor(request)) throw new HttpError(403, hereOnly);
     return sourceMergeApi(app.sourceMerges, request.method ?? "GET", path, () => readBody(request));
   }
+  if (path === "/api/self-development/ci") {
+    return sourceCiApi(app, request.method ?? "GET", throughADoor(request), () => readBody(request));
+  }
   // bucket-18: code editor (A0098)
   if (handlesWorkspaceEditorPath(path))
     return workspaceEditorApi({
@@ -1119,6 +1131,15 @@ async function api(
     return webPagesApi({ store: app.store, owner: app.runtime.owner, requireOwner: (what) => app.store.profiles.requireOwner(what) },
       request.method ?? "GET", () => readBody(request)).catch((error: unknown) => {
       throw error instanceof WebPagesApiError ? new HttpError(error.status, error.message) : error;
+    });
+  // wire-greyed: where "search the web" goes, picked in Settings › Advanced (owner-only change).
+  if (path === "/api/web-search")
+    return webSearchApi({ store: app.store, owner: app.runtime.owner, launch: () => app.web.settings().search,
+      hasSecret: (name) => { try { return app.store.secrets.list(app.runtime.owner, app.store.projects.active(app.runtime.owner).id).some((entry) => entry.name === name); } catch { return false; } },
+      requireOwner: (what) => app.store.profiles.requireOwner(what),
+      requireUnlocked: () => { if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before choosing where web searches go."); },
+    }, request.method ?? "GET", () => readBody(request, 4 * 1024)).catch((error: unknown) => {
+      throw error instanceof WebSearchApiError ? new HttpError(error.status, error.message) : error;
     });
   // RES-719: GitLab set up in the window: its switch, the token checked and kept in the locker, and taking it out.
   if (handlesGitLabPath(path))
@@ -2380,7 +2401,9 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
     const shared = person && app.trunks.rooms.forPerson(person.id).some((room) => room.sessionId === match[1]);
     const view = app.store.sessionView(shared ? app.runtime.owner : owner, match[1]!);
     // Dogfood D14: the project the conversation is filed under, so the window can say so; projects are the owner's.
-    return app.store.profiles.isOwner() ? { ...view, project: app.store.sessionProject(match[1]!) ?? null } : view;
+    return app.store.profiles.isOwner() ? { ...view, messages: channelMessageOrigins(app.store, owner, match[1]!, view.messages),
+      project: app.store.sessionProject(match[1]!) ?? null }
+      : { ...view, messages: view.messages.map((message) => ({ ...message, channelOrigin: undefined })) };
   }
   if (match && match[2] === "skill") {
     if (!app.store.ownsSession(owner, match[1]!)) throw new HttpError(404, "Session not found");
@@ -3269,7 +3292,7 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   if (path === "/api/channels/intake") {
     if (request.method === "GET") return { intake: readChatIntake(app.store, owner) };
     if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
-    const before = readChatIntake(app.store, owner).presence, intake = saveChatIntake(app.store, owner, await readBody(request));
+    const before = readChatIntake(app.store, owner).presence, intake = app.channels.saveIntake(await readBody(request));
     if (intake.presence !== before) await app.channels.presenceChanged(intake.presence);
     return { intake };
   }
@@ -4588,7 +4611,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           }, path).catch((error: unknown) => {
             throw error instanceof FlowsBoardsHttpError ? new HttpError(error.status, error.message) : error;
           });
-          send(response, 200, answer);
+          // Recorded graph state may contain secret values; use the same scrub as task inspection.
+          const snapshot = request.method === "GET" && /^\/api\/flows-boards\/flows\/[^/]+\/steps$/.test(path);
+          send(response, 200, snapshot ? app.runtime.hideSecrets(answer) : answer);
           return;
         }
         // ---- end of the r17-h block ----

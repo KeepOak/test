@@ -27,6 +27,7 @@ import { unwrapProvider } from "./accounts/pool-provider.js";
 import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
 import { chatPersonalityForRun } from "./channels/personality-settings.js";
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
+import { ownMessageHold } from "./channels/message-actions.js"; // CHAT-023: edits and deletions of sent messages ask once
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
 import { asPerson, currentPerson, throughPairedDoor } from "./people/context.js"; // bucket 19
@@ -4804,7 +4805,7 @@ ${run.output.slice(0, 6000)}`;
     // before its own config.yaml or .env is edited, so the model cannot switch off the one question Full access keeps.
     const fullAccess = this.ownerFullMode(context);
     const loosening = fullAccess ? settingsHold(tool, args) : null;
-    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args, { store: this.store, context, rule }) ?? contractHold(tool, args)
+    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? ownMessageHold(tool) ?? handOffHold(tool) ?? (settingsHold(tool, args, { store: this.store, context, rule }) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;

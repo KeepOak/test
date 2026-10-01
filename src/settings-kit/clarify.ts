@@ -165,7 +165,7 @@ function factsWords(field: FieldSpec): string {
   return ` It can be from ${range.min} to ${range.max}${words}.${field.note ? ` ${field.note}` : ""}`;
 }
 type Preview = { setting: string; name: string; label: string; from: Value; to: Value; lessCareful: boolean; looser?: string; pinned: boolean };
-type MissingCapability = { tool: "seasons.request_setting"; request: string; note: string };
+type MissingCapability = { tool: "seasons.request_setting"; request: string; value?: Value; note: string };
 export type Clarified =
   | { status: "ask"; question: string; choices: Choice[]; planned: false }
   | { status: "no-match"; note: string; choices: []; planned: false; missingCapability?: MissingCapability }
@@ -193,8 +193,9 @@ export function clarifyRequest(store: Store, owner: string, input: { request: st
     .map((one) => ({ setting: idOf(one), name: nameOf(one), value: currentValue(store, owner, one.spec, one.field), ...numberFacts(one.field) }));
   if (negated(input.request)) return { status: "ask", question: negatedQuestion(store, owner, found), choices: choices(found), planned: false };
   if (!found.length) return { status: "no-match", note: noMatchNote, choices: [], planned: false,
-    ...(namingWords(input.request).length ? { missingCapability: { tool: "seasons.request_setting" as const, request: input.request,
-      note: "If the owner asked to add this missing setting, preserve their task with this tool. A failed name match alone does not authorize building it; check settings.list first." } } : {}) };
+    ...(namingWords(input.request).length && tools?.inventory().some((tool) => tool.name === "seasons.request_setting") ? { missingCapability: { tool: "seasons.request_setting" as const, request: input.request,
+      ...(asked !== undefined ? { value: asked } : {}),
+      note: "If the owner explicitly asked to add this missing setting, check settings.list first, then call this tool with request, the desired value and the original task. Preserve any supplied value, including false or zero. If no value was supplied, obtain it before filing the request. A failed name match alone does not authorize building it." } } : {}) };
   if (found.length !== 1) return { status: "ask", question: questionFor(found), choices: choices(found), planned: false };
   const [only] = found as [Candidate];
   const setting = idOf(only), now = currentValue(store, owner, only.spec, only.field);
