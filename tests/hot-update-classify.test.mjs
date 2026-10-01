@@ -79,9 +79,10 @@ test("the real build: main's own imports (the retained gateway too) are shell, t
   const place = (path) => classify({ changed: [path], read: at }).tier;
   assert.equal(place("src/desktop/main.ts"), "shell");
   assert.equal(place("src/runtime.ts"), "engine");
-  // The desktop's retained broker runs the gateway inside main's own process (src/desktop/gateway-runtime.ts), and a
-  // live update does not replace its loaded modules, so a gateway change there waits for a whole new version.
-  assert.equal(place("src/never-break/gateway.ts"), "shell");
+  // PLAT-026: the retained broker runs the gateway inside main's own process (src/desktop/gateway-runtime.ts); its Gateway
+  // methods are replaced in place from the checked build (src/desktop/gateway-code.ts). Without a retained gateway the
+  // change still goes the packaged way (hot-apply.ts residentGatewayOutcome).
+  assert.equal(place("src/never-break/gateway.ts"), "gateway");
   assert.equal(place("src/desktop/engine-process.ts"), "engine");
   assert.equal(place("public/app/chat/chat.js"), "window");
 });

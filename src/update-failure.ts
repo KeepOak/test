@@ -154,15 +154,28 @@ export function lastUpdateFailure(dataDir: string): { fromVersion: string; toVer
 /** The update's file, saved beside the owner's other reports and handed back for the download. */
 async function failureReport(ctx: DiagnosticContext): Promise<{ name: string; path: string; base64: string }> {
   const { app, dataDir } = ctx;
+  const scope = app.store.profiles.scope();
+  const requireDelivery = (): void => {
+    app.store.profiles.requireOwner("An update's problem report");
+    if (app.store.profiles.scope() !== scope)
+      throw new Error("The profile changed while the update report was being prepared.");
+    if (app.sessionLock.locked()) throw new Error("Unlock Branch before downloading an update report.");
+  };
+  requireDelivery();
   const log = new DiagnosticLog({ dir: join(dataDir, "logs"), settings: () => diagnosticLogSettings(app.store, app.runtime.owner) });
   // Only the items that explain an update are gathered: settings, tasks, services and health are
   // never read, and no name is looked up on the network.
   const items = await gatherReport(reportSources(ctx, log), updateItemIds);
-  const zip = reportZip([...items, await updateLogItem()]);
+  requireDelivery();
+  const updateLog = await updateLogItem();
+  requireDelivery();
+  const zip = reportZip([...items, updateLog]);
   const folder = join(dataDir, "diagnostics");
   await mkdir(folder, { recursive: true, mode: 0o700 });
+  requireDelivery();
   const name = `branch-update-report-${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
   await writeFile(join(folder, name), zip, { mode: 0o600 });
+  requireDelivery();
   return { name, path: redactForLog(join(folder, name)), base64: zip.toString("base64") };
 }
 

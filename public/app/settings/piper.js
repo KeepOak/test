@@ -3,41 +3,53 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { toast } from "../core/ui.js";
-import { E } from "../core/state.js";
+import { viewFence } from "../core/view-fence.js";
+import { t } from "../../i18n.js";
+import { S, E } from "../core/state.js";
+
+let cardGeneration = 0;
+function cardFence(name) {
+  const generation = cardGeneration, card = document.getElementById("piper-card"), viewer = viewFence(name), page = S.setPage;
+  return () => viewer() && S.setPage === page && E.profiles?.isOwner === true && generation === cardGeneration
+    && card?.isConnected && document.getElementById("piper-card") === card;
+}
 
 /** Paths refer to the computer running Branch, including when the window is remote. */
 export function piperCard(settings) {
-  if (E.profiles?.isOwner === false || !settings) return "";
+  ++cardGeneration;
+  if (E.profiles?.isOwner !== true || !settings) return "";
   const field = (id, label, value, attrs = "") => `<label class="ctl"><b>${esc(label)}</b><span class="right"><input class="inp" id="${id}" aria-label="${esc(label)}" value="${esc(value)}" ${attrs}></span></label>`;
-  return `<div class="sec"><h2>Installed Piper voice</h2>
-    <p>Choose files already on the computer running Branch. Piper stays a separate installed program. Branch does not install it or download voices. Check the voice model's license before using it.</p>
-    ${field("piper-executable", "Piper executable path", settings.localVoiceExecutable, 'maxlength="400" placeholder="Absolute path; empty finds Piper on PATH"')}
-    <button class="btn sm" type="button" data-act="piper-browse" data-kind="executable">Browse executable</button>
-    ${field("piper-model", "Voice model path", settings.localVoiceModel, 'maxlength="400" placeholder="Absolute path to voice.onnx"')}
-    <button class="btn sm" type="button" data-act="piper-browse" data-kind="model">Browse voice model</button>
-    <div id="piper-browser" hidden><label>Directory on Branch's computer <input class="inp" id="piper-directory" maxlength="400"></label>
-      <button class="btn sm" type="button" data-act="piper-list">List files</button>
-      <button class="btn sm" type="button" data-act="piper-close">Close file list</button><div id="piper-files" role="status" aria-live="polite"></div></div>
-    <p>The model needs its matching .onnx.json file beside it. An empty model path uses PIPER_VOICE on the host. Requires Piper's timestamp WAV output-directory CLI.</p>
-    ${field("piper-rate", "Speech speed", settings.speechRate, 'type="number" min="0.5" max="2" step="0.1"')}
-    <label class="ctl"><b>Read aloud with Piper</b><span class="right"><input id="piper-enabled" type="checkbox" ${settings.ttsRoute === "piper" && settings.systemVoice !== "off" ? "checked" : ""}></span><small>Uses this installed voice for spoken replies. Answer aloud above controls when replies are read.</small></label>
-    <button class="btn" type="button" data-act="piper-save">Save installed voice</button>
+  return `<div class="sec" id="piper-card"><p><b>${t("window.settings.piper.title")}</b></p>
+    <p>${t("window.settings.piper.intro")}</p>
+    ${field("piper-executable", t("window.settings.piper.executable"), settings.localVoiceExecutable, `maxlength="400" placeholder="${esc(t("window.settings.piper.executable-placeholder"))}"`)}
+    <button class="btn sm" type="button" data-act="piper-browse" data-kind="executable">${t("window.settings.piper.browse-executable")}</button>
+    ${field("piper-model", t("window.settings.piper.model"), settings.localVoiceModel, `maxlength="400" placeholder="${esc(t("window.settings.piper.model-placeholder"))}"`)}
+    <button class="btn sm" type="button" data-act="piper-browse" data-kind="model">${t("window.settings.piper.browse-model")}</button>
+    <div id="piper-browser" hidden><label>${t("window.settings.piper.directory")} <input class="inp" id="piper-directory" maxlength="400"></label>
+      <button class="btn sm" type="button" data-act="piper-list">${t("window.settings.piper.list")}</button>
+      <button class="btn sm" type="button" data-act="piper-close">${t("window.settings.piper.close")}</button><div id="piper-files" role="status" aria-live="polite"></div></div>
+    <p>${t("window.settings.piper.model-hint")}</p>
+    ${field("piper-rate", t("window.settings.piper.rate"), settings.speechRate, 'type="number" min="0.5" max="2" step="0.1"')}
+    <label class="ctl"><b>${t("window.settings.piper.enabled")}</b><span class="right"><input id="piper-enabled" type="checkbox" ${settings.ttsRoute === "piper" && settings.systemVoice !== "off" ? "checked" : ""}></span><small>${t("window.settings.piper.enabled-hint")}</small></label>
+    <button class="btn" type="button" data-act="piper-save">${t("window.settings.piper.apply")}</button>
     <p id="piper-status" role="status" aria-live="polite"></p></div>`;
 }
 
 let browseKind = "model", browseEpoch = 0;
 async function listFiles() {
-  if (E.profiles?.isOwner === false) return;
+  if (E.profiles?.isOwner !== true) return;
   const host = document.getElementById("piper-files"), epoch = ++browseEpoch;
-  const person = E.profiles?.active?.id;
+  const current = cardFence("piper-list"), kind = browseKind;
+  const stillHere = () => current() && host?.isConnected && epoch === browseEpoch && kind === browseKind;
+  if (!stillHere()) return;
   try {
     const directory = document.getElementById("piper-directory")?.value.trim() ?? "";
-    const result = await api("voice/piper/files", { directory, kind: browseKind });
-    if (!host?.isConnected || epoch !== browseEpoch || E.profiles?.isOwner === false || person !== E.profiles?.active?.id) return;
+    const result = await api("voice/piper/files", { directory, kind });
+    if (!stillHere()) return;
     const button = (name, path, folder) => `<button class="btn sm" type="button" data-act="piper-file" data-path="${esc(path)}" data-folder="${folder}">${esc(name)}</button>`;
-    host.innerHTML = button("Parent directory", result.parent, true) + result.entries.map(entry => button(`${entry.directory ? "Folder: " : ""}${entry.name}`, entry.path, entry.directory)).join("")
-      + (result.truncated ? "<p>File listing limited to 200 results or 2,000 inspected entries. Enter a narrower directory.</p>" : "");
-  } catch (error) { if (host?.isConnected && epoch === browseEpoch) host.textContent = error.message; }
+    host.innerHTML = button(t("window.settings.piper.parent"), result.parent, true) + result.entries.map(entry => button(entry.directory ? t("window.settings.piper.folder", { name: entry.name }) : entry.name, entry.path, entry.directory)).join("")
+      + (result.truncated ? `<p>${t("window.settings.piper.limited")}</p>` : "");
+  } catch (error) { if (stillHere()) host.textContent = error.message; }
 }
 
 function initBrowser() {
@@ -47,7 +59,7 @@ function initBrowser() {
     document.getElementById("piper-browser").hidden = false;
     const path = document.getElementById(`piper-${browseKind}`).value;
     document.getElementById("piper-directory").value = path.replace(/[\\/][^\\/]*$/, "") || "";
-    document.getElementById("piper-files").textContent = "Enter a directory on the computer running Branch, then list files.";
+    document.getElementById("piper-files").textContent = t("window.settings.piper.browse-hint");
     document.getElementById("piper-directory").focus();
   });
   on("piper-list", () => listFiles());
@@ -62,7 +74,7 @@ function initBrowser() {
 function choiceFromCard(settings) {
   const enabled = document.getElementById("piper-enabled")?.checked;
   const rate = document.getElementById("piper-rate")?.value ?? "";
-  if (!rate.trim() || !Number.isFinite(Number(rate))) throw new Error("Enter a speech speed from 0.5 to 2.");
+  if (!rate.trim() || !Number.isFinite(Number(rate))) throw new Error(t("window.settings.piper.rate-error"));
   return {
     localVoiceExecutable: document.getElementById("piper-executable")?.value.trim() ?? "",
     localVoiceModel: document.getElementById("piper-model")?.value.trim() ?? "",
@@ -75,19 +87,22 @@ function choiceFromCard(settings) {
 export function initPiper(getSettings, saved) {
   initBrowser();
   on("piper-save", async (el) => {
-    if (E.profiles?.isOwner === false || el.disabled) return;
-    const person = E.profiles?.active?.id;
+    if (E.profiles?.isOwner !== true || el.disabled) return;
+    const current = cardFence("piper-save");
+    const stillHere = () => current() && el.isConnected && document.getElementById("piper-status") === status;
     el.disabled = true;
     const status = document.getElementById("piper-status");
     try {
+      if (!stillHere()) return;
       const result = await api("voice/settings", choiceFromCard(getSettings()));
-      if (E.profiles?.isOwner === false || person !== E.profiles?.active?.id) return;
+      if (!stillHere()) return;
       saved(result);
-      if (status?.isConnected) status.textContent = "Installed voice settings saved. Playback and CLI compatibility have not been tested.";
+      if (status?.isConnected) status.textContent = t("window.settings.piper.applied");
     } catch (error) {
+      if (!stillHere()) return;
       if (status?.isConnected) status.textContent = error.message;
       toast(error.message);
-    } finally { if (el.isConnected) el.disabled = false; }
+    } finally { if (stillHere()) el.disabled = false; }
   });
   markLive(["piper-save"]);
 }

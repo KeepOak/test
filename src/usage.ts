@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import type { Run, Event } from "./contracts.js";
-import { estimateCost, type ModelPrice } from "./pricing.js";
+import { estimateCost, tokenCountsOf, type ModelPrice, type TokenCounts } from "./pricing.js";
 import { countedUsageTask } from "./conversation-bootstrap.js";
 
 export interface UsageAggregate {
@@ -49,7 +49,7 @@ interface RunCost {
 
 export interface TimelineEntry {
   timestamp: string;
-  type: "model.started" | "model.completed" | "tool.started" | "tool.completed" | "permission" | "retry" | "stall" | "delegation";
+  type: "model.started" | "model.completed" | "model.account" | "tool.started" | "tool.completed" | "permission" | "retry" | "stall" | "delegation";
   title: string;
   duration: number | undefined;
   result: "success" | "failed" | "timeout" | undefined;
@@ -91,18 +91,20 @@ export class UsageStore {
     return timestamp.split("T")[0] || timestamp;
   }
 
-  /** Tokens as the provider reported them, falling back to the runtime's own estimate. */
-  private runTokens(runId: string): { input: number; output: number } {
-    const usage = this.db
-      .prepare(`SELECT estimated_input, estimated_output, reported_input, reported_output FROM usage WHERE run_id = ?`)
-      .get(runId) as
-      | { estimated_input: number; estimated_output: number; reported_input: number; reported_output: number }
-      | undefined;
-    if (!usage) return { input: 0, output: 0 };
-    return {
-      input: usage.reported_input || usage.estimated_input || 0,
-      output: usage.reported_output || usage.estimated_output || 0,
-    };
+  /**
+   * Tokens as the provider reported them, falling back to the runtime's own estimate, with the prompt-cache reads and
+   * writes (parts of the input) so each is priced at its own rate (src/pricing.ts tokenCountsOf).
+   */
+  private runTokens(runId: string): TokenCounts {
+    const row = this.db.prepare(`SELECT * FROM usage WHERE run_id = ?`).get(runId) as Record<string, unknown> | undefined;
+    if (!row) return { input: 0, output: 0 };
+    const count = (column: string): number => Number(row[column] ?? 0) || 0;
+    return tokenCountsOf({
+      estimatedInput: count("estimated_input"), estimatedOutput: count("estimated_output"),
+      reportedInput: count("reported_input"), reportedOutput: count("reported_output"),
+      reportedCachedInput: count("reported_cached_input"), reportedCacheWrite: count("reported_cache_write"),
+      reportedCacheWrite1h: count("reported_cache_write_hour"),
+    });
   }
 
   /** Dollars this task spent on something that is not tokens, from its `spend.recorded` events. */
@@ -267,6 +269,13 @@ export class UsageStore {
 
       if (event.kind === "model.started") {
         startTimes.set("model", event.created_at);
+      } else if (event.kind === "model.account") {
+        timeline.push({ timestamp: event.created_at, type: "model.account",
+          title: `Account: ${data.label || data.account || "unknown"} (${data.model || "unknown"})`,
+          duration: undefined, result: "success", inputClipped: undefined, outputClipped: undefined,
+          details: { pool: data.pool, account: data.account ?? null, label: data.label ?? null, model: data.model ?? null,
+            usage: data.usage ?? null, tokenBasis: data.tokenBasis ?? "unreported", accountBinding: data.accountBinding ?? "selected" },
+        });
       } else if (event.kind === "model.completed") {
         const start = startTimes.get("model");
         const duration = start

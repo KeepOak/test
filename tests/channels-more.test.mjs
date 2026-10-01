@@ -406,7 +406,10 @@ test("a channel that is refused says so in words, and never repeats the secret i
 /** A stand-in IMAP server holding one unread message. */
 async function fakeImap(t, options = {}) {
   const stored = [];
-  const headers = `From: ${options.from ?? "Alice <alice@example.com>"}\r\nSubject: A question\r\nMessage-ID: <first@example.com>\r\n`;
+  const from = options.from ?? "Alice <alice@example.com>", fromDomain = /@([^>\s]+)/.exec(from)[1];
+  // The receiving server's verdict, as a real mailbox stamps it (#979: unauthenticated senders are not routed).
+  const headers = `Authentication-Results: mx.example.com; dmarc=pass header.from=${fromDomain}\r\n`
+    + `From: ${from}\r\nSubject: A question\r\nMessage-ID: <first@example.com>\r\n`;
   const body = options.body ?? "How much is the fee?";
   let fetched = false;
   const server = createSocketServer((socket) => {

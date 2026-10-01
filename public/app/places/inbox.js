@@ -2,19 +2,19 @@
    "Needs you" lists three kinds of request, each answered only by its own route: a task waiting on a yes (GET /api/policy;
    Allow names it by session and fingerprint, the chat’s exact-match "ask"), a message one Trunk wants to send
    another (state.trunkWaiting; POST /api/trunks/messages/<id>/answer or /decline), and a request for a package or a tool
-   server (GET /api/flows-boards/installs; POST /api/flows-boards/installs/<id>/decline). Security tier: an install
-   request's Allow (xdo, POST .../approve) stays greyed for the separate security review; Don't only declines.
+   server (GET /api/flows-boards/installs; POST /api/flows-boards/installs/<id>/approve|decline). Allow records the owner's
+   answer after a fresh malware check and shows the manual next step; nothing is installed or started.
    Above every tab: each task Branch closed on that can be continued (state.attention with canContinue), picked up with
    POST /api/runs/<id>/resume or left with POST /api/runs/<id>/cancel. At the bottom of "Needs you": each request to change
    Branch itself (GET /api/self-development/requests), waiting or prepared; its review shows the request and the engine's
    bounded diff of it (GET /api/self-development/requests/<id>/diff). Decline closes a waiting one for good (POST
-   /api/self-development/requests/<id>/decline, the owner's alone in the app). Security tier: "Approve the edits" and
-   "Publish the draft" stay greyed. A yes is the owner writing the contract terms Branch's own source is prepared under,
-   and the window has no place to write them; publishing has no route of its own.
+   /api/self-development/requests/<id>/decline, the owner's alone in the app). The owner writes explicit preparation terms
+   in the review, then separately reviews the committed source and consents
+   to a draft publication through the durable publication queue.
    "Allow all N…" (more than one waiting) answers exactly the questions and Trunk messages its confirm lists, each once,
    through the same routes as their own Allow: POST /api/policy/approve { remember: "never" } by session and fingerprint,
    and POST /api/trunks/messages/<id>/answer. It never keeps a standing yes, and it leaves out install requests, whose
-   own Allow stays greyed, and any question that carries no fingerprint; anything that arrives after the confirm opened
+   own answer is separate, and any question that carries no fingerprint; anything that arrives after the confirm opened
    waits for its own answer.
    History's "Verify" walks the activity chain (POST /api/safety-extras/activity/verify) and shows what the engine found.
    "Watch again" plays a task back from its recording (GET /api/runs/<id>/recording): the engine's own frames, stepped or
@@ -24,9 +24,10 @@
    saves the workflow the engine drafts from the recording (POST /api/runs/<id>/recording/flow). */
 
 import { $, esc, renderNow, paint } from "../core/dom.js";
-import { S, E, refresh, level, needsYou } from "../core/state.js";
+import { S, E, refresh, level, needsYou, ownerHere, activeId } from "../core/state.js";
 import { ic, av, toast, openDlg, closeDlg, dialog } from "../core/ui.js";
 import { api, token } from "../core/api.js";
+import { readEventLog } from "./event-replay.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { openConversation } from "../chat/chat.js";
@@ -40,6 +41,8 @@ import { revokedPrompts } from "../settings/pages/chatapps.js"; // pass 17 part 
 import { workSection, readWork, pausedIds } from "./inboxwork.js"; // long-work: what is working or paused, with Pause, Resume, Stop
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 import { readSourceMerges, sourceMergeCards } from "./self-development-merge.js";
+import { readSourcePublications, sourcePublicationCards } from "./self-development-publication.js";
+import { openSourceReview, initSourceReview } from "./self-change-review.js";
 import { readUrgency, byUrgency } from "./inbox-urgency.js"; // Sort the Inbox by urgency (decision models)
 import { autonomyRows, autonomyCount, readAutonomy, initAutonomyInbox } from "./inbox-autonomy.js";
 
@@ -50,6 +53,7 @@ let asksRead = false; // pass 18: "Nothing needs you" only once the engine answe
 let recMode = null;
 const recordingsOff = (sentence) => offTile("recordings", sentence || t("window.switch-on.recordings"), t("window.switch-on.recordings-old"));
 let installs = [];
+const installAnswers = new Set();
 let changeRequests = [];
 let chain = null;
 const trunkName = (id) => (Array.isArray(E.trunks) ? E.trunks : []).find((t) => t.id === id || t.name === id)?.name ?? id ?? "";
@@ -66,7 +70,8 @@ function askRow(q) {
 /* A request for a package or a tool server (GET /api/flows-boards/installs, status waiting). Answering it only writes the
    answer down: a yes comes back with the exact next step, and nothing is installed. */
 function installRow(r) {
-  return `${prowOpen(`install:${r.id}`, r.createdAt)}<span class="ico-tile">${ic("puzzle", "s")}</span><span class="grow"><b>${esc(r.ask?.why ?? "")}</b><small>${t("window.places.inbox.from-wants-value-nothing-is-installed", { from: esc(r.from), value: esc(r.ask?.name ?? "") })}</small></span><button class="btn ghost sm" type="button" data-act="xdo-no" data-id="${esc(r.id)}" data-v="denied">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="xdo" data-id="${esc(r.id)}" data-v="allowed">${t("trunks.room.allow")}</button></div>`;
+  const disabled = installAnswers.has(r.id) || E.profiles?.isOwner !== true ? "disabled" : "";
+  return `${prowOpen(`install:${r.id}`, r.at)}<span class="ico-tile">${ic("puzzle", "s")}</span><span class="grow"><b>${esc(r.ask?.why ?? "")}</b><small>${t("window.places.inbox.from-wants-value-nothing-is-installed", { from: esc(r.from), value: esc(r.ask?.name ?? "") })}</small></span><button class="btn ghost sm" type="button" data-act="xdo-no" data-id="${esc(r.id)}" data-v="denied" ${disabled}>${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="xdo" data-id="${esc(r.id)}" data-v="allowed" ${disabled}>${t("trunks.room.allow")}</button></div>`;
 }
 function messageRow(m) {
   return `${prowOpen(`tmsg:${m.id}`, m.createdAt ?? m.at)}${trunkById(m.from) ? av(trunkById(m.from), 34) : `<span class="ico-tile">${ic("chat", "s")}</span>`}<span class="grow"><b>${esc(m.message)}</b><small>${esc(trunkName(m.from))} → ${esc(trunkName(m.to))}</small></span><button class="btn ghost sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="decline">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="answer">${t("trunks.room.allow")}</button></div>`;
@@ -81,7 +86,7 @@ function cutCard(a) {
 const cutCards = () => (E.state.attention ?? []).filter((a) => a.canContinue && !a.parentRunId && !pausedIds().has(a.runId)).map(cutCard).join(""); // not a helper (FEATURES17C §4); a paused one is under long work
 
 function selfCard(r) {
-  const stage = r.status === "approved" ? t("window.places.inbox.edits-approved-ready-to-publish") : t("flowsBoards.installs.waiting");
+  const stage = r.status === "approved" ? t("window.sourceReview.worktreePrepared") : t("flowsBoards.installs.waiting");
   return `<div class="self15"><span class="ico-tile">${ic("branch", "s")}</span><span class="grow"><b>${t("window.places.inbox.branch-wants-to-improve-itself")}</b><small>${esc(firstLine(r.text))} · ${stage}</small></span><button class="btn sm" type="button" data-act="selfrev15" data-id="${esc(r.id)}">${t("window.places.inbox.review")}</button></div>`;
 }
 /* Waiting for the owner's yes, or prepared and so showing its edits before a draft is published. */
@@ -110,14 +115,14 @@ function needsTab() {
   html += byUrgency(needRows().map(({ key, row }) => [key, row()])).join("");
   html += autonomyRows();
   html += `</div>`;
-  return html + waitingChanges().map(selfCard).join("") + sourceMergeCards();
+  return html + waitingChanges().map(selfCard).join("") + sourceMergeCards() + sourcePublicationCards();
 }
 
 /* Needs you, and the prototype's line when nothing at all waits (a p.empty: the Branch-in-person pose, setup-delight-033,
    is drawn above it by the shell). */
 function needsBody() {
   const lead = cutCards() + revokedPrompts() + adaptCards();
-  const nothing = asksRead && !lead && !rowsWaiting() && !waitingChanges().length && !sourceMergeCards();
+  const nothing = asksRead && !lead && !rowsWaiting() && !waitingChanges().length && !sourceMergeCards() && !sourcePublicationCards();
   return revokedPrompts() + adaptCards() + needsTab() + (nothing ? empty18("inbox:needs") : "");
 }
 
@@ -133,13 +138,14 @@ function duration(r) {
 }
 /* The newest finished task, offered to watch again; the tile is not drawn when nothing has finished. */
 function replayTile() {
-  if (recMode === "off" && (E.state.runs ?? []).length) return `<div data-css="margin:10px 0 12px">${recordingsOff()}</div>`;
+  if (recMode === "off" && (E.state.runs ?? []).length) return `<div data-css="margin:10px 0 12px">${recordingsOff()}<button class="btn ghost sm" type="button" data-act="rp-import">Open event log</button></div>`;
   const done = (E.state.runs ?? []).filter((r) => r.status === "completed"), last = done[0];
-  if (!last) return "";
+  const importButton = '<button class="btn ghost sm" type="button" data-act="rp-import">Open event log</button>';
+  if (!last) return importButton;
   const before = done.find((r) => r !== last && r.prompt === last.prompt);
   const day = before ? dayWord(before.createdAt) : "";
   const compare = before ? `<button class="btn ghost sm" type="button" data-act="compare" data-id="${esc(last.id)}" data-v="${esc(before.id)}">${t("window.places.inbox.compare-it-with-value-s", { value: esc(day.charAt(0).toLowerCase() + day.slice(1)) })}</button>` : "";
-  return `<div class="tile" data-css="margin:10px 0 12px"><div class="th"><b>${t("recordings.title")}</b></div><p>${t("window.places.inbox.step-through-what-a-task-did")}</p><div class="acts"><button class="btn sm" type="button" data-act="replay" data-id="${esc(last.id)}">${ic("play", "s")}${t("window.places.inbox.watch-prompt", { prompt: esc(last.title ?? firstLine(last.prompt)) })}</button>${compare}</div></div>`;
+  return `<div class="tile" data-css="margin:10px 0 12px"><div class="th"><b>${t("recordings.title")}</b></div><p>${t("window.places.inbox.step-through-what-a-task-did")}</p><div class="acts"><button class="btn sm" type="button" data-act="replay" data-id="${esc(last.id)}">${ic("play", "s")}${t("window.places.inbox.watch-prompt", { prompt: esc(last.title ?? firstLine(last.prompt)) })}</button>${compare}${importButton}</div></div>`;
 }
 
 /* A task's day as the prototype names it: Today, Last <weekday> within the week, else the date. */
@@ -207,16 +213,39 @@ async function readInstalls() {
   return ((await api("flows-boards/installs").catch(sayOnce)).requests ?? []).filter((r) => r.status === "waiting");
 }
 
-/* Don’t declines, Allow approves (POST /api/flows-boards/installs/<id>/decline|approve); a yes shows the engine's next step. */
+const installOwnerVisible = () => E.profiles?.isOwner === true && !E.profiles?.active?.id &&
+  S.view === "inbox" && (S.tabs.inbox || "needs") === "needs" && !document.querySelector(".lockscreen, #app.locked-b17");
+
+function installAnswerResult(request) {
+  if (request?.status === "declined") { toast(t("window.places.inbox.install-declined")); return; }
+  const approved = request?.status === "approved" && typeof request.nextStep === "string" && request.nextStep;
+  openDlg({ title: t(approved ? "window.places.inbox.install-approved" : "window.places.inbox.install-refused"),
+    body: approved ? `<p>${esc(t("window.places.inbox.install-manual-next-step"))}</p><pre class="diff6">${esc(request.nextStep)}</pre>` : `<p>${esc(request?.check?.note || t("window.places.inbox.install-refused"))}</p>`,
+    foot: `<button class="btn pri" type="button" data-act="dlg-close">${t("first-run-steps.done")}</button>` });
+}
+
+/* Each answer is for the exact waiting request displayed. Approval records a manual step, never executes it. */
 async function answerInstall(el) {
-  const yes = el.dataset.v === "allowed";
-  el.disabled = true;
+  const id = el.dataset.id, shown = installs.find((r) => r.id === id);
+  if (!shown || shown.status !== "waiting" || installAnswers.has(id) || !installOwnerVisible()) return;
+  const snapshot = JSON.stringify(shown), yes = el.dataset.v === "allowed";
+  installAnswers.add(id); el.disabled = true;
   try {
-    const { request } = await api(`flows-boards/installs/${encodeURIComponent(el.dataset.id)}/${yes ? "approve" : "decline"}`, {});
-    if (yes && request?.nextStep) toast(request.nextStep);
-  } catch (error) { toast(error.message); }
-  installs = await readInstalls();
-  renderNow();
+    const [profiles, lock, fresh] = await Promise.all([api("profiles"), api("lock"), api("flows-boards/installs")]);
+    if (!installOwnerVisible() || !el.isConnected || !profiles.isOwner || profiles.active?.id || lock.locked) return;
+    const current = (fresh.requests ?? []).find((r) => r.id === id);
+    if (JSON.stringify(current) !== snapshot) throw new Error(t("window.places.inbox.install-changed"));
+    const { request } = await api(`flows-boards/installs/${encodeURIComponent(id)}/${yes ? "approve" : "decline"}`, { expectedRequest: snapshot });
+    const [answerer, answeredLock] = await Promise.all([api("profiles"), api("lock")]);
+    if (installOwnerVisible() && answerer.isOwner && !answerer.active?.id && !answeredLock.locked && !dialog()) installAnswerResult(request);
+  } catch (error) { if (installOwnerVisible()) toast(error.message); }
+  finally {
+    installAnswers.delete(id);
+    if (installOwnerVisible()) {
+      const waiting = await readInstalls();
+      if (installOwnerVisible()) { installs = waiting; renderNow(); }
+    }
+  }
 }
 
 /* After a draw: re-read what the tab shows from the engine, and draw again only if it changed. */
@@ -224,6 +253,7 @@ export async function after() {
   const tab = S.tabs.inbox || "needs";
   let changed = false;
   if (tab === "needs" && await readSourceMerges()) changed = true;
+  if (tab === "needs" && await readSourcePublications()) changed = true;
   // A helper's question (parentRunId) is answered in its task's Activity › Helpers, not here (FEATURES17C §4).
   const policy = await api("policy").catch((error) => { sayOnce(error); return null; });
   const fresh = (policy?.waiting ?? []).filter((q) => !q.parentRunId);
@@ -292,7 +322,7 @@ async function openReplay(id) {
   RP.frames = recording.frames ?? [];
   const page = typeof window.branchDesktop === "object" ? "rp-page-desktop" : "rp-page";
   openDlg({ title: t("recordings.title"), wide: true, body: '<div class="replay6"></div>',
-    foot: `<button class="btn ghost" type="button" data-act="rp" data-v="step">${t("window.places.inbox.step")}</button><button class="btn" type="button" data-act="rp" data-v="play">${ic("play", "s")}${t("recording.page.play")}</button><span class="grow"></span><button class="btn ghost" type="button" data-act="${page}">${t("recordings.save-page")}</button><button class="btn" type="button" data-act="rp-flow">${t("window.places.inbox.make-a-workflow")}</button>` });
+    foot: `<button class="btn ghost" type="button" data-act="rp" data-v="step">${t("window.places.inbox.step")}</button><button class="btn" type="button" data-act="rp" data-v="play">${ic("play", "s")}${t("recording.page.play")}</button><span class="grow"></span><button class="btn ghost" type="button" data-act="${page}">${t("recordings.save-page")}</button>${ownerHere() ? `<button class="btn ghost" type="button" data-act="rp-events">${t("recording.save-events")}</button>` : ""}<button class="btn" type="button" data-act="rp-flow">${t("window.places.inbox.make-a-workflow")}</button>` });
   drawReplay(0);
 }
 /* The engine's page of this recording, saved as the file the engine names. */
@@ -306,6 +336,72 @@ async function savePage() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast(t("window.places.inbox.saved-as-a-page"));
   } catch (error) { toast(error.message); }
+}
+async function saveEvents() {
+  const id = RP.id, box = dialog(), profile = activeId();
+  const current = () => ownerHere() && activeId() === profile && RP.id === id && dialog() === box
+    && !document.getElementById("app")?.classList.contains("locked-b17");
+  if (!current()) return;
+  try {
+    const response = await fetch(`/api/runs/${encodeURIComponent(id)}/recording/events`, { cache: "no-store",
+      headers: token.get() ? { authorization: "Bearer " + token.get() } : {} });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || String(response.status));
+    const blob = await response.blob();
+    if (!current()) return;
+    const url = URL.createObjectURL(blob);
+    Object.assign(document.createElement("a"), { href: url, download: `task-events-${id}.jsonl` }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) { if (current()) toast(error.message); }
+}
+
+let importedLog = null;
+function importEvents() {
+  const picker = Object.assign(document.createElement("input"), { type: "file", accept: ".jsonl,application/x-ndjson" });
+  picker.onchange = async () => {
+    stopReplay();
+    const profile = activeId();
+    try {
+      const log = await readEventLog(picker.files?.[0]);
+      if (activeId() !== profile || document.getElementById("app")?.classList.contains("locked-b17")) return;
+      importedLog = { ...log, profile };
+      openDlg({ title: "Recorded event log", wide: true,
+        body: '<p>Playback shows the retained events exactly as exported. It does not execute tools or restore approvals.</p><pre id="event-log-step"></pre>',
+        foot: '<button class="btn" type="button" data-act="event-step">Step</button><button class="btn" type="button" data-act="event-play">Play</button>'
+          + (ownerHere() ? '<button class="btn ghost" type="button" data-act="event-restart">Restart as a new task…</button>' : "") });
+      importedLog.index = 0;
+      drawImportedEvent();
+    } catch (error) { toast(error.message); }
+  };
+  picker.click();
+}
+function drawImportedEvent() {
+  const box = dialog()?.querySelector("#event-log-step"), log = importedLog;
+  if (!box || !log || activeId() !== log.profile || document.getElementById("app")?.classList.contains("locked-b17")) {
+    stopReplay(); if (box) box.textContent = t("recording.log-reopen"); return false;
+  }
+  box.textContent = log.events.length ? `${log.index + 1} / ${log.events.length}\n` + JSON.stringify(log.events[log.index], null, 2) : t("recording.log-no-events");
+  return true;
+}
+function advanceImportedEvent(play) {
+  stopReplay();
+  if (!drawImportedEvent()) return;
+  const advance = () => {
+    if (!importedLog || importedLog.index >= importedLog.events.length - 1) return stopReplay();
+    importedLog.index++;
+    drawImportedEvent();
+  };
+  if (play) RP.timer = setInterval(advance, 800); else advance();
+}
+async function restartImportedEvent() {
+  stopReplay();
+  const log = importedLog;
+  if (!log || !ownerHere() || activeId() !== log.profile || !drawImportedEvent()) return;
+  if (!window.confirm(t("recording.log-restart-confirm"))) return;
+  if (!ownerHere() || activeId() !== log.profile || !drawImportedEvent()) return;
+  try {
+    const done = await api("recordings/restart", { jsonl: log.text, confirmed: true });
+    if (activeId() === log.profile) toast(`New task: ${done.replay}`);
+  } catch (error) { if (activeId() === log.profile) toast(error.message); }
 }
 /* The workflow the engine drafts from the recording, saved; its steps are the recorded ones it can repeat. */
 async function makeFlow() {
@@ -332,20 +428,12 @@ function diffBlocks(d) {
   return `${[d.note, d.warning].filter(Boolean).map((s) => `<p class="hint">${esc(s)}</p>`).join("")}${files}${added}`;
 }
 
-/* The request as it was sent, who sent it and from which app, and its diff before any yes. Decline (selfno15) is live
-   while it waits; the yes needs the owner's contract terms and publishing has no route, so selfdo15 stays greyed. */
+/* Preparing requires the owner's explicit contract; publication reviews the exact committed source. */
 async function reviewChange(id) {
   const r = changeRequests.find((x) => x.id === id);
   if (!r) return;
-  let diff;
-  try { diff = await api(`self-development/requests/${encodeURIComponent(r.id)}/diff`); } catch (error) { toast(error.message); return; }
-  const editing = r.status === "approved";
-  const stages = [[t("window.places.inbox.approve-the-edits"), editing], [t("window.places.inbox.publish-a-draft-pull-request"), false]].map(([t, d], i) => `<li class="${d ? "done" : (i === 0 && !editing) || (i === 1 && editing) ? "now" : ""}"><em>${d ? ic("check", "s") : i + 1}</em>${t}</li>`).join("");
-  const foot = editing ? `<button class="btn pri" type="button" data-act="selfdo15" data-v="published" data-id="${esc(r.id)}">${t("window.places.inbox.publish-the-draft")}</button>`
-    : `<button class="btn ghost" type="button" data-act="selfno15" data-id="${esc(r.id)}">${t("flowsBoards.installs.decline")}</button><button class="btn pri" type="button" data-act="selfdo15" data-v="editing" data-id="${esc(r.id)}">${t("window.places.inbox.approve-the-edits")}</button>`;
-  openDlg({ title: t("window.places.inbox.a-change-to-branchs-own-code"), wide: true,
-    body: `<p data-css="margin:0 0 10px">${esc(r.text)}</p><p class="hint">${esc([r.from?.senderName, r.from?.channel, when(r.at)].filter(Boolean).join(" · "))}</p>${r.problem ? `<p class="hint">${esc(r.problem)}</p>` : ""}${diffBlocks(diff)}<ol class="stages15">${stages}</ol>`,
-    foot });
+  const details = `<p class="hint">${esc([r.from?.senderName, r.from?.channel, when(r.at)].filter(Boolean).join(" · "))}</p>${r.problem ? `<p class="hint">${esc(r.problem)}</p>` : ""}`;
+  await openSourceReview(r, diffBlocks, details);
 }
 
 /* Decline: the engine closes the request, and it can never be approved afterwards. */
@@ -392,8 +480,8 @@ export function init() {
   initAutonomyInbox();
   initDemo17();
   initInbox17();
-  // Security tier: Allow on an install request (xdo) stays greyed for the security review; Don't (xdo-no) only declines.
-  markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo-no", "sw:histq", "selfno15", "rp-page", "rp-flow"]);
+  // Install answers only record the owner's decision and show a manual next step.
+  markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo", "xdo-no", "sw:histq", "selfno15", "rp-events", "rp-page", "rp-flow"]);
   on("replay", (el) => openReplay(el.dataset.id));
   /* Recordings switched on from History or from the replay dialog: the task that was asked for plays now. */
   document.addEventListener("branch-switched", (e) => {
@@ -407,6 +495,12 @@ export function init() {
   on("xdo", (el) => answerInstall(el));
   on("xdo-no", (el) => answerInstall(el));
   on("rp", (el) => stepReplay(el));
+  on("rp-events", () => saveEvents());
+  on("rp-import", () => importEvents());
+  markLive(["rp-import", "event-step", "event-play", "event-restart"]);
+  on("event-step", () => advanceImportedEvent(false));
+  on("event-play", () => advanceImportedEvent(true));
+  on("event-restart", () => restartImportedEvent());
   on("rp-page", () => savePage());
   on("rp-flow", () => makeFlow());
   on("tmsg", async (el) => {
@@ -437,6 +531,17 @@ export function init() {
   });
   on("allowall", () => openAllowAll());
   on("allowall-go", () => allowAll());
+  /* After a review is answered its dialog is closed, then the requests are read again. What comes back is kept and drawn
+     only for the owner who answered, unlocked and still on this page; a read that fails after that says nothing. */
+  initSourceReview(async (published) => {
+    const profile = activeId(), view = S.view;
+    const still = () => ownerHere() && activeId() === profile && S.view === view && !document.getElementById("app")?.classList.contains("locked-b17");
+    const read = await api("self-development/requests").catch((error) => (still() ? sayOnce(error) : {}));
+    if (!still()) return;
+    changeRequests = read.requests ?? [];
+    if (published) await readSourcePublications(still);
+    if (still()) renderNow();
+  });
   on("selfrev15", (el) => reviewChange(el.dataset.id));
   on("selfno15", (el) => declineChange(el));
 }

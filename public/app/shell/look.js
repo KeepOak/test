@@ -10,6 +10,7 @@ import { api } from "../core/api.js";
 import { toast } from "../core/ui.js";
 import { noticed } from "./scene.js";
 import { followLook } from "./language.js";
+import { applyReadingFont } from "../core/reading-font.js";
 
 const KEY = "branch-looks";
 export const BASE = "slate";
@@ -101,6 +102,7 @@ export function applyLook() {
   if (id === BASE && !L.accent && !more()) clearVars(); else setVars(withAccent(lookEF(id, mode), mode), mode);
   document.documentElement.dataset.palette = id;
   document.documentElement.classList.toggle("contrast17", more()); /* More contrast keeps full-strength lines (app.css) */
+  applyReadingFont(E.state?.preferences, true);
 }
 
 export function saveLocal() {
@@ -148,6 +150,7 @@ async function rereadLook() {
   try { L.look = await api("look"); } catch (error) { toast(error.message); return; }
   const spoke = await followLook(L.look);
   applyMode();
+  applyReadingFont(E.state?.preferences);
   if (!spoke && JSON.stringify(L.look) === was && document.documentElement.dataset.theme === mode) return;
   applyLook();
   renderNow();
@@ -171,6 +174,7 @@ export async function savePrefs(change) {
   if (!prefs) return;
   const follows = change.followSystem === true && !prefs.followSystem;
   try { E.state.preferences = await api("preferences", { ...prefs, ...change }); } catch (error) { toast(error.message); return; }
+  applyReadingFont(E.state.preferences);
   if (follows) await noticed({ what: "flag", flag: "follow-system" });
 }
 export async function setContrast(on) {
