@@ -36,7 +36,9 @@ function events(name = nativeToolPrefix + nativeToolName(tool.name), malformed =
     { type: "message_stop" },
   ];
 }
-async function fixture(t, { mode = "normal", reply = events(), hold = false, status = 200, options = {} } = {}) {
+/* `mode` may name one native fixture mode per launch (the last repeats). `holdClose(n)` may return a promise that the n-th
+   launch's "close" event waits for, so the test decides when the provider learns that process has closed. */
+async function fixture(t, { mode = "normal", reply = events(), hold = false, status = 200, options = {}, holdClose = () => null } = {}) {
   const parent = join(tmpdir(), "Codex-session-files"); await mkdir(parent, { recursive: true });
   const root = await mkdtemp(join(parent, "subscription-fixture-"));
   const seen = [], launches = [];
@@ -54,8 +56,10 @@ async function fixture(t, { mode = "normal", reply = events(), hold = false, sta
   t.after(async () => { server.closeAllConnections(); await new Promise((go) => server.close(go)); await discardTemp(root); });
   const connect = (headers, payload, query, signal) => fetch(`http://127.0.0.1:${server.address().port}/v1/messages${query}`, { method: "POST", headers, body: payload, signal });
   const start = (_command, args, invocation) => {
+    const modes = [mode].flat(), launchMode = modes[Math.min(launches.length, modes.length - 1)], gate = holdClose(launches.length);
     const child = spawn(process.execPath, [resolve("tests/fixtures/claude-subscription-native.mjs"), ...args], { ...invocation,
-      env: { ...invocation.env, BRANCH_NATIVE_FIXTURE_MODE: mode, BRANCH_NATIVE_FIXTURE_PIDS: join(root, "pids.json"), BRANCH_NATIVE_FIXTURE_INERT: join(root, "inert.json") } });
+      env: { ...invocation.env, BRANCH_NATIVE_FIXTURE_MODE: launchMode, BRANCH_NATIVE_FIXTURE_PIDS: join(root, "pids.json"), BRANCH_NATIVE_FIXTURE_INERT: join(root, "inert.json") } });
+    if (gate) { const once = child.once.bind(child); child.once = (event, listener) => once(event, event === "close" ? (...args) => { void gate.then(() => listener(...args)); } : listener); }
     launches.push({ args, env: invocation.env, cwd: invocation.cwd, child });
     return child;
   };
@@ -260,8 +264,22 @@ test("SELF-090 a native request without this turn's marker is refused before the
   await until(() => gone(f.launches[0].cwd));
 });
 
+/* The ended transport is removed by the next turn's lease, which does not wait for that removal. The next turn's folder is
+   then whichever the conversation's fixed folder allows (selfdev/prompt-cache): a fresh random folder while the old one is
+   still being removed, or the same fixed folder once it is gone. Either way the old transport's folder does not outlive it.
+   The tests below force each outcome through the fixture; this one accepts whichever the machine produced and holds the
+   contract of the branch taken. */
+async function folderContract(f) {
+  const [old, next] = f.launches.map((launch) => launch.cwd);
+  if (next !== old) { await until(() => gone(old)); return "fresh"; }
+  await stat(old); // the same path is the live folder of the kept transport
+  closeNativeSubscriptions();
+  await until(() => gone(old));
+  return "reused";
+}
+
 test("SELF-090 a Claude Code that ends after its one result falls back to a fresh transport", async (t) => {
-  const f = await fixture(t, { mode: "once" });
+  const f = await fixture(t, { mode: ["once", "normal"] });
   const first = [{ role: "user", content: "Read the file" }];
   await scope(() => f.provider.complete(request(first)));
   const ended = f.launches[0].child;
@@ -270,7 +288,47 @@ test("SELF-090 a Claude Code that ends after its one result falls back to a fres
   assert.equal(next.toolCalls.length, 1);
   assert.equal(f.launches.length, 2);
   assert.equal(f.seen.length, 2);
-  await until(() => gone(f.launches[0].cwd));
+  assert.ok(["fresh", "reused"].includes(await folderContract(f)));
+});
+
+test("SELF-090 once the ended transport's folder is gone, the next turn reuses that exact folder until its own transport closes", async (t) => {
+  const f = await fixture(t, { mode: ["once", "normal"] });
+  const first = [{ role: "user", content: "Read the file" }];
+  await scope(() => f.provider.complete(request(first)));
+  const ended = f.launches[0].child, folder = f.launches[0].cwd;
+  await until(() => ended.exitCode !== null || ended.signalCode !== null);
+  // A turn stopped before it takes a folder still leases, so it removes the ended transport; its removal is then awaited.
+  const cancel = new AbortController();
+  const leased = scope(() => f.provider.complete(request([...first, ...answered], cancel.signal)));
+  cancel.abort(new Error("stopped before a folder"));
+  await assert.rejects(leased, /stopped before a folder/);
+  assert.equal(f.launches.length, 1, "the stopped turn started nothing");
+  await until(() => gone(folder));
+  const next = await scope(() => f.provider.complete(request([...first, ...answered])));
+  assert.equal(next.toolCalls.length, 1);
+  assert.equal(f.launches.length, 2);
+  assert.equal(f.seen.length, 2);
+  assert.equal(await folderContract(f), "reused");
+  assert.equal(f.launches[1].cwd, folder, "the conversation's own folder, exactly");
+});
+
+test("SELF-090 while the replaced transport is still closing, the next turn takes a fresh folder and the old one is still removed", async (t) => {
+  let release;
+  const closing = new Promise((go) => { release = go; });
+  t.after(() => release());
+  const f = await fixture(t, { holdClose: (launch) => (launch === 0 ? closing : null) });
+  const first = [{ role: "user", content: "Read the file" }];
+  await scope(() => f.provider.complete(request(first)));
+  const folder = f.launches[0].cwd;
+  // Closing the kept transport starts its removal, which cannot finish until its process is seen closed.
+  closeNativeSubscriptions();
+  const next = await scope(() => f.provider.complete(request([...first, ...answered])));
+  assert.equal(next.toolCalls.length, 1);
+  assert.equal(f.launches.length, 2);
+  assert.notEqual(f.launches[1].cwd, folder, "a fresh folder while the old one is in use");
+  await stat(folder); // still being removed
+  release();
+  assert.equal(await folderContract(f), "fresh");
 });
 
 test("SELF-090 a Claude Code that ends just after its result, before the next turn sees it gone, answers on a fresh transport", async (t) => {
