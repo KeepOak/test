@@ -656,14 +656,16 @@ function initDeviceStage() {
   }, true);
   const image = (event) => (deviceDriving() ? event.target.closest?.("#stage7 .devscr-img") : null);
   let pending = null;
+  const click = (spot, count) => void manual(() => inputDevice({ action: "click", ...spot, button: "left", count }));
   document.addEventListener("click", (event) => {
     const img = image(event), spot = img && spotOn(img, event);
     if (!spot) return;
-    // A second click soon after is a double-click, sent as one.
+    // A second click soon after, on the same spot, is a double-click, sent as one; one elsewhere is a click of its own.
     clearTimeout(pending?.timer);
-    const count = pending ? 2 : 1;
-    pending = count === 2 ? null : { timer: setTimeout(() => { pending = null; void manual(() => inputDevice({ action: "click", ...spot, button: "left", count: 1 })); }, 250) };
-    if (count === 2) void manual(() => inputDevice({ action: "click", ...spot, button: "left", count: 2 }));
+    const near = pending && Math.abs(event.clientX - pending.x) <= 4 && Math.abs(event.clientY - pending.y) <= 4;
+    if (pending && !near) click(pending.spot, 1);
+    if (near) { pending = null; click(spot, 2); return; }
+    pending = { spot, x: event.clientX, y: event.clientY, timer: setTimeout(() => { pending = null; click(spot, 1); }, 250) };
   });
   document.addEventListener("contextmenu", (event) => {
     const img = image(event), spot = img && spotOn(img, event);
