@@ -16,6 +16,9 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { asked, lessons, recurring } from "../dist/seasons/triggers.js";
 import { fileProblems } from "../dist/seasons/code-problems.js";
+import { perNight } from "../dist/seasons/gardener.js";
+import { setLockdown } from "../dist/lockdown.js";
+import { saveSeasonsSettings } from "../dist/seasons/settings.js";
 
 const say = (content) => ({ content, toolCalls: [] });
 const skillFile = (name, body = "## Steps\n1. Do the thing.") => `---\nname: ${name}\ndescription: Use when the owner asks to ${name.replace(/-/g, " ")}.\n---\n# ${name}\n\n${body}\n`;
@@ -105,6 +108,25 @@ async function served(t, app, root) {
 }
 async function invoices(app) {
   for (const month of ["march", "april", "may"]) await app.runtime.run({ prompt: `export the ${month} invoices to a spreadsheet` });
+}
+
+function waitingSeeds(app, count) {
+  return Array.from({ length: count }, (_, i) => app.gardener.book.plant({ trigger: "asked", evidence: `task ${i}`,
+    tasks: [{ prompt: `task ${i}`, runId: "" }], sourceRunIds: [] }));
+}
+function orderSeeds(app, seeds) {
+  // Control selection order without waiting for the wall clock between saves.
+  for (const [i, seed] of seeds.entries()) app.store.sqlite.prepare("UPDATE seasons_seeds SET updated_at=? WHERE id=?")
+    .run(new Date(Date.UTC(2026, 8, 1) - i * 1000).toISOString(), seed.id);
+  assert.deepEqual(app.gardener.book.seeds().map((seed) => seed.id), seeds.map((seed) => seed.id));
+}
+function observeMaintenance(app) {
+  const calls = [];
+  for (const name of ["recheck", "graft", "prune"]) {
+    const original = app.gardener[name].bind(app.gardener);
+    app.gardener[name] = (...args) => { calls.push(name); return original(...args); };
+  }
+  return calls;
 }
 
 test("a returning owner stops quiet-night maintenance before it can retire a skill", async (t) => {
@@ -298,4 +320,163 @@ test("Lockdown switched on while a draft is being written pauses the Gardener: n
   assert.equal(fixed.seen.replay, 0, "no replay runs under Lockdown");
   assert.equal(app.gardener.book.ledger().length, 0, "nothing is adopted or discarded");
   assert.equal(app.store.skills.list("local").filter((skill) => skill.active).length, 0);
+});
+
+for (const protection of ["pinned", "edited", "activated"]) test(`multiple ${protection} waiting seeds do not starve later seeds or maintenance`, async (t) => {
+  let drafts = 0;
+  const bodies = ["1. Copper bronze zinc nickel alloy furnace casting metal.", "1. Tulip daisy violet lily orchid flower garden blossom."];
+  const { app, preset, seen } = await fixture(t, { draft: () => skillFile(`eligible-${++drafts}`, bodies[drafts - 1]) });
+  const seeds = waitingSeeds(app, perNight + 1 + perNight + 1), protectedSeeds = seeds.slice(0, perNight + 1);
+  for (const seed of protectedSeeds) {
+    if (protection === "pinned") { app.gardener.pin(seed.id, true); continue; }
+    const document = skillFile(`protected-${protectedSeeds.indexOf(seed)}`);
+    const installed = app.store.skills.install("local", { document });
+    const dormant = app.store.skills.disable("local", installed.id, { expectedRevision: installed.revision });
+    app.gardener.book.saveSeed({ ...seed, skillId: dormant.id, name: dormant.name, document });
+    if (protection === "edited") app.store.skills.update("local", dormant.id,
+      { document: skillFile(dormant.name, "1. Keep the owner's changed instructions."), expectedRevision: dormant.revision });
+    else app.store.skills.activate("local", dormant.id, { version: dormant.headVersion, expectedRevision: dormant.revision });
+  }
+  const before = protectedSeeds.map((seed) => app.gardener.book.seed(seed.id));
+  const skillsBefore = before.filter((seed) => seed.skillId).map((seed) => app.store.skills.view("local", seed.skillId));
+  orderSeeds(app, seeds);
+  const maintenance = observeMaintenance(app), now = tonight();
+  const report = await app.gardener.night({ preset, now, stillQuiet: () => true });
+  assert.equal(report.adopted, perNight, "protected seeds do not consume the permitted work slots");
+  assert.equal(report.discarded, 0, "protected seeds are not failures");
+  assert.equal(seen.draft, perNight, "at most two new drafts even after several skipped seeds");
+  assert.equal(seen.replay, 2 * perNight);
+  assert.equal(seen.judge, 2 * perNight);
+  assert.deepEqual(maintenance, ["recheck", "graft", "prune"], "real maintenance remains reachable");
+  assert.deepEqual(protectedSeeds.map((seed) => app.gardener.book.seed(seed.id)), before);
+  assert.deepEqual(skillsBefore.map((skill) => app.store.skills.view("local", skill.id)), skillsBefore);
+  for (const seed of seeds.slice(protectedSeeds.length, -1)) {
+    const grown = app.gardener.book.seed(seed.id);
+    assert.equal(grown.status, "adopted");
+    assert.equal(grown.decidedAt, now.toISOString());
+  }
+  assert.deepEqual(app.gardener.book.seed(seeds.at(-1).id), seeds.at(-1), "the next eligible seed waits within the night limit");
+  assert.equal(app.gardener.book.ledger().filter((entry) => protectedSeeds.some((seed) => seed.id === entry.seedId)).length, 0);
+});
+
+test("a pinned waiting seed does not prevent an unrelated adopted skill's recheck and pruning", async (t) => {
+  const { app, preset } = await fixture(t);
+  const [first] = waitingSeeds(app, 1), adopted = await app.gardener.grow(first, preset, new Date("2026-08-01T03:00:00Z"));
+  const [waiting] = waitingSeeds(app, 1), pinned = app.gardener.pin(waiting.id, true);
+  orderSeeds(app, [pinned, adopted]);
+  const maintenance = observeMaintenance(app), now = new Date("2026-10-01T03:00:00Z");
+  const report = await app.gardener.night({ preset, now, stillQuiet: () => true });
+  assert.equal(report.pruned, 1);
+  assert.deepEqual(maintenance, ["recheck", "graft", "prune"]);
+  const checked = app.gardener.book.seed(adopted.id);
+  assert.equal(checked.checkedAt, now.toISOString(), "recheck ran before pruning");
+  assert.equal(checked.status, "archived");
+  assert.equal(app.store.skills.view("local", adopted.skillId).activeVersion, null);
+  assert.deepEqual(app.gardener.book.seed(pinned.id), pinned);
+});
+
+test("a pinned waiting seed does not prevent unrelated adopted skills from grafting", async (t) => {
+  let drafts = 0;
+  const body = "## Steps\n1. Open the invoices folder.\n2. Export each invoice to the spreadsheet.\n3. Check the totals add up.";
+  const { app, preset, seen } = await fixture(t, { draft: () => skillFile(`invoice-export-${++drafts}`, body),
+    revise: (user) => skillFile(user.match(/---\nname: ([a-z0-9-]+)/)[1], `${body}\n4. Save a copy.`) });
+  const adopted = [], now = tonight();
+  for (const seed of waitingSeeds(app, 2)) adopted.push(await app.gardener.grow(seed, preset, now));
+  const [waiting] = waitingSeeds(app, 1), pinned = app.gardener.pin(waiting.id, true);
+  orderSeeds(app, [pinned, ...adopted]);
+  const report = await app.gardener.night({ preset, now, stillQuiet: () => true });
+  assert.equal(report.grafted, 1);
+  assert.equal(seen.draft, 2, "the pinned seed makes no model request");
+  assert.equal(seen.revise, 1);
+  assert.deepEqual(app.gardener.book.seed(pinned.id), pinned);
+  const graft = app.gardener.book.ledger().find((entry) => entry.action === "grafted");
+  assert.ok(graft);
+  assert.equal(app.store.skills.view("local", graft.after[0].skillId).activeVersion, 2);
+  assert.equal(app.store.skills.view("local", graft.after[1].skillId).activeVersion, null);
+});
+
+test("a night paused while drafting resumes the unchanged dormant draft without drafting it twice", async (t) => {
+  let app;
+  const fixed = await fixture(t, { draft: () => { setLockdown(app.store, "local", { on: true }); return skillFile("resume-draft"); } });
+  app = fixed.app;
+  const [seed] = waitingSeeds(app, 1);
+  await app.gardener.night({ preset: fixed.preset, now: tonight(), stillQuiet: () => true });
+  const paused = app.gardener.book.seed(seed.id);
+  assert.equal(paused.status, "waiting");
+  assert.equal(app.store.skills.view("local", paused.skillId).activeVersion, null);
+  setLockdown(app.store, "local", { on: false });
+  const now = tonight(), report = await app.gardener.night({ preset: fixed.preset, now, stillQuiet: () => true });
+  assert.equal(report.adopted, 1);
+  assert.equal(report.discarded, 0);
+  assert.equal(fixed.seen.draft, 1);
+  const grown = app.gardener.book.seed(seed.id);
+  assert.equal(grown.skillId, paused.skillId);
+  assert.equal(grown.document, paused.document);
+  assert.equal(grown.decidedAt, now.toISOString());
+});
+
+for (const phase of ["draft", "replay", "grade"]) for (const revocation of ["rings", "gardener", "Lockdown", "paidModels", "quiet"])
+  test(`${revocation} revoked during ${phase} stops the whole night rather than skipping to another seed`, async (t) => {
+    let app, quiet = true;
+    const revoke = () => {
+      if (revocation === "Lockdown") setLockdown(app.store, "local", { on: true });
+      else if (revocation === "quiet") quiet = false;
+      else saveSeasonsSettings(app.store, "local", { [revocation]: revocation === "paidModels" ? false : "off" });
+    };
+    const fixed = await fixture(t, { draft: () => { if (phase === "draft") revoke(); return skillFile("paused-first"); } });
+    app = fixed.app;
+    const preset = revocation === "paidModels" ? { ...fixed.preset, endpoint: "https://billed.invalid/v1" } : fixed.preset;
+    if (revocation === "paidModels") saveSeasonsSettings(app.store, "local", { paidModels: true });
+    const seeds = waitingSeeds(app, 2), maintenance = observeMaintenance(app), calls = { replay: 0, grade: 0 };
+    orderSeeds(app, seeds);
+    app.gardener.proofParts = () => ({
+      replay: async (_task, instructions) => { calls.replay++; if (phase === "replay") revoke();
+        return { answer: /The skill being tried/.test(instructions) ? "with" : "without", finished: true, tokens: 1 }; },
+      grade: () => async (_task, answer) => { calls.grade++; if (phase === "grade") revoke(); return answer === "with" ? 0.9 : 0.4; },
+    });
+    const report = await app.gardener.night({ preset, now: tonight(), stillQuiet: () => quiet });
+    assert.deepEqual(report, { planted: 0, adopted: 0, discarded: 0, rolledBack: 0, pruned: 0, grafted: 0 });
+    assert.equal(fixed.seen.draft, 1, "no draft for the next seed after revocation");
+    assert.equal(calls.replay, phase === "draft" ? 0 : 1);
+    assert.equal(calls.grade, phase === "grade" ? 1 : 0, "no grade after a revoked replay");
+    assert.deepEqual(maintenance, []);
+    const paused = app.gardener.book.seed(seeds[0].id);
+    assert.equal(paused.status, "waiting");
+    assert.equal(paused.decidedAt, null);
+    assert.equal(app.store.skills.view("local", paused.skillId).activeVersion, null);
+    assert.deepEqual(app.gardener.book.seed(seeds[1].id), seeds[1]);
+    assert.deepEqual(app.gardener.book.ledger(), []);
+  });
+
+for (const action of ["pin", "edit"]) test(`owner ${action} during proof preserves the latest seed and skill while later work proceeds`, async (t) => {
+  const { app, preset, seen } = await fixture(t);
+  const seeds = waitingSeeds(app, 3), maintenance = observeMaintenance(app);
+  orderSeeds(app, seeds);
+  let protectedSeed, protectedSkill, replays = 0, grades = 0;
+  app.gardener.proofParts = () => ({
+    replay: async (_task, instructions) => {
+      if (++replays === 1) {
+        const seed = app.gardener.book.seed(seeds[0].id), skill = app.store.skills.view("local", seed.skillId);
+        if (action === "pin") app.gardener.pin(seed.id, true);
+        else app.store.skills.update("local", skill.id,
+          { document: skillFile(skill.name, "1. Preserve the owner's new version."), expectedRevision: skill.revision });
+        protectedSeed = app.gardener.book.seed(seed.id);
+        protectedSkill = app.store.skills.view("local", skill.id);
+      }
+      return { answer: /The skill being tried/.test(instructions) ? "with" : "without", finished: true, tokens: 1 };
+    },
+    grade: () => async (_task, answer) => { grades++; return answer === "with" ? 0.9 : 0.4; },
+  });
+  const report = await app.gardener.night({ preset, now: tonight(), stillQuiet: () => true });
+  assert.equal(report.adopted, 1);
+  assert.equal(report.discarded, 0);
+  assert.equal(seen.draft, perNight, "a seed changed after model work starts still consumes a work slot");
+  assert.equal(replays, 3);
+  assert.equal(grades, 2, "no grade for the proof interrupted by owner changes");
+  assert.deepEqual(app.gardener.book.seed(seeds[0].id), protectedSeed);
+  assert.deepEqual(app.store.skills.view("local", protectedSkill.id), protectedSkill);
+  assert.equal(app.gardener.book.seed(seeds[1].id).status, "adopted");
+  assert.deepEqual(app.gardener.book.seed(seeds[2].id), seeds[2]);
+  assert.deepEqual(maintenance, ["recheck", "graft", "prune"]);
+  assert.equal(app.gardener.book.ledger().some((entry) => entry.seedId === protectedSeed.id), false);
 });
