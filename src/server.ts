@@ -284,6 +284,7 @@ import { handlesTracingPath, logsResponse, metricsResponse, tracingApi, TracingA
 // Batch 26 (wave 8): where scripts run, what may reach the internet, how much one person may ask
 // for, the owner's other computers, marks, and how long conversations are kept.
 import { handlesSandboxRemotePath, sandboxRemoteApi, SandboxRemoteApiError } from "./sandbox-remote-api.js";
+import { daytonaApi } from "./remote/daytona-api.js";
 // FQ-execution.host-bridge: running a program on an explicitly chosen other computer, straight from Settings.
 import { handlesHostBridgePath, hostBridgeApi, HostBridgeApiError } from "./host-bridge-api.js";
 // Wave mac2 (move-in): bringing chats and memory over from another assistant.
@@ -1165,6 +1166,7 @@ async function api(
     });
   // Batch 26 (wave 8): sandboxes, the firewall card, per-person ceilings, other computers, marks,
   // and how long conversations are kept.
+  if (/^\/api\/daytona(\/|$)/.test(path)) return daytonaApi(app, request, path, readBody);
   if (handlesSandboxRemotePath(path))
     return sandboxRemoteApi(app, request, path, readBody).catch((error: unknown) => {
       throw error instanceof SandboxRemoteApiError ? new HttpError(error.status, error.message) : error;

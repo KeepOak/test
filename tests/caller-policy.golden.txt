@@ -719,6 +719,20 @@ owner GET /api/asks/sources/sync | here=ok remote=ok phone=ok legacy=ok person=4
 owner POST /api/asks/sources/sync | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/asks/surfaces | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/asks/surfaces | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/daytona | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/daytona | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/daytona/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/daytona/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/daytona/prepare | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/daytona/prepare | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/daytona/create | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/daytona/create | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/daytona/reconcile | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/daytona/reconcile | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/daytona/lifecycle | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/daytona/lifecycle | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/daytona/run | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/daytona/run | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/devices | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/devices | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/devices/mode | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -3014,6 +3028,20 @@ owner+lockdown GET /api/asks/sources/sync | here=ok remote=ok phone=ok legacy=ok
 owner+lockdown POST /api/asks/sources/sync | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/asks/surfaces | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/asks/surfaces | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/daytona | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/daytona | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/daytona/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/daytona/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/daytona/prepare | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/daytona/prepare | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/daytona/create | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/daytona/create | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/daytona/reconcile | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/daytona/reconcile | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/daytona/lifecycle | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/daytona/lifecycle | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/daytona/run | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/daytona/run | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/devices | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/devices | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/devices/mode | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -5309,6 +5337,20 @@ household GET /api/asks/sources/sync | here=400/f6e21c remote=400/f6e21c read=40
 household POST /api/asks/sources/sync | here=ok remote=ok read=401/55661c run=401/55661c
 household GET /api/asks/surfaces | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/asks/surfaces | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/daytona | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/daytona | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/daytona/check | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/daytona/check | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/daytona/prepare | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/daytona/prepare | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/daytona/create | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/daytona/create | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/daytona/reconcile | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/daytona/reconcile | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/daytona/lifecycle | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/daytona/lifecycle | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/daytona/run | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/daytona/run | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/devices | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/devices | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/devices/mode | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -7604,6 +7646,20 @@ household+lockdown GET /api/asks/sources/sync | here=400/f6e21c remote=400/f6e21
 household+lockdown POST /api/asks/sources/sync | here=ok remote=ok read=401/55661c run=401/55661c
 household+lockdown GET /api/asks/surfaces | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/asks/surfaces | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/daytona | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/daytona | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/daytona/check | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/daytona/check | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/daytona/prepare | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/daytona/prepare | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/daytona/create | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/daytona/create | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/daytona/reconcile | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/daytona/reconcile | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/daytona/lifecycle | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/daytona/lifecycle | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/daytona/run | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/daytona/run | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/devices | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/devices | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/devices/mode | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -9899,6 +9955,20 @@ applock GET /api/asks/sources/sync | here=423/a8f863
 applock POST /api/asks/sources/sync | here=423/a8f863
 applock GET /api/asks/surfaces | here=423/a8f863
 applock POST /api/asks/surfaces | here=423/a8f863
+applock GET /api/daytona | here=423/a8f863
+applock POST /api/daytona | here=423/a8f863
+applock GET /api/daytona/check | here=423/a8f863
+applock POST /api/daytona/check | here=423/a8f863
+applock GET /api/daytona/prepare | here=423/a8f863
+applock POST /api/daytona/prepare | here=423/a8f863
+applock GET /api/daytona/create | here=423/a8f863
+applock POST /api/daytona/create | here=423/a8f863
+applock GET /api/daytona/reconcile | here=423/a8f863
+applock POST /api/daytona/reconcile | here=423/a8f863
+applock GET /api/daytona/lifecycle | here=423/a8f863
+applock POST /api/daytona/lifecycle | here=423/a8f863
+applock GET /api/daytona/run | here=423/a8f863
+applock POST /api/daytona/run | here=423/a8f863
 applock GET /api/devices | here=423/a8f863
 applock POST /api/devices | here=423/a8f863
 applock GET /api/devices/mode | here=423/a8f863

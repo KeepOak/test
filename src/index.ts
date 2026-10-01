@@ -160,6 +160,7 @@ import { settingsKitWriters } from "./settings-kit/writers.js";
 import { GitTools } from "./integrations/git.js";
 import { GitCheckpoints, GitWorkspaces, type GitRun } from "./git-checkpoint.js";
 import { RemoteWorkspaces, registerRemoteWorkspaces, sshRunner } from "./remote/ssh-workspace.js";
+import { DaytonaWorkspace, registerDaytonaWorkspace } from "./remote/daytona-workspace.js";
 import { SessionLimiter } from "./session-limits.js";
 import { ConversationRetention } from "./retention.js";
 import { Wakeups, registerWakeups } from "./wakeups.js"; // selfdev (SELF-305)
@@ -778,6 +779,9 @@ export async function createBranch(options: {
   registerOrchestrationModes(registry, runtime, knowledge);
   registerSecondOpinion(registry, runtime);
   const web = new WebAccess(options.web ?? {}, globalThis.fetch, `BranchAgent/${String(createRequire(import.meta.url)("../package.json").version)}`);
+  // A paid, disposable Daytona sandbox, only after the owner confirms it (src/remote/daytona-workspace.ts).
+  const daytona = new DaytonaWorkspace(store, runtime.owner, web.policy, () => !sessionLock.locked());
+  registerDaytonaWorkspace(registry, daytona);
   // Q12: Branch changing its own source is held to a contract written before anything changes.
   const selfContracts = new ContractBook(store.sqlite);
   // Branch builds Branch: a coding job handed to the owner's own Claude Code or Codex, inside one folder (src/coding/hand-off.ts).
@@ -1913,6 +1917,7 @@ ${result.output || "(it said nothing)"}`;
     osPermissions,
     /** Folders on the owner's other computers, reached with the OpenSSH client Windows already has. */
     remotes,
+    daytona,
     /** A way back to how a folder was just before a set of changes was written. */
     checkpoints,
     /** Switching a folder to the line of work a project names. */
