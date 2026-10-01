@@ -1069,6 +1069,27 @@ async function api(
   listen: ListenState,
   gatewayPower?: NeverBreakExtras["gatewayPower"],
 ): Promise<unknown> {
+  if (path === "/api/interop/redis-queue" || path === "/api/interop/redis-queue/control") {
+    const ownerOnly = (): void => {
+      if (throughDoor(request) || startedWithShortLivedKey()) throw new HttpError(403, "Configure Redis in this computer's owner window");
+      app.store.profiles.requireOwner("Redis fleet coordination");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before configuring Redis");
+    };
+    ownerOnly();
+    if (request.method === "GET") return path.endsWith("/control")
+      ? app.interop.redisQueueControls.view() : app.interop.redisQueue.settings();
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST for Redis queue settings");
+    const settings = await readBody(request);
+    ownerOnly();
+    if (path.endsWith("/control")) {
+      const controller = new AbortController(), abort = (): void => controller.abort();
+      request.socket.once("close", abort);
+      try { return await app.interop.redisQueueControls.operate(settings, controller.signal); }
+      finally { request.socket.removeListener("close", abort); }
+    }
+    app.interop.redisQueueControls.invalidate();
+    return app.interop.redisQueue.configure(settings);
+  }
   // Batch 19 (wave 6): the record of what it was allowed to do, approval kinds, ask-first,
   // the practice workspace, how passages are ordered, plugin model connections, issue context.
   if (handlesMiscPath(path))
@@ -1404,7 +1425,10 @@ async function api(
   }
   // Wave 6: sharing, labels and notes, workflows, the waiting line, days off, and profiles.
   const collab = await collabApi(app, request, path, (maximumBytes) => readBody(request, maximumBytes));
-  if (collab !== notCollab) return collab;
+  if (collab !== notCollab) {
+    if (request.method === "POST" && path === "/api/profiles/switch") app.interop.redisQueueControls.invalidate();
+    return collab;
+  }
   if (request.method === "GET" && path === "/api/tools") return toolInventory(app);
   // The developer playground: the form for every tool, and running one by hand through the gate.
   if (request.method === "GET" && path === "/api/tools/forms") return { tools: toolForms(app.registry) };
@@ -4858,6 +4882,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   /** The door coming back on 127.0.0.1, which closing Branch waits for so no socket outlives it. */
   let narrowing: Promise<void> = Promise.resolve();
   const stopWatchingLockdown = onLockdownChange((_store, _owner, on) => {
+    if (on && _store === app.store && _owner === app.runtime.owner) app.interop.redisQueueControls.invalidate();
     // mac7/phone-qr: Lockdown also ends a phone download link that is showing.
     if (on) phoneApp.stop();
     // Lockdown shuts the door to the phone too, and an opening still waiting on Tailscale never opens.

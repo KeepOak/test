@@ -29,8 +29,10 @@ export interface InteropHttpDeps {
   requireOwner: (what: string) => void;
 }
 
-export const handlesInteropPath = (path: string): boolean =>
-  path === "/ap/v1/agent/tasks" || path.startsWith("/ap/v1/agent/tasks/") || path === "/api/interop" || path.startsWith("/api/interop/");
+/** The Redis queue's settings are answered by the server's own owner-window route (src/server.ts), not here. */
+const redisQueuePaths = new Set(["/api/interop/redis-queue", "/api/interop/redis-queue/control"]);
+export const handlesInteropPath = (path: string): boolean => !redisQueuePaths.has(path)
+  && (path === "/ap/v1/agent/tasks" || path.startsWith("/ap/v1/agent/tasks/") || path === "/api/interop" || path.startsWith("/api/interop/"));
 
 /** Changes a short-lived key may not make here: they widen what Branch may do or who may reach it. */
 export function interopOffLimits(method: string | undefined, path: string): string | null {

@@ -104,7 +104,7 @@ const shipped = (part: InteropPart): FeatureMode => interopShipsOn[part] ?? "off
 export const interopToolFeatures: readonly (readonly [string, string, readonly string[], FeatureMode])[] = [
   ["interop-modes", "ways of working are switched on", ["mode.list", "mode.task"], shipped("modes")],
   ["interop-project-routing", "choosing the project for a request is switched on", ["project.route"], shipped("project-routing")],
-  ["interop-fleet", "looking after several assistants is switched on", ["fleet.status", "fleet.send", "fleet.stop"], shipped("fleet")],
+  ["interop-fleet", "looking after several assistants is switched on", ["fleet.status", "fleet.send", "fleet.stop", "fleet.queue.submit", "fleet.queue.claim", "fleet.queue.complete", "fleet.queue.release", "fleet.queue.status"], shipped("fleet")],
   ["interop-handoff", "handing a conversation on is switched on", ["conversation.handoff"], shipped("handoff")],
   ["interop-flow-search", "finding a better flow is switched on", ["flow.search"], shipped("flow-search")],
   ["interop-agent-market", "sharing assistants is switched on", ["assistant.market"], shipped("agent-market")],

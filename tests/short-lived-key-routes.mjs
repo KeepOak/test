@@ -341,6 +341,8 @@ export const ROUTES = {
   "/api/interop": "look",
   "/api/interop/": "prefix",
   "/api/interop/client-tools/ws": "look",
+  "/api/interop/redis-queue": "owner POST",
+  "/api/interop/redis-queue/control": "owner POST",
   "/api/interop/fleet": "look",
   "/api/interop/fleet/stop": "owner POST",
   "/api/interop/flow-search": "owner POST",
