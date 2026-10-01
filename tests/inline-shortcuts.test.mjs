@@ -9,6 +9,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { inlineShortcuts } from "../dist/channels/inline-shortcuts.js";
 import { setPaused } from "../dist/reach/platform.js";
+import { Deliveries } from "../dist/channels/deliveries.js";
 
 const authored = (text, spans = []) => ({ text, protected: spans });
 
@@ -76,4 +77,36 @@ test("pausing the chat app while a shortcut's answer goes out stops the rest of 
   assert.equal(await f.app.channels.handle(f.message(text, { authoredCommandText: authored(text) })), "ignored");
   assert.equal(f.sent.length, 1, "only the first answer went out");
   assert.equal(f.prompts.length, 0, "the rest never reached the model");
+});
+
+test("pausing the chat app while a shortcut's answer is checked or waiting to send keeps that answer from going out", async (t) => {
+  const answer = "Nothing is working right now.";
+  // Queue boundary: the pause lands while the outgoing check looks at the answer.
+  const f = await fixture(t);
+  const guard = f.app.channels.outboundGuard;
+  f.app.channels.outboundGuard = async (text) => {
+    if (text === answer) setPaused(f.app.store, f.app.runtime.owner, "chat", true, "test");
+    return guard(text);
+  };
+  const text = "Please /status then summarise the notes";
+  assert.equal(await f.app.channels.handle(f.message(text, { authoredCommandText: authored(text) })), "ignored");
+  assert.deepEqual(f.sent, [], "the answer was held back at the queue");
+  assert.equal(f.prompts.length, 0);
+
+  // Send boundary: the first send fails, the chat app is paused, and a later flush must not send the queued answer.
+  const g = await fixture(t);
+  const send = g.adapter.send;
+  g.adapter.send = async () => { g.adapter.send = send; throw new Error("offline for a moment"); };
+  await g.app.channels.handle(g.message("/status", { authoredCommandText: authored("/status") }));
+  assert.deepEqual(g.sent, []);
+  // After a restart nothing remembers who the answer was for, so it stays unsent.
+  const restarted = new Deliveries(g.app.store, g.app.runtime.owner);
+  for (const row of restarted.outstanding()) restarted.retry(row.id);
+  await restarted.flush("chat", async (_chatId, words) => { g.sent.push(words); return "r1"; });
+  assert.deepEqual(g.sent, [], "a restart does not release a queued answer");
+  setPaused(g.app.store, g.app.runtime.owner, "chat", true, "test");
+  for (const row of g.app.channels.deliveries.outstanding()) g.app.channels.deliveries.retry(row.id);
+  await g.app.channels.flush();
+  assert.deepEqual(g.sent, [], "a queued answer is not sent once the chat app is paused");
+  assert.ok(g.app.channels.deliveries.outstanding().every((row) => row.status === "dead"), "the held answer is not retried");
 });

@@ -729,7 +729,8 @@ export class ChannelRouter {
    * Queues text for a chat and sends it if the channel is up. The key makes a repeat call a no-op,
    * so a task finished while the channel was down is delivered once, in order, after reconnect.
    */
-  async deliver(channel: string, chatId: string, text: string, key = `delivery:${Date.now()}:${randomInt(1e9)}`, replyTo?: string): Promise<{ messageId?: string | undefined; queued: number; sent: boolean }> {
+  async deliver(channel: string, chatId: string, text: string, key = `delivery:${Date.now()}:${randomInt(1e9)}`, replyTo?: string,
+    allowed?: () => boolean): Promise<{ messageId?: string | undefined; queued: number; sent: boolean }> {
     // CHAT-190: "home" is the chat the owner chose with /sethome, read now, so moving home moves every result sent there.
     const home = resolveHome(this.store, this.runtime.owner, channel, chatId);
     if (!home) throw new Error(noHome);
@@ -738,7 +739,9 @@ export class ChannelRouter {
     if (!target) throw new Error(`Channel ${channel} is not connected`);
     const checked = await this.outboundGuard(text);
     if (checked.blocked) throw new Error(checked.reason ?? "The message was held back before it was sent");
-    this.deliveries.enqueue(channel, chatId, checked.text, key, replyTo, target.adapter.maxTextLength);
+    // `allowed` is checked again here, after the outgoing check, and goes with the message to its send (Deliveries.flush).
+    if (allowed && !allowed()) throw new Error("The chat may no longer be answered");
+    this.deliveries.enqueue(channel, chatId, checked.text, key, replyTo, target.adapter.maxTextLength, allowed);
     await this.flush();
     const now = this.deliveries.list().filter((d) => d.key === key);
     const first = now.find((d) => d.seq === 0);
@@ -1072,10 +1075,12 @@ export class ChannelRouter {
     const remaining = { ...original, text: picked.remainder };
     // The owner may pause this chat app while a shortcut's answer is on its way: nothing more goes out then.
     const paused = () => !!(platformGate(this.store, this.runtime.owner, message) ?? homeGate(this.store, this.runtime.owner, message));
+    const allowed = (name: string) => !paused() && !this.appLocked() && this.senderAllowed(message.channel, message.senderId)
+      && !!this.commandIn({ ...message, text: `/${name}` });
     for (const name of picked.names) {
-      if (paused() || this.appLocked() || !this.senderAllowed(message.channel, message.senderId)
-        || !this.commandIn({ ...message, text: `/${name}` })) return "ignored";
-      await this.command(message, { name, argument: "" }, `inline-${name}`);
+      if (!allowed(name)) return "ignored";
+      // The same check holds the answer at the queue and at the send, so a pause while it is on its way keeps it back.
+      await this.command(message, { name, argument: "" }, `inline-${name}`, () => allowed(name));
     }
     if (!remaining.text.trim()) return "replied";
     if (paused() || this.appLocked() || !this.senderAllowed(message.channel, message.senderId)) return "ignored";
@@ -1305,7 +1310,7 @@ export class ChannelRouter {
     await say(adapter?.sendButtons ? now.words : `${now.words} Send /update install to install it now.`);
     return "replied";
   }
-  private async command(message: InboundMessage, command: ChatCommand, deliveryKind = "command"): Promise<Outcome> {
+  private async command(message: InboundMessage, command: ChatCommand, deliveryKind = "command", allowed?: () => boolean): Promise<Outcome> {
     const { channel, chatId } = message;
     if (command.name === "update") return this.updateCommand(message, command.argument);
     // A chat's steps level lasts beyond the conversation and can show more (files, commands), so, as /session and
@@ -1373,7 +1378,7 @@ export class ChannelRouter {
     let reply: string;
     try { reply = asks ? await this.withSlot(work) : await work(); }
     finally { if (named) this.trunkCommands.delete(chatKey(message)); }
-    await this.deliver(channel, chatId, reply, `${deliveryKind}:${chatId}:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
+    await this.deliver(channel, chatId, reply, `${deliveryKind}:${chatId}:${message.messageId}`, this.quoteFor(message), allowed).catch(() => undefined);
     return "replied";
   }
   /** What the owner-DM commands can reach: the whole app's command host, set by createBranch. Without it they are not read. */

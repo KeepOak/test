@@ -25,6 +25,8 @@ export const DeliverySchema = z.object({
   lastError: z.string().max(500).nullable().default(null),
   messageId: z.string().max(64).nullable().default(null),
   sentAt: z.string().nullable().default(null),
+  /** Sent only while whoever asked may still be answered (an inline shortcut's answer); after a restart it stays unsent. */
+  gated: z.boolean().optional(),
 }).strict();
 export type Delivery = z.infer<typeof DeliverySchema> & { id: string; createdAt: string; updatedAt: string };
 export type Sender = (chatId: string, text: string, replyTo?: string) => Promise<string | undefined>;
@@ -125,6 +127,8 @@ export function backoffMs(attempts: number): number {
 
 export class Deliveries {
   private next: number | undefined;
+  /** The live check for each gated message, by key. Kept in memory only, so a gated row never outlives the process. */
+  private readonly gates = new Map<string, () => boolean>();
   /** Announces a given-up chunk to outbound webhooks; a no-op until `createBranch` connects them. */
   notifyEvent: WebhookNotifier = () => undefined;
   /**
@@ -140,7 +144,8 @@ export class Deliveries {
     return this.next++;
   }
   /** Records the chunks of one message; a key seen before is not queued again. */
-  enqueue(channel: string, chatId: string, text: string, key: string, replyTo?: string, limit?: number): Delivery[] {
+  enqueue(channel: string, chatId: string, text: string, key: string, replyTo?: string, limit?: number, allowed?: () => boolean): Delivery[] {
+    if (allowed) this.gates.set(key, allowed);
     const chunks = chunkText(text, Math.min(limit ?? chunkLimit, chunkLimit), this.splitting());
     const rows: Delivery[] = [];
     const held = this.holdUntil(this.now());
@@ -149,7 +154,7 @@ export class Deliveries {
       const existing = this.get(id);
       if (existing) { rows.push(existing); continue; }
       const data = DeliverySchema.parse({ key, channel, chatId, seq, order: this.nextOrder(), text: chunk, replyTo: seq === 0 ? replyTo ?? null : null,
-        status: "pending", attempts: 0, nextAt: held ?? this.now().toISOString() });
+        status: "pending", attempts: 0, nextAt: held ?? this.now().toISOString(), ...(allowed ? { gated: true } : {}) });
       rows.push(this.save(id, data));
     }
     return rows;
@@ -168,12 +173,19 @@ export class Deliveries {
       rows.sort((a, b) => a.order - b.order);
       if (rows[0]!.nextAt > due) continue;
       for (const row of rows) {
+        // Checked right before sending: an answer whoever asked may no longer have is held back, not sent late.
+        if (row.gated && !this.gates.get(row.key)?.()) {
+          this.save(row.id, { ...this.data(row), status: "dead", lastError: "Held back: the chat may no longer be answered" });
+          continue;
+        }
         const outcome = await this.attempt(row, send);
         totals[outcome]++;
         if (outcome !== "sent") break;
       }
     }
     this.prune();
+    const waiting = new Set(this.list().filter((d) => d.status === "pending").map((d) => d.key));
+    for (const key of [...this.gates.keys()]) if (!waiting.has(key)) this.gates.delete(key);
     return totals;
   }
   private async attempt(row: Delivery, send: Sender): Promise<"sent" | "failed" | "dead"> {
