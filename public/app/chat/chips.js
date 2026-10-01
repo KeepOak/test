@@ -62,11 +62,12 @@ export async function newConversationMode(picked = null) {
   return mode ? { mode } : {};
 }
 /* The composer's first message in a new conversation: its chip's pick, used once. */
-export async function startMode() {
+export async function startMode(onRestore = () => {}) {
   if (S.chat) return {};
   const picked = M.pending, model = M.pendingModel;
   M.pending = null;
   M.pendingModel = null;
+  onRestore(() => { if (M.pending === null) M.pending = picked; if (M.pendingModel === null) M.pendingModel = model; });
   return { ...(await newConversationMode(picked)), ...(model?.preset ? { preset: model.preset } : {}), ...(model?.reasoning ? { reasoning: model.reasoning } : {}) };
 }
 

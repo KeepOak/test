@@ -161,13 +161,16 @@ export const attached = () => attachedChips();
 /* What the next message carries: the ids of the files sent ahead, once all of them have arrived. The chips stay until the
    message is sent (filesSent), so a message the engine never got keeps its files (chat.js keepForLater). */
 export { filesSent, resendFiles, hasFiles } from "./attach.js";
-export async function takePending(isNew) {
+export async function takePending(isNew, onRestore = () => {}) {
   const out = {};
+  const temporary = Q.temporary;
+  const practice = practiceNext();
   const uploads = await readyUploads();
   if (uploads.length) out.uploads = uploads;
-  if (practiceNext()) out.dryRun = true;
-  if (isNew && Q.temporary) out.temporary = true;
-  Q.temporary = false;
+  if (practice) out.dryRun = true;
+  if (isNew && temporary) out.temporary = true;
+  if (Q.temporary === temporary) Q.temporary = false;
+  onRestore(() => { if (temporary) Q.temporary = true; });
   return out;
 }
 
