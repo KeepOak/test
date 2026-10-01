@@ -3,12 +3,13 @@ import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, Outg
 import { telegramEntities } from "./progress-render.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
+import { TelegramWebhookUnavailable, validateTelegramWebhook, verifyTelegramWebhook, type TelegramWebhookInbox, type TelegramWebhookOptions } from "./telegram-webhook.js";
 import { verifyInitData, type MiniAppUser } from "../miniapp/init-data.js";
 import { telegramForwardContext, telegramPollContent, telegramStickerContent, telegramStickerSchema } from "./telegram-content.js";
 import { telegramLocationSchema, telegramLocationText, telegramVenueSchema } from "./telegram-location.js";
 
 /**
- * Telegram Bot API adapter using long polling. Text and media messages are delivered; a message is
+ * Telegram Bot API adapter using long polling or explicit HTTPS webhook reception. Text and media messages are delivered; a message is
  * "addressed" when it mentions the bot's username or replies to one of the bot's messages.
  */
 export interface TelegramOptions {
@@ -29,6 +30,11 @@ export interface TelegramOptions {
    * failure other than a refused token stops the start, as a settings-file channel always has.
    */
   keepTrying?: boolean;
+  /** Explicit owner opt-in; a HTTPS endpoint, a separate header secret, and a durable inbox are required. */
+  webhook?: TelegramWebhookOptions;
+  webhookInbox?: TelegramWebhookInbox;
+  /** Explicitly selecting polling removes a previous webhook without discarding pending updates. */
+  deleteWebhookOnStart?: boolean;
 }
 /** A bot's own id: the number before the colon in its token, so a read position is kept per bot, never shared. */
 export const telegramBotId = (token: string): string => token.split(":")[0] ?? "";
@@ -70,7 +76,7 @@ const callbackSchema = z.object({
   message: messageSchema.optional(),
 }).passthrough();
 const updateSchema = z.object({
-  update_id: z.number(),
+  update_id: z.number().int().nonnegative().safe(),
   message: messageSchema.optional(),
   /** Settings › Chat apps › Edited messages: a new version of a message sent before. */
   edited_message: messageSchema.optional(),
@@ -123,6 +129,15 @@ export class TelegramAdapter implements ChannelAdapter {
   private refused: string | null = null;
   /** keepTrying: getMe did not get through at start, so the name is still to be learned. */
   private nameUnknown = false;
+  private webhookDelivery: ((message: InboundMessage) => Promise<void>) | null = null;
+  private readonly webhookActive = new Set<number>();
+  private readonly webhookFailed = new Map<number, number>();
+  private webhookRetry: ReturnType<typeof setTimeout> | undefined;
+  private webhookProblem: string | null = null;
+  private webhookReceived = false;
+  private pollingReady = false;
+  receivePost?: (raw: Buffer, headers: Record<string, string | string[] | undefined>) => Promise<{ accepted: number }>;
+  lastContact?: () => number;
   constructor(private readonly options: TelegramOptions) {
     this.id = options.id;
     this.base = `${(options.apiBase ?? "https://api.telegram.org").replace(/\/$/, "")}/bot${options.token}`;
@@ -130,11 +145,23 @@ export class TelegramAdapter implements ChannelAdapter {
     this.pollTimeout = options.pollTimeoutSeconds ?? 25;
     this.refusedRetryMs = options.refusedRetryMs ?? 30_000;
     this.renumberAfterMs = options.renumberAfterMs ?? 24 * 60 * 60 * 1000;
+    if (options.webhook) {
+      validateTelegramWebhook(options.webhook);
+      if (!options.webhookInbox) throw new Error("Telegram webhook mode requires a durable update inbox.");
+      this.receivePost = (raw, headers) => this.receiveWebhook(raw, headers);
+    } else this.lastContact = () => this.contactAt;
   }
   botName(): string | null { return this.username; }
   /** P17-D §8: a refused token stops every message arriving, so it is said, not retried in silence. */
-  health(): ChannelHealth { return this.refused ? { state: "needs attention", reason: this.refused } : { state: "connected" }; }
+  health(): ChannelHealth {
+    if (this.refused || this.webhookProblem) return { state: "needs attention", reason: this.refused ?? this.webhookProblem! };
+    if (this.options.webhook && !this.accepting()) return { state: "needs attention", reason: "Telegram webhook reception is not accepting updates." };
+    return this.options.webhook ? { state: "connected", reason: this.webhookReceived
+      ? "Telegram webhook reception has accepted an authenticated update."
+      : "Telegram webhook registration is confirmed; inbound HTTPS reachability has not been verified." } : { state: "connected" };
+  }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    if (this.loop || this.webhookDelivery) throw new Error("This Telegram transport is already started.");
     // P17-D §8: a token revoked while Branch was closed is refused here first. It still starts, so the refusal shows
     // in its health and it comes back by itself once the token works; any other failure stops the start as before.
     await this.learnName().catch((error: unknown) => {
@@ -146,7 +173,10 @@ export class TelegramAdapter implements ChannelAdapter {
     const movedAt = this.options.position?.savedAt?.();
     if (this.offset > 0 && movedAt !== undefined && movedAt < this.lastUpdateAt) this.lastUpdateAt = movedAt;
     this.seenThrough = Math.max(this.seenThrough, this.offset);
-    this.loop = this.poll(onMessage);
+    if (this.options.webhook) await this.configureWebhook();
+    this.webhookDelivery = onMessage;
+    this.drainWebhook();
+    if (!this.options.webhook) this.loop = this.poll(onMessage);
   }
   /** `stoppable`: asked from the poll, so stop() cuts it short instead of waiting up to twenty seconds for it. */
   private async learnName(stoppable = false): Promise<void> {
@@ -155,11 +185,15 @@ export class TelegramAdapter implements ChannelAdapter {
   }
   async stop(): Promise<void> {
     this.stopping.abort();
+    this.webhookDelivery = null;
+    clearTimeout(this.webhookRetry);
+    this.webhookRetry = undefined;
     await this.loop?.catch(() => undefined);
+    this.loop = null;
+    this.pollingReady = false;
   }
   /** Staying connected: when Telegram last answered a poll (or when this bot started). */
   private contactAt = Date.now();
-  lastContact(): number { return this.contactAt; }
   /** The watchdog starts a stalled bot again: the poll is stopped and a new one begins from the saved position. */
   async restart(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     await this.stop();
@@ -278,6 +312,10 @@ export class TelegramAdapter implements ChannelAdapter {
   private async poll(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     while (!this.stopping.signal.aborted) {
       try {
+        if (!this.pollingReady && this.options.deleteWebhookOnStart) {
+          if (await this.call("deleteWebhook", { drop_pending_updates: false }, false, true) !== true) throw new Error("Telegram did not confirm switching to polling.");
+          this.pollingReady = true;
+        }
         this.advance(); // Retry a failed position write before asking Telegram to acknowledge it.
         // "callback_query" has to be asked for by name, or a pressed button never arrives at all.
         const renumbered = this.mayBeRenumbered();
@@ -292,14 +330,11 @@ export class TelegramAdapter implements ChannelAdapter {
           // Telegram irrevocably acknowledges every lower id when getUpdates receives offset.
           // Repeated polls at the oldest unfinished id must not hand that id to the router twice.
           if (update.update_id < this.seenThrough) continue;
+          const fromWebhook = this.options.webhookInbox?.has(update.update_id) === true;
           this.seenThrough = update.update_id + 1;
           // Handed over without waiting: a message sent while a task works is a note for that task,
           // and it has to be read while the task is still going. The router keeps one task per chat.
-          const pressed = update.callback_query && this.fromButton(update.callback_query);
-          if (pressed) { this.handOver(update.update_id, pressed, onMessage); continue; }
-          const edited = !update.message && update.edited_message ? this.inbound(update.edited_message) : null;
-          const message = update.message ? this.inbound(update.message) : edited ? { ...edited, edited: true } : null;
-          this.handOver(update.update_id, message || null, onMessage);
+          this.handOver(update.update_id, fromWebhook ? null : this.updateMessage(update), onMessage);
         }
       } catch (error) {
         if (this.stopping.signal.aborted) return;
@@ -310,6 +345,68 @@ export class TelegramAdapter implements ChannelAdapter {
         await this.pause(refusedToken ? this.refusedRetryMs : 2000);
       }
     }
+  }
+  private async configureWebhook(): Promise<void> {
+    const saved = this.options.webhook!, webhook = validateTelegramWebhook({ ...saved, url: saved.currentUrl?.() ?? saved.url });
+    const result = await this.call("setWebhook", { url: webhook.url, secret_token: webhook.secretToken,
+      max_connections: 1, allowed_updates: ["message", "edited_message", "callback_query"], drop_pending_updates: false }, false, true);
+    if (result !== true) throw new Error("Telegram did not confirm the webhook registration.");
+    this.webhookProblem = null;
+    this.contactAt = Date.now();
+  }
+  async refreshWebhook(): Promise<void> {
+    if (!this.accepting()) return;
+    try { await this.configureWebhook(); }
+    catch (error) { this.webhookProblem = "Telegram did not confirm the changed webhook address. Restart or retry after connectivity recovers."; throw error; }
+  }
+  accepting(): boolean { return !!this.options.webhook && !!this.webhookDelivery && !this.stopping.signal.aborted; }
+  private async receiveWebhook(raw: Buffer, headers: Record<string, string | string[] | undefined>): Promise<{ accepted: number }> {
+    if (!this.accepting()) throw new TelegramWebhookUnavailable("Telegram webhook mode is not accepting updates.");
+    verifyTelegramWebhook(this.options.webhook!.secretToken, headers["x-telegram-bot-api-secret-token"]);
+    if (raw.byteLength > 262_144) throw new Error("Telegram webhook update exceeds 256 KiB.");
+    const update = updateSchema.parse(JSON.parse(raw.toString("utf8")));
+    let accepted: boolean;
+    try { accepted = this.options.webhookInbox!.enqueue(update.update_id, raw.toString("utf8")); }
+    catch { throw new TelegramWebhookUnavailable("Telegram's durable webhook inbox could not accept this update. Retry later."); }
+    this.contactAt = Date.now();
+    this.webhookReceived = true;
+    this.drainWebhook();
+    return { accepted: accepted ? 1 : 0 };
+  }
+  private updateMessage(update: z.infer<typeof updateSchema>): InboundMessage | null {
+    const pressed = update.callback_query && this.fromButton(update.callback_query);
+    if (pressed) return pressed;
+    const edited = !update.message && update.edited_message ? this.inbound(update.edited_message) : null;
+    return update.message ? this.inbound(update.message) : edited ? { ...edited, edited: true } : null;
+  }
+  private drainWebhook(): void {
+    if (!this.webhookDelivery || !this.options.webhookInbox || this.stopping.signal.aborted) return;
+    let pending: ReturnType<TelegramWebhookInbox["pending"]>;
+    try { pending = this.options.webhookInbox.pending(); }
+    catch { this.webhookProblem = "Telegram's saved webhook inbox could not be read."; return; }
+    for (const entry of pending) {
+      if (this.webhookActive.size >= 32) break;
+      if (this.webhookActive.has(entry.id)) continue;
+      if ((this.webhookFailed.get(entry.id) ?? 0) > Date.now()) continue;
+      this.webhookActive.add(entry.id);
+      void this.deliverWebhookEntry(entry).then(() => {
+        this.webhookFailed.delete(entry.id);
+        if (!this.webhookFailed.size) this.webhookProblem = null;
+      }, () => {
+        this.webhookFailed.set(entry.id, Date.now() + 30_000);
+        this.webhookProblem = "An accepted Telegram webhook update is still waiting to settle; Branch will retry its saved inbox.";
+      }).finally(() => {
+        this.webhookActive.delete(entry.id);
+        if (!this.webhookDelivery || this.webhookRetry) return;
+        this.webhookRetry = setTimeout(() => { this.webhookRetry = undefined; this.drainWebhook(); }, 30_000);
+        this.webhookRetry.unref();
+      });
+    }
+  }
+  private async deliverWebhookEntry(entry: { id: number; raw: string }): Promise<void> {
+    const message = this.updateMessage(updateSchema.parse(JSON.parse(entry.raw)));
+    if (message) await this.webhookDelivery!(message);
+    this.options.webhookInbox!.complete(entry.id);
   }
   /**
    * Telegram numbers a bot's next update afresh after a week without any: "If there are no new updates for at least a
