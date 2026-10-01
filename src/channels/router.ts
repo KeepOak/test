@@ -506,6 +506,8 @@ export class ChannelRouter {
   miniAppUrl: ((runId: string) => string | null) | undefined;
   /** Whether Branch is locked (the App lock). `createBranch` connects it; commands from a chat stop while it is. */
   appLocked: () => boolean = () => false;
+  /** Changes on every App lock and unlock, so a check taken earlier can tell a lock came and went. `createBranch` connects it. */
+  appLockGeneration: () => number = () => 0;
   /**
    * Hides key-shaped values and known secrets in what the live status shows (step labels, streamed
    * text). `createBranch` connects the leak guard; on its own this changes nothing.
@@ -1254,8 +1256,9 @@ export class ChannelRouter {
     const remaining = { ...original, text: picked.remainder };
     // The owner may pause this chat app while a shortcut's answer is on its way: nothing more goes out then.
     const paused = () => !!(platformGate(this.store, this.runtime.owner, message) ?? homeGate(this.store, this.runtime.owner, message));
-    const attached = this.adapters.get(message.channel);
-    const allowed = (name: string) => this.adapters.get(message.channel) === attached && !paused() && !this.appLocked()
+    const attached = this.adapters.get(message.channel), lockGeneration = this.appLockGeneration();
+    const allowed = (name: string) => this.adapters.get(message.channel) === attached && this.appLockGeneration() === lockGeneration
+      && !paused() && !this.appLocked()
       && this.senderAllowed(message.channel, message.senderId) && !!this.commandIn({ ...message, text: `/${name}` });
     for (const name of picked.names) {
       if (!allowed(name)) return "ignored";
@@ -1272,7 +1275,8 @@ export class ChannelRouter {
   /**
    * CHAT-210: the authority one shortcut answer goes out under. Any revocation after it is taken is final, even one undone
    * before the next look: settings changes (pause, the sender list, pairing, the chat switches) are checked as they are
-   * written, and the App lock, Lockdown, a profile switch or a disconnect abort it through stopMessageSends. It is per
+   * written, the App lock, Lockdown, a profile switch or a disconnect abort it through stopMessageSends, and a lock nobody
+   * noticed until the unlock still changes the lock generation the caller's check compares. It is per
    * answer, so one chat app's pause never refuses another's.
    */
   private answerAuthority(channel: string, current: () => boolean): DeliveryAuthority {
