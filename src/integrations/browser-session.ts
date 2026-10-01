@@ -153,6 +153,13 @@ export class BrowserSession {
       });
       const page = await this.newPage();
       this.checkOpen();
+      // The first picture a fresh browser takes is the slow one (300-800 ms measured on Windows), and one that a
+      // navigation overtook was never answered, holding every later picture of the page until its own time ran out:
+      // a quick task then sent no picture at all. One picture of the still empty page, taken here before any
+      // navigation and thrown away, makes the task's first real picture as quick as the rest (about 25 ms). It is
+      // not kept, masked or sent anywhere; if it fails in any way, the first real picture is merely the slow one again.
+      await Promise.resolve().then(() => page.screenshot({ type: 'jpeg', quality: 1, timeout: 4000 })).catch(() => undefined);
+      this.checkOpen();
       // Tabs the website opens by itself are closed again; only tabs the assistant asks for are kept.
       // The guard goes on first. Closing a tab is asynchronous, and a pop-up can ask for things while
       // it is still open: its first request is caught by the context route above, but the redirects

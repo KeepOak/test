@@ -86,6 +86,9 @@ test("a chat task working in the browser sends a picture of the page with its st
   assert.equal(files[0].replyTo, "m1", "beside the person's own message");
   assert.ok(f.chat.files().length <= pictureTiming.most, `never more than ${pictureTiming.most}`);
   assert.ok(f.chat.calls.every((c) => !JSON.stringify(c.file?.caption ?? c.text ?? "").includes("hunter2-secret")));
+  // The browser's warm-up picture of its empty first page (browser-session.ts open) never reaches the chat: every
+  // picture sent shows one of the task's pages and says which.
+  assert.ok(f.chat.files().every((c) => /Page \/p\d+ · 127\.0\.0\.1:\d+$/.test(c.file.caption)), "only the task's own pages are sent");
 });
 
 test("no pictures in a group, when the owner turns them off, or when steps in chats are off", async (t) => {
