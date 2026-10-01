@@ -20,23 +20,42 @@ const base = { waiting: [], lockdown: false, noModel: false, running: [], view: 
   rank: "Bronze", tipsOn: true, lastHint: 0, at };
 const say = (change) => petLine({ ...base, ...change }, words);
 
-test("news of the moment comes first, at every rank, in the order it matters", () => {
-  assert.equal(say({ waiting: [{ who: "Ledger" }], lockdown: true, running: [{ who: "Scout" }] }).text, "Ledger needs a yes. It’s in your Inbox.");
-  assert.match(say({ lockdown: true, running: [{ who: "Scout" }] }).text, /^Lockdown is on/);
+test("news of the moment comes first, at every rank, in the order it matters, and never names a task", () => {
+  assert.equal(say({ waiting: [{ runId: "r1" }], lockdown: true, running: [{ id: "r2" }] }).text, "A task is waiting for your answer. Review it in the Inbox.");
+  assert.match(say({ connection: false, waiting: [{ runId: "r1" }] }).text, /^The connection to Branch is unavailable/, "an unreachable engine comes first");
+  assert.match(say({ lockdown: true, running: [{ id: "r2" }] }).text, /^Lockdown is on/);
   assert.match(say({ noModel: true }).text, /^No model is connected yet/);
   assert.deepEqual(say({ noModel: true, owner: false }), petLine({ ...base, owner: false }, words), "a household person is not told to add a model");
-  assert.equal(say({ running: [{ who: "Scout" }] }).text, "Scout is working on it.");
-  assert.equal(say({ running: [{ who: "Scout" }, { who: "Ledger" }] }).text, "2 tasks are working.");
-  for (const rank of ["Gold", "Diamond", "Godly"]) assert.equal(say({ rank, running: [{ who: "Scout" }] }).kind, "news", `${rank} still hears the news`);
+  assert.match(say({ gateway: { running: true, problem: true } }).text, /^The Gateway reported a problem/);
+  assert.deepEqual(say({ gateway: { running: true, problem: true }, owner: false }), petLine({ ...base, owner: false }, words), "nor about the Gateway");
+  assert.match(say({ failed: "r3" }).text, /^The latest task in this conversation failed/);
+  assert.equal(say({ running: [{ id: "r2" }] }).text, "A task is working.");
+  assert.equal(say({ running: [{ id: "r2" }, { id: "r4" }] }).text, "2 tasks are working.");
+  assert.notEqual(say({ running: [{ id: "r2" }] }).key, say({ running: [{ id: "r4" }] }).key, "other work is new news");
+  for (const rank of ["Gold", "Diamond", "Godly"]) assert.equal(say({ rank, running: [{ id: "r2" }] }).kind, "news", `${rank} still hears the news`);
 });
 
 test("hints fit where the owner is, and name the owner's own keys", () => {
-  assert.equal(say({}).text, "Ctrl K finds anything, even one switch in Settings.");
-  assert.equal(say({ keys: { palette: "Alt P", sideList: "Ctrl B" } }).text, "Alt P finds anything, even one switch in Settings.", "a moved key is named as moved");
-  assert.equal(say({ keys: { palette: "", sideList: "Ctrl B" } }).text, "Ctrl B hides the list for more room.", "a key taken away is never named");
-  assert.equal(say({ view: "settings" }).text, "Search in Settings finds any switch, not just pages.");
-  assert.equal(say({ view: "library" }).text, "Hover anything to see what it does.");
+  const keys = { palette: "Ctrl K", sideList: "Ctrl B", focusPrompt: "Ctrl L" };
+  assert.equal(say({ keys }).text, "Ctrl L focuses the conversation's message box.");
+  assert.equal(say({ keys: { ...keys, focusPrompt: "Alt M" } }).text, "Alt M focuses the conversation's message box.", "a moved key is named as moved");
+  assert.equal(say({ keys: { ...keys, focusPrompt: "" } }).text, "Ctrl B hides the list for more room.", "a key taken away is never named");
+  assert.equal(say({ keys, view: "library" }).text, "Ctrl K opens search for conversations, documents and app actions.", "search is not promised to reach every setting");
+  assert.equal(say({ view: "settings" }).text, "Search in Settings finds matching pages and settings.");
+  assert.equal(say({ view: "inbox" }).text, "Review the exact request before answering in the Inbox.");
+  assert.equal(say({ keys: {}, view: "library" }).text, "Hover anything to see what it does.");
   assert.equal(say({}).kind, "hint");
+});
+
+test("the Gateway line speaks only of this engine's supervision, and says nothing when that is unknown", () => {
+  const page = { view: "settings", settingsPage: "gateway" }, hint = "Search in Settings finds matching pages and settings.";
+  const unsupervised = say({ ...page, gateway: { supervised: false, problem: false } }).text;
+  assert.equal(unsupervised, "This Branch engine is not running under Gateway supervision. Settings › Gateway shows its status.");
+  assert.doesNotMatch(unsupervised, /Gateway is not running/, "another Gateway may be running; only this engine's supervision is known");
+  assert.equal(say({ ...page, gateway: { supervised: null, problem: false } }).text, hint, "unknown is not said as unsupervised");
+  assert.equal(say({ ...page, gateway: null }).text, hint, "no fresh read: nothing about the Gateway");
+  assert.equal(say({ ...page, gateway: { supervised: true, problem: false } }).text, hint);
+  assert.equal(say({ ...page, owner: false, gateway: { supervised: false, problem: false } }).text, petLine({ ...base, ...page, owner: false }, words).text);
 });
 
 test("hints shrink with rank: Bronze and Silver at most hourly, Gold and above never, none while tips are off", () => {
