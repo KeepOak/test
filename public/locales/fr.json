@@ -6753,6 +6753,7 @@
   "window.chat.bg.finished": "{count} terminée(s) en arrière-plan",
   "window.chat.bg.hint": "Lancez-en une avec {code} ou + › Exécuter en arrière-plan. Jusqu’à trois à la fois.",
   "window.chat.bg.ready": "Terminée · prête à lire",
+  "window.chat.bg.resume-explanation": "Reprendre démarre une nouvelle tâche à partir des messages enregistrés de cette conversation. Une action sans résultat enregistré peut déjà avoir eu lieu.",
   "window.chat.bg.run": "L’exécuter en arrière-plan",
   "window.chat.bg.running": "{count} en arrière-plan",
   "window.chat.bg.title": "En cours en arrière-plan",

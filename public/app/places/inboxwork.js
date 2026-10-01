@@ -30,12 +30,14 @@ const firstLine = (text) => String(text ?? "").split("\n")[0].slice(0, 60);
 /* The paused tasks' ids, so the Inbox's own "cut off" cards leave them to this section. */
 export const pausedIds = () => new Set(W.rows.filter(isPaused).map((a) => a.runId));
 
+const resumeExplanation = () => `<small>${esc(t("window.chat.bg.resume-explanation"))}</small>`;
+
 function row(a) {
   const buttons = isPaused(a)
     ? `<button class="btn ghost sm" type="button" data-act="lw-stop" data-id="${esc(a.runId)}">${t("dashboard.stop")}</button><button class="btn pri sm" type="button" data-act="lw-resume" data-id="${esc(a.runId)}" data-sid="${esc(a.sessionId)}">${t("autonomy.resume")}</button>`
     : `<button class="btn ghost sm" type="button" data-act="lw-stop" data-id="${esc(a.runId)}">${t("dashboard.stop")}</button><button class="btn sm" type="button" data-act="lw-pause" data-id="${esc(a.runId)}">${t("autonomy.pause")}</button>`;
   const time = working(a) ? `<span class="meta" data-lw-since="${esc(a.startedAt)}">${esc(elapsed(a.startedAt))}</span>` : "";
-  return `<div class="prow lw-row">${faceOf(a.sessionId, 34)}<span class="grow"><b>${esc(firstLine(a.prompt))}</b><small>${esc(lastStep(a))}</small></span>${time}${buttons}</div>`;
+  return `<div class="prow lw-row">${faceOf(a.sessionId, 34)}<span class="grow"><b>${esc(firstLine(a.prompt))}</b><small>${esc(lastStep(a))}</small>${isPaused(a) ? resumeExplanation() : ""}</span>${time}${buttons}</div>`;
 }
 
 /* Drawn inside the Inbox's markup, above its tabs' bodies; nothing when nothing works or waits paused. */
@@ -84,7 +86,7 @@ export function initWork({ onResume }) {
 export function pausedCard(runs, sessionId) {
   const newest = (runs ?? []).filter((r) => r.sessionId === sessionId).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
   if (!sessionId || newest?.status !== "interrupted") return "";
-  return `<div class="prow lw-row lw-chat"><span class="grow"><small>${esc(firstLine(newest.output))}</small></span><button class="btn ghost sm" type="button" data-act="lw-stop" data-id="${esc(newest.id)}">${t("dashboard.stop")}</button><button class="btn pri sm" type="button" data-act="lw-resume" data-id="${esc(newest.id)}" data-sid="${esc(newest.sessionId)}">${t("autonomy.resume")}</button></div>`;
+  return `<div class="prow lw-row lw-chat"><span class="grow"><small>${esc(firstLine(newest.output))}</small>${resumeExplanation()}</span><button class="btn ghost sm" type="button" data-act="lw-stop" data-id="${esc(newest.id)}">${t("dashboard.stop")}</button><button class="btn pri sm" type="button" data-act="lw-resume" data-id="${esc(newest.id)}" data-sid="${esc(newest.sessionId)}">${t("autonomy.resume")}</button></div>`;
 }
 /* Over the chat's live steps: how long the task has been going, and Pause. */
 export function liveHead(runId, startedAt) {
