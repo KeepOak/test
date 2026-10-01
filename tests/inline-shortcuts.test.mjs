@@ -217,3 +217,28 @@ test("an idle App lock nobody noticed, then the owner unlocking, refuses the que
   await f.app.channels.flush();
   assert.deepEqual(f.sent, [], "a lock that lapsed and was unlocked in between still refuses the answer");
 });
+
+test("a pause and resume while Discord's reply to the first answer is still arriving stops the next shortcut and the rest", async (t) => {
+  const posts = [];
+  let releaseBody;
+  const held = new Promise((resolve) => { releaseBody = resolve; });
+  const discord = new DiscordAdapter({ id: "chat", token: "test-bot-token", fetch: async (url, init) => {
+    if (init?.method !== "POST" || !/\/channels\/[^/]+\/messages$/.test(String(url)))
+      return new Response(JSON.stringify({}), { status: 200 });
+    posts.push(JSON.parse(init.body).content);
+    // The first answer is taken by Discord, but its reply body is still on its way.
+    if (posts.length === 1) return { ok: true, status: 200, headers: new Headers(), json: () => held };
+    return new Response(JSON.stringify({ id: `posted-${posts.length}` }), { status: 200 });
+  } });
+  discord.start = async () => {}; discord.stop = async () => {};
+  const f = await fixture(t, discord);
+  const text = "Please /status /whoami then summarise the notes";
+  const handled = f.app.channels.handle(f.message(text, { authoredCommandText: authored(text) }));
+  while (posts.length === 0) await new Promise((resolve) => setTimeout(resolve, 10));
+  setPaused(f.app.store, f.app.runtime.owner, "chat", true, "test");
+  setPaused(f.app.store, f.app.runtime.owner, "chat", false, "test");
+  releaseBody({ id: "posted-1" });
+  assert.equal(await handled, "ignored");
+  assert.deepEqual(posts, [answer], "only the answer already taken went out; /whoami did not");
+  assert.equal(f.prompts.length, 0, "the rest of the message never reached the model");
+});
