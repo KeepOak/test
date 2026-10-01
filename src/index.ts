@@ -1575,7 +1575,7 @@ ${result.output || "(it said nothing)"}`;
   channels.defaultTrunk = () => trunks.mode("trunks") === "off" ? null : trunks.defaultTrunk()?.id ?? null;
   // With Trunks off, a saved route starts nothing new as its Trunk and no Trunk can be chosen; started threads keep theirs.
   channels.bindingFor = (channel, chatId) => trunks.mode("trunks") === "off" ? null
-    : channelBinding(store, runtime.owner, channel, chatId, channels.adapter(channel)?.kind ?? "");
+    : channelBinding(store, runtime.owner, channel, chatId, channels.adapter(channel)?.kind ?? "", channels.adapter(channel)?.routeParent?.(chatId) ?? null);
   channels.routingTrunks = () => trunks.mode("trunks") === "off" ? [] : trunks.records.list().map(({ id, name, handle }) => ({ id, name, handle }));
   const removedTrunk = trunks.onRemoved;
   trunks.onRemoved = id => { removedTrunk?.(id); dropTrunkRoutes(store, runtime.owner, id); };
