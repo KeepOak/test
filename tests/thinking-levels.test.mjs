@@ -29,7 +29,7 @@ test("K1 only the providers that send a level are offered one, and only for mode
   assert.deepEqual(thinkingLevels("chatgpt", "gpt-5.6-terra"), effort());
   // GPT-6 review (Mac mini): the ChatGPT default is GPT-6 Sol at medium, so its Thinking list must offer levels,
   // not say the model "does not take a thinking setting".
-  for (const model of ["gpt-6-sol", "gpt-6-luna"]) assert.deepEqual(thinkingLevels("chatgpt", model), effort(), `${model} takes a thinking level`);
+  for (const model of ["gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"]) assert.deepEqual(thinkingLevels("chatgpt", model), effort(), `${model} takes a thinking level`);
   assert.deepEqual(thinkingLevels("openai-responses", "gpt-5.5"), effort());
   // Integration review: Azure OpenAI builds the same body as the OpenAI-shaped connection.
   assert.deepEqual(thinkingLevels("azure-openai", "o4-mini"), effort());
@@ -61,7 +61,8 @@ test("K2 the providers that send a level are exactly the ones the map knows", as
       || /\b(openaiBody|anthropicBody)\(request/.test(text)) senders.push(file);
   }
   assert.deepEqual(senders.map((file) => file.split(/[\\/]/).slice(-2).join("/")).sort(),
-    ["providers/azure-openai.ts", "providers/claude-subscription-history.ts", "providers/claude-subscription.ts",
+    // claude-subscription-continuation.ts keys a kept native session on the level the subscription provider sends.
+    ["providers/azure-openai.ts", "providers/claude-subscription-continuation.ts", "providers/claude-subscription-history.ts", "providers/claude-subscription.ts",
       "providers/openai-responses.ts", "src/chatgpt-provider.ts", "src/providers.ts"],
     "a provider started or stopped sending a thinking level: update src/thinking-levels.ts");
   // Every provider those files define is one the map says sends a level.

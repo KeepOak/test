@@ -98,6 +98,10 @@ test("D26: What's new on a build between releases lists the newest release it al
   assert.equal(notesFor("0.20.0", file).items[0].title, "New", "a release's own notes");
   assert.equal(notesFor("0.20.0-dev.1790479535-gabc", file).version, "0.19.3", "a dev build before 0.20.0 contains 0.19.3");
   assert.equal(notesFor("0.20.1", file).version, "0.20.0");
+  // PLAT-044: the exact installed build is kept beside whose notes are shown.
+  assert.equal(notesFor("0.20.0-dev.1790479535-gabc", file).installedVersion, "0.20.0-dev.1790479535-gabc");
+  assert.equal(notesFor("0.20.1", file).installedVersion, "0.20.1");
+  assert.equal(notesFor("0.20.0", file).installedVersion, "0.20.0");
   assert.deepEqual(notesFor("0.0.1", file).items, [], "older than every release: none");
   assert.ok(notesFor("0.19.4-dev.1-gabc").items.length > 0, "the shipped file answers a dev build");
 });
@@ -109,6 +113,15 @@ test("D15: a Trunk's routine is listed by its own name and Trunk", async (t) => 
   const listed = ownerStateParts(app).schedules.find((s) => s.id === routine.id);
   assert.deepEqual(listed.routine, { trunkId: trunk.id, name: "Read the merged pull requests" });
   assert.match(listed.data.prompt, /^\[Trunk @/, "the schedule itself still carries its Trunk for the scheduler");
+});
+
+test("RES-189: a Trunk's routine can keep its result as a dashboard, and its list says so", async (t) => {
+  const { app } = await branch(t);
+  const trunk = app.trunks.create({ name: "Watcher", title: "", description: "" });
+  const routine = app.trunks.routines.create(trunk.id, { name: "Site health", prompt: "Check the site.", dailyAt: "08:00", timezone: "UTC",
+    dashboard: { title: "Site health" } });
+  assert.deepEqual(app.store.get("schedules", app.runtime.owner, routine.id).data.dashboard, { title: "Site health" });
+  assert.deepEqual(app.trunks.routines.list(trunk.id).find((one) => one.id === routine.id).dashboard, { title: "Site health" });
 });
 
 test("the owner: ChatGPT's connections are named plainly, and a sign-in is named by its email", async (t) => {

@@ -13,6 +13,8 @@ import type { WorkspaceFiles } from "./files.js";
 import { WalkRules } from "./walk-rules.js"; // mac7/walk-rules
 import { pullRequestPinned, pushRefusal, pushRepositoryRefusal, selfDevelopmentBase, selfDevelopmentBaseWords } from "./self-development-contract.js"; // Q12
 import { githubRepositoryOf } from "./github-address.js";
+import { queueSourcePublication, resumeSourcePublication } from "./self-development-publication-hook.js";
+import type { PublicationEntry } from "./self-development-publication.js";
 export { githubRepositoryOf };
 
 // The branch a pull request asks to join, for the saved setting and the tool alike. A tool's pattern
@@ -84,9 +86,13 @@ export interface PullRequestDeps {
    * itself, so the token never passes through Branch, the model or a log.
    */
   openWithComputerGh?: ((opening: ComputerPullRequest, signal: AbortSignal) => Promise<unknown>) | undefined;
+  /** Read-only reconciliation, using the same identity as the saved publication. */
+  findPublication?: ((entry: PublicationEntry, signal: AbortSignal) => Promise<unknown | null>) | undefined;
+  /** Fresh owner/request approval checks at every durable publication boundary. */
+  authorizePublication?: ((entry: PublicationEntry) => void) | undefined;
 }
 export interface ComputerPullRequest { repo: string; title: string; body: string; base: string; head: string }
-export interface OpenedPullRequest { repository: string; branch: string; base: string; files: string[]; pullRequest: unknown }
+export interface OpenedPullRequest { repository: string; branch: string; base: string; files: string[]; pullRequest: unknown; publication?: PublicationEntry }
 interface PullRequestInput {
   name: string;
   title: string;
@@ -127,14 +133,22 @@ async function destination(deps: PullRequestDeps, cwd: string, settings: PullReq
   const found = addresses.map(githubRepositoryOf);
   const { repo: pushRepo, https } = found[0]!;
   if (found.some((each) => each.repo.toLowerCase() !== pushRepo.toLowerCase())) throw new Error("The remote sends to more than one repository, so nothing was sent.");
-  await deps.policy.assertAllowed(https, "GitHub repository");
+  let networkFailure: Error | null = null;
+  const check = async (url: URL, what: string) => {
+    try { await deps.policy.assertAllowed(url, what); }
+    catch (error) {
+      if (!deps.findPublication || !(error instanceof Error) || !/could not be resolved|EAI_AGAIN|ENOTFOUND|ETIMEDOUT/.test(error.message)) throw error;
+      networkFailure = error;
+    }
+  };
+  await check(https, "GitHub repository");
   const target = input.targetRepository ? githubRepositoryOf(`https://github.com/${input.targetRepository}.git`) : null;
-  if (target) await deps.policy.assertAllowed(target.https, "pull request target repository");
+  if (target) await check(target.https, "pull request target repository");
   const headRef = await gitText(deps, cwd, ["symbolic-ref", "--quiet", `refs/remotes/${settings.remote}/HEAD`], input.signal).catch(() => "");
   const defaultBranch = headRef ? headRef.replace(`refs/remotes/${settings.remote}/`, "") : null;
   const repo = target?.repo ?? pushRepo;
   const pushOwner = pushRepo.split("/")[0]!;
-  return { repo, pushRepo, pullHeadOwner: repo.toLowerCase() === pushRepo.toLowerCase() ? null : pushOwner,
+  return { repo, pushRepo, pushAddress: addresses[0]!, networkFailure, pullHeadOwner: repo.toLowerCase() === pushRepo.toLowerCase() ? null : pushOwner,
     base: input.base ?? settings.base ?? defaultBranch ?? "main", defaultBranch };
 }
 
@@ -153,19 +167,28 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
   const where = await destination(deps, cwd, settings, input);
   const head = `branch/${input.name}`;
   assertSafeHead(head, where.base, where.defaultBranch);
+  if (deps.findPublication && !input.byItself) {
+    const publication = await resumeSourcePublication(deps, { cwd, branch: head, repository: where.repo,
+      base: where.base, title: input.title, summary: input.summary, signal: input.signal });
+    if (publication) return { repository: publication.repository, branch: publication.branch, base: publication.base,
+      files: publication.files, pullRequest: publication.pullRequest ?? null, publication };
+  }
   const paths = input.paths ?? (await changedPaths(deps, cwd, input.signal));
   const visible = await sendablePaths(deps, cwd, paths);
   if (!visible.length) throw new Error("There are no changed files that may be sent.");
   const opening = {
     repo: where.repo, title: input.title.slice(0, 200), body: input.summary.slice(0, 8000),
     base: where.base, head: where.pullHeadOwner ? `${where.pullHeadOwner}:${head}` : head,
-    changes: visible.slice(0, 20), draft: true,
+    changes: visible.slice(0, 20), draft: true as const,
     ...issueArgument(input.summary),
   };
   // Q12: a push from Branch's own source is held to its contract here, where it happens, whoever asked for it.
   const { refusal: heldBack, walked, repositories } = await pushRefusal({ store: deps.store, owner: deps.owner, workspace: deps.files.root, git: deps.git,
     folder: cwd, runId: input.runId ?? input.auditRunId, signal: input.signal });
   if (heldBack) throw new Error(heldBack);
+  // DNS may be down while the owner prepares a local source commit. Its queued attempt must pass
+  // the complete network check before any push. Ordinary publication still refuses immediately.
+  if (where.networkFailure && !walked) throw where.networkFailure;
   // A change to Branch itself goes out only as the owner's own step, asked about (`sourceSendHold`), never by the
   // hook when a task finishes, and only as a proposal to the line Beta builds.
   if (walked && input.byItself) throw new Error("A change to Branch itself is sent only when you say yes to that step, never by itself when a task finishes.");
@@ -189,6 +212,15 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
   // whatever else happened to be staged already.
   await gitText(deps, cwd, ["--literal-pathspecs", "add", "--", ...visible], input.signal);
   await gitText(deps, cwd, ["--literal-pathspecs", "commit", "--only", "--message", input.title.slice(0, 200), "--", ...visible], input.signal);
+  if (walked && deps.findPublication) {
+    const made = await commitNamed(deps, cwd, `refs/heads/${head}^{commit}`, input.signal);
+    if (!made || !(await onlyNamedOnWalked(deps, cwd, made, walked, visible, input.signal)))
+      throw new Error(`"${head}" is not just one new commit on the checked work, so nothing was sent.`);
+    const publication = await queueSourcePublication(deps, { cwd, workspace: deps.files.root, remote: settings.remote,
+      pushRepo: where.pushRepo, pushAddress: where.pushAddress, repository: where.repo, branch: head, base: where.base, sha: made, walked,
+      files: visible, opening, runId: input.runId, adapter: saved ? "saved" : "computer" }, input.signal);
+    return { repository: where.repo, branch: head, base: where.base, files: visible, pullRequest: publication.pullRequest ?? null, publication };
+  }
   // An explicit refspec: exactly this new line, to a branch of the same name, never anything else.
   if (walked) await sendOnWalked(deps, cwd, settings.remote, head, walked, visible, input.signal);
   else await gitText(deps, cwd, ["push", "--set-upstream", settings.remote, `refs/heads/${head}:refs/heads/${head}`], input.signal, 180000);
@@ -245,7 +277,7 @@ const issueArgument = (text: string): { issue?: string } => {
  * assistant's own file tools (inside the workspace, no secret-looking name, no link, nothing
  * `.branchignore` hides) and Branch's own guard; a folder is never sent whole.
  */
-async function sendablePaths(deps: PullRequestDeps, cwd: string, paths: readonly string[]): Promise<string[]> {
+export async function sendablePaths(deps: PullRequestDeps, cwd: string, paths: readonly string[]): Promise<string[]> {
   const kept: string[] = [];
   // mac7/walk-rules: nothing the owner's rules keep the assistant out of leaves this computer.
   const rules = new WalkRules(deps.files.walkRules({ source: "owner" }));

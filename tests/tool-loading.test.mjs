@@ -131,6 +131,33 @@ test("a deferred tool is found by searching for it, called, and stays loaded aft
   assert.ok(provider.requests[0].toolSection.some((tool) => tool.name === toolDescribeName));
 });
 
+test("a tool the task just found is not pushed out by longer lines in the search tool's own index", async (t) => {
+  const { app, provider } = await fixture(t, [
+    call(toolSearchName, { query: "what is scheduled" }),
+    call("schedules.list", {}),
+    say("Nothing is scheduled."),
+  ]);
+  // A thousand installed tools whose index lines are longer than the stand-ins above: the ceiling has
+  // to be met by trimming the index, which is the product's guess, not by dropping the found tool.
+  const start = app.registry.names().length;
+  for (let i = 0; start + i < 1000; i++) {
+    const group = dummyGroups[i % dummyGroups.length];
+    app.registry.register({
+      name: `${group}.filler_with_a_longer_name_${i}`,
+      description: `Tidy desktop files and folders stand-in ${i}, installed with a description as long as a wordy real tool writes.`,
+      parameters: z.object({ path: z.string().min(1).max(500) }).strict(),
+      permission: "files.read",
+      execute: async () => ({ ok: true }),
+    });
+  }
+  const run = await app.runtime.run({ prompt: "tidy up the files and folders on my desktop" });
+  assert.equal(run.status, "completed");
+  assert.ok(provider.requests[1].tools.includes("schedules.list"), "finding it loaded it in full");
+  assert.ok(provider.requests[2].tools.includes("schedules.list"), "and it stays for the rest of the conversation");
+  for (const [round, sent] of provider.requests.entries())
+    assert.ok(estimateTokens(sent.toolSection) < defaultToolBudgetTokens, `round ${round} stayed under the ceiling`);
+});
+
 test("a narrowed task cannot find a tool it may not use, by searching or by exact name", async (t) => {
   const { app, provider } = await fixture(t, [
     call(toolSearchName, { query: "delete every file and send a message" }),

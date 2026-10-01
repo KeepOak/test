@@ -50,6 +50,7 @@ const has = async (tree: SourceTree, name: string, kind?: "file" | "dir"): Promi
  * called — a zip of `~/.claude` has usually lost the name. Null when it is none of them.
  */
 export async function recognise(tree: SourceTree): Promise<MoveInSource | null> {
+  if (await has(tree, "conversations.json", "file")) return "chatgpt";
   if (await has(tree, "openclaw.json") || await has(tree, "clawdbot.json")
     || (await has(tree, "agents", "dir") && await has(tree, "workspace", "dir"))) return "openclaw";
   if (await has(tree, "opencode.db") || await has(tree, "storage/session", "dir")) return "opencode";

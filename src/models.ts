@@ -10,7 +10,8 @@ import { effortFor } from "./knobs/apply.js"; // R17-S12
 import { thinkingLevels } from "./thinking-levels.js"; // phase2/accounts
 import { noModelPreset } from "./no-model.js";
 import { chatgptModels } from "./chatgpt-provider.js"; // dogfood B25
-import { claudeSubscriptionModels } from "./providers/claude-models.js";
+import { claudeCodePool, claudeSubscriptionModels, claudeSubscriptionPreset } from "./providers/claude-models.js";
+import { chatgptPresetPrefix } from "./chatgpt-presets.js";
 import { isSignInConnection, trunkSignInRefusal } from "./accounts/trunk-guard.js"; // stress test B008, trunks-use-subscriptions
 import { startedWithShortLivedKey } from "./key-context.js";
 import { currentPerson } from "./people/context.js";
@@ -101,7 +102,7 @@ export interface CapabilityPlan extends ModelPlan {
 }
 
 /** mac5/providers: true for a saved connection whose service has ended the route it used. */
-function isRetiredConnection(preset: ModelPreset | undefined): boolean {
+export function isRetiredConnection(preset: ModelPreset | undefined): boolean {
   return (preset?.provider as { retired?: unknown } | undefined)?.retired === true;
 }
 
@@ -321,6 +322,8 @@ export class ModelRouter {
       defaultPreset: this.default.id,
       presets: [...this.presets.values()].map(preset => ({
         id: preset.id, name: preset.name, provider: preset.provider.name, model: preset.model,
+        // Model variants share the exact connection used by AccountsService.poolFor.
+        accountPool: preset.id.startsWith(chatgptPresetPrefix) ? "chatgpt" : claudeSubscriptionPreset(preset.id) ? claudeCodePool : preset.id,
         reasoning: preset.reasoning ?? null,
         // Dogfood B17 (NAS d660ff8): the level a new conversation on this connection starts at, worked out as `plan` does
         // for the first reply (this connection's own default, then Settings › Models › Thinking, then the model's own).

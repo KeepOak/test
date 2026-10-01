@@ -87,6 +87,13 @@ function automaticProblemReporter(ctx: DiagnosticContext, log: DiagnosticLog): A
     settings: () => automaticProblemReportSettings(app.store, owner),
     linkedChannels: () => app.channels.summary().chats.map(({ channel, chatId }) => ({ channel, chatId })),
     gather: (items) => gatherReport(reportSources(ctx, log), items),
+    requireDelivery: (settings) => {
+      app.store.profiles.requireOwner("Automatic problem reports");
+      if (app.store.profiles.scope() !== owner) throw new Error("The owner profile changed before the report could be sent.");
+      if (app.sessionLock.locked()) throw new Error("Unlock Branch before automatic problem reports can be sent.");
+      if (lockdownActive(app.store, owner)) throw new Error("Lockdown is on, so automatic problem reports cannot be sent.");
+      requireLinkedDestination(app, settings);
+    },
     deliverChannel: (channel, chatId, text, key) => app.channels.deliver(channel, chatId, text, key),
     createGitHubIssue: async (repository, title, body) => {
       await app.runtime.executeTool(

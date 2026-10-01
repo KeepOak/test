@@ -1,3 +1,4 @@
+import { processRunning } from "./process-running.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
@@ -19,7 +20,7 @@ import { discardTemp } from "./temp-dir.mjs";
  * starts and this test stops. No window opens.
  */
 
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const alive = (pid) => processRunning(pid, () => { try { process.kill(pid, 0); return true; } catch { return false; } });
 const until = async (what, check, ms = 30000) => {
   const deadline = Date.now() + ms;
   for (;;) {

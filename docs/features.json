@@ -224,7 +224,7 @@
       "status": "partial",
       "evidence": {
         "paths": [
-          "public/service-worker.js",
+          "src/retired-phone-worker.ts",
           "apps/mobile/web/rules.js",
           "tests/web-ui.test.mjs",
           "tests/mobile-rules.test.mjs"
@@ -233,7 +233,7 @@
           "U6 the installable-app files are served and the worker is skipped inside the desktop app",
           "a notification is only for something new that is waiting for the owner"
         ],
-        "detail": "There is an installable app and phone notifications for items waiting on the owner. Nothing notifies when a task completes, and there is no Web Push while the app is in the background."
+        "detail": "Phone notifications cover items waiting on the owner. The redesigned window serves a manifest but registers no offline shell; the legacy worker URL only retires previous Branch shell registrations. Nothing notifies when a task completes, and there is no Web Push while the app is in the background."
       },
       "remaining": "Notify when a task completes, and deliver Web Push while the app is in the background."
     },
@@ -3032,15 +3032,19 @@
           "tests/mac-followups.test.mjs",
           "tests/daemon-update.test.mjs",
           "tests/service-update.test.mjs",
-          "tests/daemon-outlives-launcher.test.mjs"
+          "tests/daemon-outlives-launcher.test.mjs",
+          "src/install/process-alive.ts",
+          "tests/process-alive.test.mjs"
         ],
         "tests": [
           "the background engine keeps handling tasks after the launcher that started it has gone",
           "the background engine is a sign-in task that opens no window, and is never registered here",
           "only this computer, with the master key, can close the engine, and only the background one",
-          "the background engine is asked to close, forced if it will not, and the note is cleared"
+          "the background engine is asked to close, forced if it will not, and the note is cleared",
+          "Linux: quit observes an exited zombie after acknowledgement without waiting or force fallback",
+          "Linux: background quit accepts an exited zombie without termination signals"
         ],
-        "detail": "The background engine installs as a sign-in task or service and stops through a controlled close route. A test now starts it through a launcher of its own, waits for that launcher to exit, and asks the engine itself for two tasks over its own port before stopping it and checking the process is gone."
+        "detail": "The background engine installs as a sign-in task or service and stops through a controlled close route. A test now starts it through a launcher of its own, waits for that launcher to exit, and asks the engine itself for two tasks over its own port before stopping it and checking the process is gone. Linux shutdown checks also recognize readable procfs zombie/dead states as exited, without forcing an already-finished process; unavailable or malformed procfs state retains the signal-zero result."
       }
     },
     {
