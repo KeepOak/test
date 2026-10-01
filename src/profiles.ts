@@ -208,9 +208,17 @@ export class Profiles {
     }
     this.wrongPins.delete(key);
   }
+  private readonly switchListeners = new Set<(profileId: string | null) => void>();
+  /** Hears each change of who uses the window (null: the owner); answers a function that stops listening. */
+  onSwitched(listener: (profileId: string | null) => void): () => void {
+    this.switchListeners.add(listener);
+    return () => { this.switchListeners.delete(listener); };
+  }
   /** Puts the window on a profile (null: the owner), remembered across a restart while the owner's PIN is set. */
   private leaveOn(profileId: string | null): void {
+    const before = this.current;
     this.current = profileId;
+    if (before !== profileId) for (const listener of [...this.switchListeners]) try { listener(profileId); } catch { /* telling must not undo the switch */ }
     // Without the owner's PIN nothing is remembered, and nothing touches the database.
     if (this.ownerPinSet) this.db.prepare("UPDATE household_owner_pin SET active_profile=? WHERE owner=?").run(profileId, this.owner);
   }

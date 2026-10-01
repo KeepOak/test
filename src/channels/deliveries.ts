@@ -25,6 +25,9 @@ export const DeliverySchema = z.object({
   lastError: z.string().max(500).nullable().default(null),
   messageId: z.string().max(64).nullable().default(null),
   sentAt: z.string().nullable().default(null),
+  editedText: z.string().min(1).max(4096).optional(),
+  editedAt: z.string().optional(),
+  deletedAt: z.string().optional(),
 }).strict();
 export type Delivery = z.infer<typeof DeliverySchema> & { id: string; createdAt: string; updatedAt: string };
 export type Sender = (chatId: string, text: string, replyTo?: string) => Promise<string | undefined>;
@@ -218,6 +221,14 @@ export class Deliveries {
       const parsed = DeliverySchema.safeParse(record.data);
       return parsed.success ? [{ ...parsed.data, id: record.id, createdAt: record.createdAt, updatedAt: record.updatedAt }] : [];
     });
+  }
+  /** Preserve the original send and its deduplication key after a confirmed remote edit or deletion. */
+  recordMessageAction(id: string, action: "edit" | "delete", text?: string): Delivery {
+    const row = this.get(id);
+    if (!row || row.status !== "sent" || !row.messageId || row.deletedAt) throw new Error("That own sent message is unavailable or already deleted.");
+    const at = this.now().toISOString();
+    return this.save(id, DeliverySchema.parse({ ...this.data(row), ...(action === "edit"
+      ? { editedText: text, editedAt: at } : { deletedAt: at }) }));
   }
   private get(id: string): Delivery | undefined {
     const record = this.store.get("deliveries", this.owner, id);

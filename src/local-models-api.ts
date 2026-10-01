@@ -3,6 +3,9 @@ import { offers, searchHuggingFace, lookUpOllama, searchQuery } from "./local-ca
 import { savedLocalConnections } from "./local-connections.js";
 import { assertLocalModelsOn, localModelsMode, saveLocalModelsMode } from "./local-jobs.js";
 import { oneButtonMode, saveOneButtonMode, type PressContext } from "./local-one-button.js";
+import { vllmHereOnly } from "./local-oneclick.js";
+import { currentCaller } from "./caller.js";
+import { throughPairedDoor } from "./people/context.js";
 import type { LocalKit } from "./local-kit.js";
 import { runtimeIds, runtimeInfo, type RuntimeId } from "./local-launch.js";
 import { RuntimeSchema } from "./local-manage.js";
@@ -92,8 +95,8 @@ async function changes(deps: LocalModelsDeps, path: string, input: unknown): Pro
   assertLocalModelsOn(store, owner);
   if (path === "/api/local-models/setup" && (input as { runtime?: unknown } | null)?.runtime === "vllm") {
     store.profiles.requireOwner("Starting vLLM with a local model");
-    if (deps.caller.source !== "owner" || deps.caller.person || deps.caller.shortLivedKey || deps.caller.trunkKeys)
-      throw new Error("Set up vLLM from the owner's own Branch window.");
+    if (deps.caller.source !== "owner" || deps.caller.person || deps.caller.shortLivedKey || deps.caller.trunkKeys
+      || currentCaller().throughDoor || throughPairedDoor()) throw new Error(vllmHereOnly);
   }
   if (path === "/api/local-models/search") return search(kit, input);
   switch (path) {

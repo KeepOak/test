@@ -6,8 +6,8 @@
    counts them when achievements are on). */
 
 import { $, esc, render } from "../core/dom.js";
-import { E, S, ownerHere, ownName } from "../core/state.js";
-import { api } from "../core/api.js";
+import { E, S, ownerHere, activeId } from "../core/state.js";
+import { api, link } from "../core/api.js";
 import { toast } from "../core/ui.js";
 import { effMode } from "./look.js";
 import { OWN, loadOwn } from "./ownbg.js";
@@ -21,6 +21,7 @@ import { binding, spoken } from "./keys.js";
 import { petLine, hintLine, hintDue } from "./pettalk.js";
 import { popupsOn } from "../flows/guides.js";
 import { DRAWN, drawDrawn, drawnKey, stopDrawn, drawScenery } from "./procbg.js";
+import { petGateway } from "./extras.js";
 
 const KEY = "branch-scene";
 export const W = { bg: "painted", scene: "auto", season: "auto", petWhere: "side", scenery: true };
@@ -176,7 +177,7 @@ export const paintScenery = () => drawScenery($("#scenery"));
 /* Every kind the gallery offers (core/pets.js): a pixel pet on its canvas or a picture pet as its walk loop.
    A moment of cheer follows a Trunk finishing (shell/cheer.js). Once the window sleeps the pet stops,
    a "z" floats up and its walk loop pauses. A running task makes the walk loop play faster; otherwise it walks. */
-const P = { x: 0, dir: 1, say: "", until: 0, cool: 0, mood: "walk", moodNow: "", moodUntil: 0, hopUntil: 0 };
+const P = { x: 0, dir: 1, say: "", until: 0, cool: 0, mood: "walk", moodNow: "", moodUntil: 0, hopUntil: 0, context: null, newsKey: null };
 const hidden = (part) => (E.state?.preferences?.hidden ?? []).includes(part);
 stepWhile(() => !!D.settings?.pets?.on);
 export function petShown() { const p = D.settings?.pets; return !!(p?.on && petOf(p.kind) && !hidden("pet")); }
@@ -228,6 +229,7 @@ function placePet(box) {
   box.style.transition = "";
 }
 export function drawPet() {
+  keepPetWords();
   syncWalker();
   const box = $(".petbox");
   if (box) placePet(box);
@@ -257,24 +259,51 @@ const HINT_KEY = "branch-pet-hint";
 const lastHint = () => { try { return Number(localStorage.getItem(HINT_KEY)) || 0; } catch { return 0; } };
 const hintSaid = () => { try { localStorage.setItem(HINT_KEY, String(Date.now())); } catch { /* storage refused: the hour is kept only while open */ } P.hintAt = Date.now(); };
 function facts() {
-  const runs = (E.state?.runs ?? []).filter((r) => r.status === "running" && !r.parentRunId);
+  const at = Date.now(), age = at - E.stateReadAt;
+  const fresh = link.up && age >= 0 && age <= 60000 && E.profiles && E.state?.profileId === activeId();
+  const runs = fresh ? (E.state?.runs ?? []).filter((r) => !r.parentRunId && !r.aside) : [];
+  const byId = new Map(runs.map((r) => [r.id, r]));
+  const latest = S.view === "chat" && S.chat ? runs.filter((r) => r.sessionId === S.chat)
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0] : null;
+  const failureAge = at - Date.parse(latest?.updatedAt ?? "");
   const key = (action) => { const combo = binding(action); return combo ? spoken(combo) : ""; }; // the owner may move a key, or take it away
   return {
-    waiting: (E.state?.attention ?? []).filter((w) => !w.parentRunId),
+    waiting: fresh ? (E.state?.attention ?? []).filter((w) => !w.parentRunId && !w.canContinue && byId.get(w.runId)?.status === "needs_input").map((w) => ({ runId: w.runId })) : [],
+    connection: link.up,
+    gateway: fresh ? petGateway() : null,
     lockdown: !!document.getElementById("app")?.classList.contains("locked"),
-    noModel: !!E.state?.modelNeeded, // the engine's own "no model yet" (chat/nomodel.js reads the same)
-    running: runs.map((r) => ({ who: ownName(r.sessionId) || E.state?.identity?.name || "" })),
-    view: S.view, owner: ownerHere(),
-    keys: { palette: key("palette"), sideList: key("sideList") },
-    rank: D.rank ?? "Bronze", tipsOn: popupsOn(), lastHint: Math.max(lastHint(), P.hintAt ?? 0), at: Date.now(),
+    noModel: fresh && !!E.state?.modelNeeded,
+    failed: latest?.status === "failed" && failureAge >= 0 && failureAge <= 300000 ? latest.id : null,
+    running: runs.filter((r) => r.status === "running").map((r) => ({ id: r.id })),
+    view: S.view, settingsPage: S.setPage, owner: ownerHere(),
+    keys: { palette: key("palette"), sideList: key("sideList"), focusPrompt: key("focusPrompt") },
+    rank: D.rank ?? "Bronze", tipsOn: popupsOn(), lastHint: Math.max(lastHint(), P.hintAt ?? 0), at,
   };
 }
 const words = (key, values) => t(key, values);
 export function say(text) {
+  P.context = null;
   P.say = text;
   P.until = Date.now() + 6500;
   const el = $("#pet-say");
   if (el) { el.textContent = text; el.hidden = false; }
+}
+function sayLine(line, now) {
+  say(line.text);
+  P.context = { profile: activeId(), news: line.kind === "news" ? line.key : null,
+    surface: JSON.stringify([now.view, now.settingsPage, now.keys, now.rank, now.tipsOn]) };
+}
+/* Clear factual words as soon as their source no longer applies, including profile changes and stale snapshots. */
+function keepPetWords() {
+  if (!P.context) return;
+  const now = facts(), line = petLine(now, words);
+  const same = P.context.profile === activeId() && (P.context.news
+    ? line?.kind === "news" && line.key === P.context.news
+    : line?.kind !== "news" && P.context.surface === JSON.stringify([now.view, now.settingsPage, now.keys, now.rank, now.tipsOn]));
+  if (same) return;
+  P.say = ""; P.until = 0; P.context = null;
+  const bubble = $("#pet-say");
+  if (bubble) bubble.hidden = true;
 }
 /* Something the window saw, told to the engine (POST /api/delight/noticed, the shapes in src/delight.ts NoticeSchema).
    The engine keeps it only while achievements are on, so nothing is sent while they are off. The switch may have been
@@ -292,13 +321,13 @@ export async function noticed(what) {
 }
 /* A pat: the news of the moment, else a hint when one is due; with nothing to say it only hops. */
 export async function pat() {
-  const line = petLine(facts(), words);
-  if (line) say(line.text);
+  const now = facts(), line = petLine(now, words);
+  if (line) sayLine(line, now);
   if (line?.kind === "hint") hintSaid();
   await noticed({ what: "pat" });
 }
 
-/* It walks, unless things are kept still or it naps; it speaks up by itself when a Trunk needs you, at most every five
+/* It walks, unless things are kept still or it naps; it speaks up when current context changes, at most every five
    minutes, and with a hint when one is due (at most hourly, and never in its first two minutes on screen). The timer
    runs only while the pet is shown. */
 let walker = null;
@@ -309,15 +338,19 @@ function syncWalker() {
 }
 function speakUp() {
   const now = facts();
-  if (Date.now() > P.cool && now.waiting.length) { P.cool = Date.now() + 300000; say(petLine(now, words).text); return; }
+  const news = petLine(now, words);
+  if (Date.now() > P.cool && news?.kind === "news" && news.key !== P.newsKey) {
+    P.cool = Date.now() + 300000; P.newsKey = news.key; sayLine(news, now); return;
+  }
   P.shownAt ??= Date.now();
   if (Date.now() - P.shownAt < 120000) return;
   const hint = hintLine(now, words);
-  if (hint) { say(hint.text); hintSaid(); }
+  if (hint && news?.kind !== "news") { sayLine(hint, now); hintSaid(); }
 }
 function walk() {
   const box = $(".petbox");
   if (!box || document.hidden) return; // nobody sees it walk while the window is hidden
+  keepPetWords();
   applyMood();
   const bubble = $("#pet-say");
   if (bubble && !bubble.hidden && Date.now() > P.until) bubble.hidden = true;

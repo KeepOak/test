@@ -1,3 +1,4 @@
+import { assertHealthCurrent, healthSignal } from "./health-check.js";
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
 import { z } from "zod";
@@ -166,6 +167,8 @@ export interface ConnectOptions {
   headers?: Record<string, string>;
   what?: string;
   runId?: string | null;
+  /** Asked once the address is allowed, just before dialling: false means the caller has ended or locked since. */
+  proceed?: () => boolean;
 }
 
 /**
@@ -278,7 +281,9 @@ export class NetworkPolicy {
       if (init?.redirect === "follow")
         throw new Error("A checked request does not follow a redirect by itself: each new address is checked first, so follow it by asking again");
       const judged = await policy.judge(url, "address");
-      const next: RequestInit = { ...init, redirect: init?.redirect ?? "error" };
+      assertHealthCurrent();
+      const signal = healthSignal(init?.signal);
+      const next: RequestInit = { ...init, redirect: init?.redirect ?? "error", ...(signal ? { signal } : {}) };
       if (!judged || proxyCarries(url)) return base(input, next);
       const pin: Pin = { host: url.hostname, addresses: judged, dial: policy.dial };
       const held: PinnedInit = { ...next, [pinnedTo]: pin };
@@ -311,6 +316,7 @@ export class NetworkPolicy {
       await this.assertAllowed(httpTwin(url));
       if (this.sockets.size >= this.maxSockets)
         throw new Error(`Branch already has ${this.maxSockets} live connections open, which is as many as it will hold at once`);
+      if (options.proceed && !options.proceed()) throw new Error("The connection was stopped before it opened");
     } catch (e) {
       this.watchSockets(record, "refused", e instanceof Error ? e.message : String(e));
       throw e;

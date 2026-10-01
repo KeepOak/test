@@ -1,3 +1,4 @@
+import { processAlive as running } from "../install/process-alive.js";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -21,9 +22,6 @@ export interface ShellLockDeps {
 }
 export type ShellLock = { held: true; release(): Promise<void> } | { held: false; by: number };
 
-const running = (pid: number): boolean => {
-  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
-};
 
 async function owner(path: string): Promise<number | null> {
   try {
