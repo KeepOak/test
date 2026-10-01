@@ -24,6 +24,7 @@ import { splash, splashDone } from "./shell/inperson.js";
 import { initNotices } from "./shell/notices.js";
 import { initLanguage, t } from "../i18n.js";
 import { initLive, restoreOpen } from "./shell/liveupdate.js"; // hot-update: live window updates keep what is open
+import { openPage } from "./places/pages19.js"; // SELF-309: /#page=<id>
 
 /* A place draws its own <main class="main" id="main">; inside the shell's #main that would be a second main and a second
    #main, so it becomes a <div> with the same classes and children (the styles are by class). */
@@ -205,9 +206,11 @@ function escape() {
 const UUID = /^[a-f0-9-]{36}$/;
 async function followLink() {
   const hash = new URLSearchParams(location.hash.slice(1));
-  const route = hash.get("open"), task = hash.get("task");
-  if (!route && !task) return;
+  const route = hash.get("open"), task = hash.get("task"), page = hash.get("page");
+  if (!route && !task && !page) return;
   history.replaceState(null, "", location.pathname + location.search);
+  // SELF-309: a page the assistant published has a stable address, /#page=<id>.
+  if (page && UUID.test(page)) { await openPage(page); return; }
   if (route && UUID.test(route)) await openConversation(route);
   else if (route && goHome(route)) renderNow();
   const run = task && UUID.test(task) ? (E.state?.runs ?? []).find((r) => r.id === task) : null;

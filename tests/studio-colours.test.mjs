@@ -10,17 +10,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
+import { openChat } from "./open-chat.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
 /* Redesign: in the new window a Trunk's studio is "Edit Trunk…" (flows/trunk.js), opened from its conversation row's
-   menu; "New Trunk" makes "Trunk N" at once, with no studio (flows/trunk.js newTrunk). Its colours are prototype.html's eight swatches (COLOURS), each named by
+   menu; "New Trunk" asks for a name, then makes it, with no studio (flows/trunk.js newTrunk). Its colours are prototype.html's eight swatches (COLOURS), each named by
    its colour; there is no "any colour" picker, no Letters face and no "Follow my theme" in the design. */
 const PROTOTYPE = ["#2F8C86", "#D8612A", "#8A5AA8", "#5E8C4A", "#4F6FA8", "#C9982E", "#B84A6B", "#56616B"];
 
-async function signedIn(t) {
+async function signedIn(t, provider = undefined) {
   const root = await mkdtemp(join(tmpdir(), "branch-studio-colours-"));
-  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), ...(provider ? { provider } : {}) });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
@@ -77,6 +78,9 @@ test("DG-105 a chosen colour is kept as #rrggbb and comes back chosen after a re
   /* New Trunk, the way a person makes one: the + menu's New Trunk names it and opens its conversation. */
   await page.getByRole("button", { name: "New conversation, Trunk, room or automation" }).click();
   await page.getByRole("menuitem", { name: "New Trunk" }).click();
+  await page.locator("#nt-name").fill("Painter");
+  await page.locator('.dlg [data-act="new-trunk-create"]').click();
+  await page.locator("#nt-name").waitFor({ state: "detached" });
   let made;
   for (let i = 0; i < 50 && !made; i++) { made = (await (await call("GET", "/api/trunks")).json()).trunks[0]; if (!made) await page.waitForTimeout(100); }
   assert.ok(made, "New Trunk made one");
@@ -128,3 +132,90 @@ test("DG-105 the server keeps only a real colour, and never inside the look", as
   assert.deepEqual([cleared.trunk.chosenColour, cleared.trunk.look.colour], [null, "theme"]);
 });
 
+
+test("TRUNK-033 a Trunk keeps its own voice in the editor, even one this computer does not have, and Default clears it", async (t) => {
+  const { page, errors, call } = await signedIn(t);
+  const made = (await (await call("POST", "/api/trunks", { name: "Reader" })).json()).trunk;
+  assert.equal((await call("POST", `/api/trunks/${made.id}`, { voice: "Voice Kept Elsewhere" })).status, 200);
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await openEditor(page, made);
+  const picker = page.locator("#st-voice");
+  await picker.waitFor();
+  assert.match(await picker.innerText(), /Voice Kept Elsewhere/, "a saved voice is shown even when it is not on this computer");
+  await picker.click();
+  await page.locator('.gsel-pop [data-act="gsel-pick"]', { hasText: "Default" }).click(); // whatever role the list's items carry
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.locator(".dlg").waitFor({ state: "detached" });
+  const [kept] = (await (await call("GET", "/api/trunks")).json()).trunks;
+  assert.equal(kept.voice, "", "Default follows the owner's own voice setting");
+  assert.deepEqual(errors, []);
+});
+
+/* TRUNK-033: a reply the window reads aloud after a send is read in the voice of the Trunk that wrote it. The window reads
+   a send's answer in adopt() (chat/chat.js), which goes through readReplies so the author's voice is used. The speech
+   route is stood in, so no voice service is reached.
+   Mutation: in adopt() read with readNewReply(before, C.messages) (no voice) and the reply is spoken with "": red. */
+test("TRUNK-033 a reply to a send is read aloud in its Trunk's own voice", async (t) => {
+  const provider = { name: "scripted", async complete() { return { content: "Read by the Trunk.", toolCalls: [] }; } };
+  const { page, errors, call } = await signedIn(t, provider);
+  const made = (await (await call("POST", "/api/trunks", { name: "Reader" })).json()).trunk;
+  assert.equal((await call("POST", `/api/trunks/${made.id}`, { voice: "Voice Kept Elsewhere" })).status, 200);
+  assert.equal((await call("POST", "/api/voice/settings", { autoReadAloud: true, readAloudWhen: "always" })).status, 200);
+  const voices = [];
+  await page.route("**/api/voice/speak", (r) => { voices.push(JSON.parse(r.request().postData() ?? "{}").voice); r.fulfill({ status: 200, contentType: "audio/mpeg", body: Buffer.from([0]) }); });
+  await page.addInitScript(() => { HTMLMediaElement.prototype.play = function () { return Promise.resolve(); }; });
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await openChat(page, made.chatSessionId);
+  await page.locator("#prompt").fill("Read me the answer");
+  await page.locator("#prompt").press("Enter");
+  await page.locator("#conversation", { hasText: "Read by the Trunk." }).waitFor({ timeout: 30000 });
+  for (let tries = 0; tries < 100 && !voices.length; tries++) await page.waitForTimeout(100);
+  assert.deepEqual(voices, ["Voice Kept Elsewhere"], "read in the Trunk's own voice");
+  assert.deepEqual(errors, []);
+});
+
+/* TRUNK-033: the voice list comes from the engine after the editor opens. Arriving while the owner has the list open, it
+   never changes what the press lands on; arriving for an editor that was closed and opened again, it is not used. */
+test("TRUNK-033 a voice list that arrives late never changes the choice being made, nor a newer editor", async (t) => {
+  const { page, errors, call } = await signedIn(t);
+  const made = (await (await call("POST", "/api/trunks", { name: "Reader" })).json()).trunk;
+  assert.equal((await call("POST", `/api/trunks/${made.id}`, { voice: "Custom" })).status, 200);
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  const lists = [];
+  await page.route("**/api/voice/voices", (route) => new Promise((resolve) => lists.push({ route, resolve })));
+  const answer = (at, names) => { const { route, resolve } = lists[at]; resolve(route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ system: names }) })); };
+  const asked = async (count) => { for (let i = 0; i < 100 && lists.length < count; i++) await page.waitForTimeout(50); assert.equal(lists.length, count); };
+
+  // The list is open on [Default, Custom] when the voices arrive; Custom is pressed and Custom is what is chosen.
+  await openEditor(page, made);
+  await asked(1);
+  await page.locator("#st-voice").click();
+  await page.locator('.gsel-pop [data-act="gsel-pick"]', { hasText: "Custom" }).waitFor();
+  answer(0, ["Adam", "Bella"]);
+  await page.waitForTimeout(400);
+  await page.locator('.gsel-pop [data-act="gsel-pick"]', { hasText: "Custom" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.locator(".dlg").waitFor({ state: "detached" });
+  assert.equal((await (await call("GET", "/api/trunks")).json()).trunks.find((one) => one.id === made.id).voice, "Custom", "the voice pressed is the voice kept");
+
+  // Closed and opened again while the first editor's list was on its way: only the newer editor's list is shown.
+  await openEditor(page, made);
+  await asked(2);
+  await page.locator('.dlg [data-act="dlg-close"]').first().click();
+  await page.locator(".dlg").waitFor({ state: "detached" });
+  await openEditor(page, made);
+  await asked(3);
+  answer(2, ["Zed"]);
+  await page.locator("#st-voice").click();
+  await page.locator('.gsel-pop [data-act="gsel-pick"]', { hasText: "Zed" }).waitFor();
+  await page.keyboard.press("Escape");
+  answer(1, ["Old list"]);
+  await page.waitForTimeout(600);
+  await page.locator("#st-voice").click();
+  assert.equal(await page.locator('.gsel-pop [data-act="gsel-pick"]', { hasText: "Old list" }).count(), 0, "the closed editor's list is not used");
+  assert.equal(await page.locator('.gsel-pop [data-act="gsel-pick"]', { hasText: "Zed" }).count(), 1);
+  assert.deepEqual(errors, []);
+});

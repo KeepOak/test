@@ -193,7 +193,7 @@ function draw() {
   /* The rest, quieter: What's new (the notes this build ships, flows/whatsnew.js), undoing an update (greyed: going back
      is `branch rollback` in a terminal, which says first whether it would lose work), the channel, and the copy of the data folder. */
   html += `<details class="adv upd18-more" id="u-more"${moreOpen ? " open" : ""}><summary>${esc(t("window.updates.card.more"))}</summary>`;
-  html += `<div class="ctl"><b>${t("window.settings.updates.whats-new")}</b><span class="right"><button class="btn sm" type="button" data-act="whatsnew13">${t("window.settings.updates.whats-new")}</button></span><small></small></div>`;
+  html += `<div class="ctl"><b>${t("window.settings.updates.whats-new")}</b><span class="right"><button class="btn sm" type="button" data-act="whatsnew13">${t("window.settings.updates.whats-new")}</button></span><small>${t("window.settings.explain.whats-new")}</small></div>`;
   html += `<div class="ctl"><b>${t("window.settings.updates.undo-the-last-update")}</b><span class="right"><button class="btn sm" type="button" data-act="soon" data-why="undo-the-last-update">${t("strip.undo")}</button></span><small></small></div>`;
   html += channelSection();
   html += "</details>";

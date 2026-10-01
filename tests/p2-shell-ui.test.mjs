@@ -213,22 +213,28 @@ test("Add a Trunk: switched off it says so and offers the switch; the tab strip 
   const f = await fixture(t);
   await f.call("/api/trunks/switch", { part: "trunks", mode: "off" });
   await f.open();
-  // Redesign: the prototype's + menu makes "Trunk N" at once and has no switch; with Trunks off the engine refuses, and
-  // the window says so in the engine's words.
-  await f.page.locator('#side [data-act="newmenu"]').click();
-  await f.page.locator(".pop").getByRole("menuitem", { name: "New Trunk" }).click();
+  // TRUNK-026: the + menu's New Trunk asks for a name, then makes it; with Trunks off the engine refuses, and the window
+  // says so in the engine's words, leaving the name dialog open to cancel.
+  const named = async (name) => {
+    await f.page.locator('#side [data-act="newmenu"]').click();
+    await f.page.locator(".pop").getByRole("menuitem", { name: "New Trunk" }).click();
+    await f.page.locator("#nt-name").fill(name);
+    await f.page.locator('.dlg [data-act="new-trunk-create"]').click();
+  };
+  await named("Trunk 1");
   await f.page.locator(".toast").waitFor();
   const refusal = (await f.call("/api/trunks", { name: "Trunk 1" })).error;
   assert.ok(refusal, "the engine refuses while Trunks are off");
   assert.equal((await f.page.locator(".toast").innerText()).trim(), refusal, "the engine's refusal is said in its own words");
   assert.equal((await f.call("/api/trunks")).trunks.length, 0, "nothing was made");
+  await f.page.locator('.dlg [data-act="dlg-close"]').last().click();
+  await f.page.locator("#nt-name").waitFor({ state: "detached" });
   await f.call("/api/trunks/switch", { part: "trunks", mode: "on" });
   const beforeIds = new Set((await f.call("/api/trunks")).trunks.map(trunk => trunk.id));
-  await f.page.locator('#side [data-act="newmenu"]').click();
-  await f.page.locator(".pop").getByRole("menuitem", { name: "New Trunk" }).click();
+  await named("Scout");
   let made;
   for (let i = 0; i < 100 && !made; i++) { made = (await f.call("/api/trunks")).trunks.find(trunk => !beforeIds.has(trunk.id)); if (!made) await f.page.waitForTimeout(50); }
-  assert.equal(made?.name, "Trunk 1", "the prototype's Trunk N");
+  assert.equal(made?.name, "Scout", "the name the owner gave");
   await f.page.waitForFunction((id) => document.querySelector(`#side .row[data-id="${id}"]`)?.getAttribute("aria-current") === "true", made.chatSessionId);
   // Pairing: the prototype's "Add a computer or phone" keeps one dialog and one tab strip.
   await f.page.locator('#side [data-act="machines"]').click();

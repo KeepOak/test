@@ -10,6 +10,7 @@ import { fact15 } from "../rows15.js";
 import { sections17, init17, load17 } from "../p17-advanced.js";
 import { initMarket } from "../market.js"; // RES-720
 import { t } from "../../../i18n.js";
+import { initSpecialistOrder, specialistOrderLive } from "../specialist-order.js";
 import { tunnelSeg, loadTunnel, initTunnel, tunnelLive } from "../tunnel-seg.js";
 import { restart as restartEngine } from "./self.js";
 
@@ -23,20 +24,23 @@ import { restart as restartEngine } from "./self.js";
    POST /api/heartbeat/switches, merged), checks and retries (flows-boards part "recipe-checks"), USB triggers (reach part
    "usb"). Tools: the readiness check (autonomy part "readiness"), searching X (personal part "x-search") and video tools
    (GET/POST /api/media/programs { mode }, merged). A three-way switch shows on unless "off" and turns on as "when-needed".
+   "From now on" for a specialist keeps one standing instruction for one Trunk, listed there with Remove
+   (../specialist-order.js). Checking install requests for malware is how every install request always works
+   (src/flows-boards/install-requests.ts), so it is drawn on and has nothing to turn off.
    Reach webhooks from outside is the owner's public door for webhooks only (../tunnel-seg.js).
    Crash reports need a linked destination first, so they stay greyed; every other greyed row says why under itself
    (core/why.js, the locale's window.why.*). */
 const D = { knobs: null, log: null, local: null, profiles: null, orders: null, retrieval: null, providers: null, history: null,
-  heartbeat: null, boards: null, reach: null, autonomy: null, personal: null, media: null, search: null };
+  heartbeat: null, boards: null, reach: null, autonomy: null, personal: null, media: null, archive: null, search: null };
 const PATHS = { knobs: "knobs", log: "diagnostics/log/settings", local: "local-models", profiles: "browser/profiles", orders: "autonomy/orders",
   retrieval: "memory/retrieval", providers: "learning-more/providers", history: "memory/history", heartbeat: "heartbeat",
-  boards: "flows-boards", reach: "reach", autonomy: "autonomy", personal: "personal", media: "media/programs", search: "web-search" };
+  boards: "flows-boards", reach: "reach", autonomy: "autonomy", personal: "personal", media: "media/programs", archive: "memory/auto-archive", search: "web-search" };
 /* The owner's own settings: every change here is refused to a household profile (src/household-routes.ts fails closed),
    so for one the window neither reads them nor draws them live: each control is drawn without its id and greys with the
    owner-only reason (as models.js num() does, Q261), never showing an "off" it did not read. */
 const household = () => E.profiles?.isOwner === false;
 const own = (id) => (household() ? 'data-why="knobs-owner-only"' : `id="${id}" ${WIRES[id] ? checked(id) : ""}`);
-const OWNER_ONLY = new Set(["retrieval", "providers", "history", "heartbeat", "boards", "reach", "autonomy", "personal", "media", "search"]);
+const OWNER_ONLY = new Set(["retrieval", "providers", "history", "heartbeat", "boards", "reach", "autonomy", "personal", "media", "archive", "search"]);
 const onMode = (mode) => Boolean(mode) && mode !== "off";
 const mode = (on) => (on ? "when-needed" : "off");
 const part = (path, name) => (on) => api(path, { part: name, mode: mode(on) });
@@ -65,6 +69,21 @@ async function loadAll() {
   render();
 }
 
+/* Archive facts unused for: 90 days, 180 days or never (GET/POST /api/memory/auto-archive, src/memory-auto-archive.ts),
+   pressed from the engine's value. A fact set aside keeps its versions and comes back from Library › Memory › Archive;
+   the row says how many would go now. */
+function archiveRow() {
+  const label = t("window.settings.advanced.archive-facts-unused-for");
+  const after = D.archive?.settings?.afterDays ?? null, owner = !household() && D.archive;
+  const opt = (v, words) => `<button type="button" aria-pressed="${owner ? String(after) === v : false}" data-act="${owner ? "ad-archive" : "ad-archive-owner"}"${owner ? "" : ' data-why="knobs-owner-only"'} data-v="${v}">${words}</button>`;
+  const sub = after ? t("window.settings.advanced.archive-would", { count: D.archive.wouldSetAside ?? 0 }) : t("window.settings.advanced.archive-never");
+  return `<div class="ctl"><b>${label}</b><span class="right"><span class="seg" role="group" aria-label="${label}">${opt("90", t("window.settings.advanced.90-days"))}${opt("180", t("window.settings.advanced.180-days"))}${opt("null", t("window.settings.advanced.never"))}</span></span><small>${owner ? sub : ""}</small></div>`;
+}
+async function chooseArchive(v) {
+  try { await api("memory/auto-archive", { afterDays: v === "null" ? null : Number(v) }); } catch (error) { toast(error.message); }
+  await loadAll();
+}
+
 /* Web search: where "search the web" goes (GET/POST /api/web-search, src/web-search-choice.ts), pressed from the engine's
    own choice. A paid service's key stays in the locker; the row says the secret's name and whether it is saved. SearXNG
    takes its address in the box under the row, sent with the pick. */
@@ -81,7 +100,7 @@ function searchRow() {
   const buttons = SEARCH.map(([v, words]) => `<button type="button" aria-pressed="${D.search ? chosen === v : false}" data-act="ad-search" data-v="${v}">${words}</button>`).join("");
   const address = `<span class="right num15"><input class="inp" id="ad-searx" value="${esc(D.search?.chosen?.searxngUrl ?? "")}" placeholder="https://search.example.org" aria-label="${t("window.settings.advanced.search-address")}"></span>`;
   return `<div class="ctl"><b>${label}</b><span class="right"><span class="seg" role="group" aria-label="${label}">${buttons}</span></span><small>${sub}${from}</small></div>`
-    + `<div class="ctl"><b>${t("window.settings.advanced.search-address")}</b>${address}<small></small></div>`;
+    + `<div class="ctl"><b>${t("window.settings.advanced.search-address")}</b>${address}<small>${t("window.settings.advanced.search-address-explain")}</small></div>`;
 }
 
 async function chooseSearch(v) {
@@ -187,9 +206,9 @@ export function draw() {
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.most-facts-it-keeps")}</b><span class=\"right num15\"><input class=\"inp\" ${own("ad-facts")} value=\"` + esc(E.state?.memoryCapacity?.maxFacts ?? "") + `\" aria-label=\"${t("window.settings.advanced.most-facts-it-keeps")}\" data-sw=\"set\"><small>${t("window.settings.advanced.facts")}</small></span><small>${t("window.settings.advanced.tidy-up-suggests-what-to-archive")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.match-by-meaning")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-match-by-meaning")} aria-label=\"${t("window.settings.advanced.match-by-meaning")}\" data-sw=\"set\"><small>${t("window.settings.advanced.finds-invoice-when-the-fact-says")}</small></div>`;
     html += fact15(t("window.settings.advanced.share-memory-between-trunks"), "f15-share-memory-between-trunks");
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.outside-memory")}</b><span class=\"right\"><span class=\"seg\" role=\"group\" aria-label=\"${t("window.settings.advanced.outside-memory")}\">${outsideSeg()}</span></span><small></small></div>`;
+    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.outside-memory")}</b><span class=\"right\"><span class=\"seg\" role=\"group\" aria-label=\"${t("window.settings.advanced.outside-memory")}\">${outsideSeg()}</span></span><small>${t("window.settings.explain.outside-memory")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.keep-a-history-in-git")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-keep-a-history-in-git")} aria-label=\"${t("window.settings.advanced.keep-a-history-in-git")}\" data-sw=\"set\"><small>${t("window.settings.advanced.every-change-to-memory-as-a")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.archive-facts-unused-for")}</b><span class=\"right\"><span class=\"seg\" role=\"group\" aria-label=\"${t("window.settings.advanced.archive-facts-unused-for")}\"><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"archive-facts-unused-for\">${t("window.settings.advanced.90-days")}</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"archive-facts-unused-for\">${t("window.settings.advanced.180-days")}</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"archive-facts-unused-for\">${t("window.settings.advanced.never")}</button></span></span><small></small></div>`;
+    html += archiveRow();
     html += "</div>";
 
     html += `<div class=\"sec x15-sec\"><h2>${t("dashboard.automations.title")}</h2>`;
@@ -204,7 +223,7 @@ export function draw() {
     html += `<div class=\"sec x15-sec\"><h2>${t("window.settings.advanced.tools-and-skills")}</h2>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.check-a-skill-is-ready-first")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-check-a-skill-is-ready-first")} aria-label=\"${t("window.settings.advanced.check-a-skill-is-ready-first")}\" data-sw=\"set\"><small>${t("window.settings.advanced.programs-keys-and-systems-it-needs")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.only-signed-skill-packages")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-only-signed-skill-packages\" aria-label=\"${t("window.settings.advanced.only-signed-skill-packages")}\" data-sw=\"set\"><small></small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.check-install-requests-for-malware")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-check-install-requests-for-malware\" aria-label=\"${t("window.settings.advanced.check-install-requests-for-malware")}\" data-sw=\"set\"><small>${t("window.settings.advanced.against-the-osv-database-before-you")}</small></div>`;
+    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.check-install-requests-for-malware")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-check-install-requests-for-malware\" checked aria-label=\"${t("window.settings.advanced.check-install-requests-for-malware")}\" data-sw=\"set\"><small>${t("window.settings.advanced.against-the-osv-database-before-you")}</small></div>`;
     html += searchRow();
     html += `<div class=\"ctl\"><b>${t("personal.x.search")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-search-x")} aria-label=\"${t("personal.x.search")}\" data-sw=\"set\"><small>${t("window.settings.advanced.turns-on-when-an-x-account")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.video-tools")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-video-tools")} aria-label=\"${t("window.settings.advanced.video-tools")}\" data-sw=\"set\"><small>${t("window.settings.advanced.download-read-captions-and-make-short")}</small></div>`;
@@ -214,7 +233,7 @@ export function draw() {
     html += fact15(t("window.settings.advanced.projects-pick-up-matching-work"), "f15-projects-pick-up-matching-work");
     html += fact15(t("window.settings.advanced.follow-up-tasks"), "f15-follow-up-tasks");
     html += `<div class=\"ctl\"><b>${t("autonomy.orders.title")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"ad-orders\">${t("window.settings.p17-permissions.see")} ` + esc(D.orders?.length ?? "") + `</button></span><small>${t("window.settings.advanced.named-programmes-a-trunk-keeps-running")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.from-now-on-for-a-specialist")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"from-now-on-for-a-specialist\">${t("window.settings.advanced.add-one")}</button></span><small>${t("window.settings.advanced.a-standing-instruction-kept-by-one")}</small></div>`;
+    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.from-now-on-for-a-specialist")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"ad-fno\">${t("window.settings.advanced.add-one")}</button></span><small>${t("window.settings.advanced.a-standing-instruction-kept-by-one")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.share-a-trunk")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"share-a-trunk\">${t("window.settings.p17-usage.export-2")}</button></span><small>${t("window.settings.advanced.through-git-as-a-skill-bundle")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.custom-modes")}</b><span class=\"right\"><code class=\"code15\">.branch/modes.json</code></span><small>${t("window.settings.advanced.your-own-modes-one-can-hand")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.agent-marketplace")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"mk-open\">${t("window.settings.advanced.browse")}</button></span><small>${t("window.settings.advanced.trunks-others-made-each-with-a")}</small></div>`;
@@ -286,13 +305,15 @@ export function init() {
   on("restart16", () => restartNow());
   on("ad-orders", () => openOrders());
   on("ad-outside", (el) => chooseOutside(el));
+  on("ad-archive", (el) => chooseArchive(el.dataset.v));
   on("ad-search", (el) => chooseSearch(el.dataset.v));
   on("ad-rewrite", () => openRewrite());
   on("ad-rw-style", (el) => { RW.style = el.dataset.v; RW.id = document.getElementById("ad-rw-note")?.value || RW.id; RW.out = null; drawRewrite(); });
   on("ad-rw-go", () => rewriteNow());
   on("ad-rw-keep", () => keepRewrite());
+  initSpecialistOrder();
   initTunnel();
-  markLive(["adv-logs", "restart16", "ad-orders", "ad-outside", "ad-search", "sw:ad-searx", "ad-rewrite", "ad-rw-style", "ad-rw-go", "ad-rw-keep", "sw:ad-rw-note", "sw:ad-facts", ...tunnelLive, ...Object.keys(WIRES).map((id) => "sw:" + id)]);
+  markLive(["adv-logs", "restart16", "ad-orders", "ad-outside", "ad-archive", "ad-search", "sw:ad-searx", "ad-rewrite", "ad-rw-style", "ad-rw-go", "ad-rw-keep", "sw:ad-rw-note", "sw:ad-facts", ...specialistOrderLive, ...tunnelLive, ...Object.keys(WIRES).map((id) => "sw:" + id)]);
   document.addEventListener("change", async (e) => {
     if (e.target.id === "ad-facts") { await saveFacts(e.target); return; }
     if (e.target.id === "ad-searx") { if (e.target.value.trim()) await chooseSearch("searxng"); return; }
@@ -306,4 +327,4 @@ export function init() {
 
 export async function load() { await Promise.all([loadAll(), load17()]); }
 
-export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "ad-search": true, "sw:ad-searx": true, "ad-rewrite": true, "ad-rw-style": true, "ad-rw-go": true, "ad-rw-keep": true, "sw:ad-rw-note": true, "sw:ad-facts": true, "tunnel-seg": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };
+export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "ad-archive": true, "ad-search": true, "sw:ad-searx": true, "ad-rewrite": true, "ad-rw-style": true, "ad-rw-go": true, "ad-rw-keep": true, "sw:ad-rw-note": true, "sw:ad-facts": true, "ad-fno": true, "tunnel-seg": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };

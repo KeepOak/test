@@ -26,6 +26,7 @@ import { keepLines, loadKeep, initKeep } from "../flows/keep18.js"; // Keep it r
 import { nameField } from "../flows/profile.js"; // the owner's name, asked here now that setup is three steps
 import { ownerTodosTile, loadOwnerTodos, initOwnerTodos } from "./overview-todos.js";
 import { restoredTile, loadRestored, initRestored } from "./restored484.js"; // #484: Trunks a restore brought back cut down
+import { morningTile, readMorning, initMorning } from "./seasons-morning.js";
 import { recapTile, loadRecap, initRecap } from "./weekly-recap.js";
 
 let lastHealthCheck = 0;
@@ -191,7 +192,7 @@ export function draw() {
   return `<main class="main enter11" id="main"><div class="lock-banner"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"></path></svg>${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div><div class="scroll"><div class="place ovs" data-css="max-width:1000px">
     ${recBar()}${updateCard()}
     <h1>${t("strip.menu.overview")}</h1><p class="lede">${t("window.places.overview.whats-happening-across-your-trunks-at")} <button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button></p>
-    ${finishTile()}${restoredTile()}<section class="tile ovs-status">${nowPart()}${healthPart()}</section>
+    ${finishTile()}${restoredTile()}${morningTile()}<section class="tile ovs-status">${nowPart()}${healthPart()}</section>
     <div class="ovs-cols"><div class="ovs-col">${ownerTodosTile()}${recapTile()}${recentTile()}${milestonesTile()}</div><div class="ovs-col">${spendTile()}${controlsTile()}${usersTile()}</div></div>
   </div></div></main>`;
 }
@@ -202,6 +203,7 @@ export function init() {
   on("finhide18c", () => hideFinish());
   initKeep();
   initRestored();
+  initMorning();
   initOwnerTodos();
   initRecap();
 }
@@ -234,6 +236,7 @@ export async function after() {
   // Keep it running's lines in "Finish setting up", read while that card is shown
   if (finishShown() && await loadKeep()) needsRender = true;
   if (await loadRestored()) needsRender = true; // #484
+  if (await readMorning()) needsRender = true;
   if (await loadRecap()) needsRender = true;
 
   if (await loadOwnerTodos()) needsRender = true;

@@ -82,11 +82,11 @@ test("an explicit settings request still resolves to the one setting, in a conve
   let found = null;
   const { app } = await fixture(t, (request) => {
     const result = lastTool(request);
-    if (!result) return { content: "", toolCalls: [{ id: "find-1", name: "settings.find", arguments: JSON.stringify({ request: "turn on the learning" }) }] };
+    if (!result) return { content: "", toolCalls: [{ id: "find-1", name: "settings.find", arguments: JSON.stringify({ request: "turn on learning from experience" }) }] };
     found = result.result;
     return { content: "That would turn on what Branch learns from experience.", toolCalls: [] };
   });
-  const done = await app.runtime.run({ prompt: "turn on the learning", source: "owner" });
+  const done = await app.runtime.run({ prompt: "turn on learning from experience", source: "owner" });
   assert.equal(done.status, "completed", done.output);
   assert.equal(found.status, "ready");
   assert.equal(found.setting, "fly-core.mode");

@@ -35,7 +35,8 @@ test("the source: three wizard steps, the engine's eleven ids kept, and the thre
     assert.ok(liveIn(overview).includes(act), `${act} is live`);
   }
   assert.doesNotMatch(overview, /where:\s*true/, "no prototype example tick");
-  assert.match(overview, /finishTile\(\)\}(\$\{restoredTile\(\)\})?<section class="tile ovs-status">/, "the card is drawn in Overview's own markup, first");
+  // Finish setting up comes first; Overview's restored-Trunks card and the overnight learning receipt (Seasons) follow it.
+  assert.match(overview, /finishTile\(\)\}(\$\{restoredTile\(\)\})?(\$\{morningTile\(\)\})?<section class="tile ovs-status">/, "the card is drawn in Overview's own markup, first");
   assert.match(source("chat/nomodel.js"), /data-act="onboard" data-v="1"/, "the message box's Set up asks for Models, step 1 now");
 });
 

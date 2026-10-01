@@ -23,7 +23,7 @@ import { claudePlanWindows, PlanWindowStore } from "../plan-windows.js";
 import { codexPlanWindows, type PlanWindowSaid } from "../rate-limit-headers.js";
 import type { AccountState } from "./pool.js";
 import { firstChoice, freshState, unavailable } from "./pool.js";
-import { pooled, trunkOrder, unwrapProvider, type TrunkMove } from "./pool-provider.js";
+import { pooled, trunkKeyRefusal, trunkOrder, unwrapProvider, type TrunkMove } from "./pool-provider.js";
 import {
   type Account, type AccountKind, type Pool, accountsSettings, applyPoolingRule, keyName, keyProject, primaryAccount,
   saveAccountsSettings, saveSessionChoice, savedAccountsSettings, sessionChoice,
@@ -488,11 +488,13 @@ export class AccountsService {
     if (found.kind !== "api-key") await this.readIdentities();
     this.authorizeHelper();
     const pool = this.usablePool(found.pool);
-    const preferred = sessionChoice(this.deps.store, this.deps.owner, parentSessionId)[found.pool] ?? pool?.defaultAccount ?? primaryAccount;
+    const preferred = (asked ? undefined : this.trunkHelperAccount(found.pool, call))
+      ?? sessionChoice(this.deps.store, this.deps.owner, parentSessionId)[found.pool] ?? pool?.defaultAccount ?? primaryAccount;
     // MODEL-050: a helper no account was named for takes the least-leased ready account, so helpers side by side spread.
     const lease = asked ? null : this.leaseHelperAccount(pool, found.kind, preset.model, preferred);
     const account = asked?.account ?? lease?.account ?? preferred;
     try {
+      this.requireTrunkHelperAccount(found.pool, call, account);
       this.requireHelperAccount(found.pool, found.kind, account);
       const address = this.addressOf(preset.id);
       const chosen = await this.providerFor(found.pool, found.kind, preset, account);
@@ -520,6 +522,24 @@ export class AccountsService {
   }
   private helperAccountReady(pool: string, kind: AccountKind, id: string): boolean {
     try { this.requireHelperAccount(pool, kind, id); return true; } catch { return false; }
+  }
+  /**
+   * models-ui: a helper started for a Trunk's work answers with the Trunk's own pick for that connection, wherever the
+   * work runs (its chat, a routine, a room seat), not the parent conversation's choice or the owner's default. A Trunk
+   * that does not copy the owner's accounts and picked none is refused, as its own calls are.
+   */
+  private trunkHelperAccount(pool: string, call: ReturnType<typeof currentAccountCall>): string | undefined {
+    const keys = call?.trunk?.keys;
+    if (!keys) return undefined;
+    const own = trunkOrder(keys, pool)[0];
+    if (!own && !keys.copyFromOwner) throw new Error(trunkKeyRefusal(pool));
+    return own;
+  }
+  /** A Trunk that does not copy the owner's accounts: its helper may use only the accounts picked for it (its pick, then its next). */
+  private requireTrunkHelperAccount(pool: string, call: ReturnType<typeof currentAccountCall>, account: string): void {
+    const keys = call?.trunk?.keys;
+    if (keys && !keys.copyFromOwner && !trunkOrder(keys, pool).includes(account))
+      throw new Error("This Trunk does not copy your accounts, so its helper may use only the account picked for it in Edit Trunk.");
   }
   private helperProvider(bound: Provider, preset: ModelPreset, ref: HelperAccountRef, kind: AccountKind, address: string | null): Provider {
     const authorize = (): void => {

@@ -45,6 +45,7 @@ import { readSourcePublications, sourcePublicationCards } from "./self-developme
 import { openSourceReview, initSourceReview } from "./self-change-review.js";
 import { readUrgency, byUrgency } from "./inbox-urgency.js"; // Sort the Inbox by urgency (decision models)
 import { autonomyRows, autonomyCount, readAutonomy, initAutonomyInbox } from "./inbox-autonomy.js";
+import { initPages19 } from "./pages19.js"; // SELF-309
 
 let asks = [];
 let asksRead = false; // pass 18: "Nothing needs you" only once the engine answered (after() below)
@@ -479,6 +480,7 @@ async function allowAll() {
 export function init() {
   initAutonomyInbox();
   initDemo17();
+  initPages19(); // SELF-309: published pages open from Library and from /#page=<id>
   initInbox17();
   // Install answers only record the owner's decision and show a manual next step.
   markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo", "xdo-no", "sw:histq", "selfno15", "rp-events", "rp-page", "rp-flow"]);

@@ -24,6 +24,7 @@ import { markLive, greyOut } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { showTool, reloadTools } from "../places/customize.js";
 import { t } from "../../i18n.js";
+import { initPublicRegistry } from "./mcp-registry.js";
 
 const prov = (act, v, icon, name, sub) => `<button class="prov" type="button" data-act="${act}" data-v="${v}">${icon}<b>${name}</b><small>${sub}</small></button>`;
 const tile = (name) => `<span class="ico-tile">${ic(name, "s")}</span>`;
@@ -51,7 +52,7 @@ async function connectorCatalogue() {
     CAT.count = got.count ?? 0;
   } catch (error) { toast(error.message); return; }
   openDlg({ title: t("window.flows.conn.add-connector"), wide: true, body: catalogueBody(),
-    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn" type="button" data-act="t9-own">${t("window.flows.conn.own")}</button>` });
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn" type="button" data-act="mcp-registry-open">${t("action.search")} · MCP Registry</button><button class="btn" type="button" data-act="t9-own">${t("window.flows.conn.own")}</button>` });
 }
 /* Filtering redraws only the list and the tabs, so the search box keeps its caret. */
 function redrawCatalogue() {
@@ -171,6 +172,7 @@ const ADD = { mcp: connectorCatalogue, skills: addSkill, clis: addCliDialog, age
 const entryOf = (id) => CAT.list.flatMap((g) => g.connectors).find((c) => c.id === id) ?? null;
 
 export function init() {
+  initPublicRegistry();
   initGitHubSkills();
   markLive(["tool-add", "t9-own", "sk-src", "sw:sk-file", "mcp-cat", "sw:mcp-q", "mcp-add", "mcp-how", "mcp-save", "sw:mcp-name", "sw:mcp-cmd", "sw:mcp-secrets", "sw:mcp-timeout", "cli-add", "sw:cli-path", "ag-add", "ag-go", "sw:ag-card"]);
   on("ag-add", () => agentCard());

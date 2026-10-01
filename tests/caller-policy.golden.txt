@@ -1385,6 +1385,8 @@ owner GET /api/mcp/preflight | here=ok remote=ok phone=ok legacy=ok person=401/3
 owner POST /api/mcp/preflight | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/mcp/servers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/mcp/servers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/mcp/registry/search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/mcp/registry/search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/mcp/servers/sample/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/mcp/servers/sample/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/mcp/servers/sample/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -1415,6 +1417,8 @@ owner GET /api/media/understand | here=ok remote=ok phone=ok legacy=ok person=40
 owner POST /api/media/understand | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner GET /api/memory/archive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/memory/archive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/memory/auto-archive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/memory/auto-archive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/memory/archive/purge | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/memory/archive/purge | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/memory/archive/sample/restore | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3680,6 +3684,8 @@ owner+lockdown GET /api/mcp/preflight | here=ok remote=ok phone=ok legacy=ok per
 owner+lockdown POST /api/mcp/preflight | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/mcp/servers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/mcp/servers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/mcp/registry/search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/mcp/registry/search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/mcp/servers/sample/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/mcp/servers/sample/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/mcp/servers/sample/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3710,6 +3716,8 @@ owner+lockdown GET /api/media/understand | here=ok remote=ok phone=ok legacy=ok 
 owner+lockdown POST /api/media/understand | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner+lockdown GET /api/memory/archive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/memory/archive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/memory/auto-archive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/memory/auto-archive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/memory/archive/purge | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/memory/archive/purge | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/memory/archive/sample/restore | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5975,6 +5983,8 @@ household GET /api/mcp/preflight | here=400/f6e21c remote=400/f6e21c read=400/f6
 household POST /api/mcp/preflight | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/mcp/servers | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/mcp/servers | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/mcp/registry/search | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/mcp/registry/search | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/mcp/servers/sample/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/mcp/servers/sample/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/mcp/servers/sample/start | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6005,6 +6015,8 @@ household GET /api/media/understand | here=400/f6e21c remote=400/f6e21c read=400
 household POST /api/media/understand | here=ok remote=ok read=401/d45404 run=ok
 household GET /api/memory/archive | here=ok remote=ok read=ok run=ok
 household POST /api/memory/archive | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/memory/auto-archive | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/memory/auto-archive | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/memory/archive/purge | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/memory/archive/purge | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/memory/archive/sample/restore | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8270,6 +8282,8 @@ household+lockdown GET /api/mcp/preflight | here=400/f6e21c remote=400/f6e21c re
 household+lockdown POST /api/mcp/preflight | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/mcp/servers | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/mcp/servers | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/mcp/registry/search | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/mcp/registry/search | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/mcp/servers/sample/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/mcp/servers/sample/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/mcp/servers/sample/start | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8300,6 +8314,8 @@ household+lockdown GET /api/media/understand | here=400/f6e21c remote=400/f6e21c
 household+lockdown POST /api/media/understand | here=ok remote=ok read=401/d45404 run=ok
 household+lockdown GET /api/memory/archive | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/memory/archive | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/memory/auto-archive | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/memory/auto-archive | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/memory/archive/purge | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/memory/archive/purge | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/memory/archive/sample/restore | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -10565,6 +10581,8 @@ applock GET /api/mcp/preflight | here=423/a8f863
 applock POST /api/mcp/preflight | here=423/a8f863
 applock GET /api/mcp/servers | here=423/a8f863
 applock POST /api/mcp/servers | here=423/a8f863
+applock GET /api/mcp/registry/search | here=423/a8f863
+applock POST /api/mcp/registry/search | here=423/a8f863
 applock GET /api/mcp/servers/sample/remove | here=423/a8f863
 applock POST /api/mcp/servers/sample/remove | here=423/a8f863
 applock GET /api/mcp/servers/sample/start | here=423/a8f863
@@ -10595,6 +10613,8 @@ applock GET /api/media/understand | here=423/a8f863
 applock POST /api/media/understand | here=423/a8f863
 applock GET /api/memory/archive | here=423/a8f863
 applock POST /api/memory/archive | here=423/a8f863
+applock GET /api/memory/auto-archive | here=423/a8f863
+applock POST /api/memory/auto-archive | here=423/a8f863
 applock GET /api/memory/archive/purge | here=423/a8f863
 applock POST /api/memory/archive/purge | here=423/a8f863
 applock GET /api/memory/archive/sample/restore | here=423/a8f863

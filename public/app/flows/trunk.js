@@ -1,11 +1,11 @@
 /* A Trunk, changed from the window (design doc 5.7): the Trunk editor, the Trunk's own menu items (pin, rename, remove),
    starting a Trunk from a job, and a new room. Every change goes to the engine's Trunk routes (src/trunks/api.ts):
    POST /api/trunks/{id} merges the fields it is given, but `look` is replaced whole, so the full look is always sent.
-   What it may do (the permission switches) stays greyed: loosening a Trunk is not done from here. */
+   What it may do explains its existing limits and opens the owner's permission rules. */
 
 import { $, esc, onRender } from "../core/dom.js";
 import { openDlg, closeDlg, openPop, closePop, toast, ic, av, mi, COLOURS, SHAPE_NAMES, hex, faceOf, dialog } from "../core/ui.js";
-import { S, E, refresh, activeId, ownerHere } from "../core/state.js";
+import { S, E, refresh, activeId, level, ownerHere } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -65,6 +65,8 @@ function keepFields() {
   const n = $("#st-name"), r = $("#st-role");
   if (n) ed.d.name = n.value;
   if (r) ed.d.title = r.value;
+  const voice = $("#st-voice");
+  if (voice) ed.d.voice = voice.value;
   for (const box of document.querySelectorAll("[data-personality-file]")) {
     const file = ed.files?.find((file) => file.name === box.dataset.personalityFile);
     if (file) file.text = box.value;
@@ -72,8 +74,68 @@ function keepFields() {
 }
 
 function filesTab() {
-  markLive((ed.files ?? []).map((file) => `sw:personality-${file.name}`));
-  return (ed.files ?? []).map((file) => `<div class="field"><label for="personality-${esc(file.name)}">${esc(file.name)}</label><small class="hint">${esc(file.hint)}</small><textarea class="inp" id="personality-${esc(file.name)}" data-personality-file="${esc(file.name)}" rows="6" maxlength="8000">${esc(file.text)}</textarea><button class="btn sm" type="button" data-act="trunk-file-save" data-name="${esc(file.name)}">${t("action.save")}</button></div>`).join("");
+  const shownAt = { "SOUL.md": 0, "USER.md": 0, "IDENTITY.md": 1, "MEMORY.md": 1, "AGENTS.md": 2, "TOOLS.md": 2, "HEARTBEAT.md": 2 };
+  const files = (ed.files ?? []).filter((file) => level() >= (shownAt[file.name] ?? 2));
+  markLive(files.map((file) => `sw:personality-${file.name}`));
+  const more = files.length < (ed.files ?? []).length
+    ? `<p class="hint">${esc(say(level() === 0 ? "More personality files are available in Advanced and Technical." : "Working instructions, tool notes and check-ins are available in Technical."))}</p>` : "";
+  return more + files.map((file) => `<div class="field"><label for="personality-${esc(file.name)}">${esc(file.name)}</label><small class="hint">${esc(file.hint)}</small><textarea class="inp" id="personality-${esc(file.name)}" data-personality-file="${esc(file.name)}" rows="6" maxlength="8000">${esc(file.text)}</textarea><button class="btn sm" type="button" data-act="trunk-file-save" data-name="${esc(file.name)}">${t("action.save")}</button>${fileSuggestions(file.name)}</div>`).join("");
+}
+
+function voicePicker() {
+  const names = [...new Set([...(ed.voices ?? []), ed.d.voice].filter(Boolean))];
+  const options = [["", t("voice.default")], ...names.map((name) => [name, name])];
+  const hint = ed.voiceError || say("Reads this Trunk's replies in its own voice. Default uses your voice setting.");
+  return `<div class="field"><label for="st-voice">${t("field.voice")}</label>${gsel({ id: "st-voice", label: t("field.voice"), options, value: ed.d.voice })}<small class="hint">${esc(hint)}</small></div>`;
+}
+
+async function loadTrunkVoices() {
+  const editor = ed; // this editor only: one closed and opened again (even for the same Trunk) never takes this answer
+  try {
+    const voices = await api("voice/voices");
+    if (ed !== editor) return;
+    ed.voices = [...(voices.system ?? []), ...(voices.windows ?? [])].filter((name) => typeof name === "string" && name.length <= 80);
+  } catch (error) {
+    if (ed !== editor) return;
+    ed.voiceError = error.message;
+  }
+  redrawVoice(editor);
+}
+/* Only the voice field is drawn again, and only where it is shown (the Look tab): redrawing the whole editor would
+   replace its pebble preview mid-motion and close a list open on another tab. While the voice list itself is open it
+   waits until it closes, so the list being chosen from never changes under the pointer. */
+function redrawVoice(editor) {
+  if (ed !== editor) return;
+  const picker = dialog()?.querySelector(".editor #st-voice"), field = picker?.closest(".field");
+  if (!field) return;
+  if (picker.getAttribute("aria-expanded") === "true") { setTimeout(() => redrawVoice(editor), 200); return; }
+  keepFields();
+  field.outerHTML = voicePicker();
+}
+
+function fileSuggestions(name) {
+  return (ed.proposals ?? []).filter((proposal) => proposal.name === name).map((proposal) => `<div class="card"><b>${esc(say("Suggested change"))}</b><p>${esc(proposal.reason)}</p><details><summary>${esc(say("Review before and after"))}</summary><b>${esc(say("Before"))}</b><pre>${esc(proposal.before)}</pre><b>${esc(say("After"))}</b><pre>${esc(proposal.text)}</pre></details><div class="acts"><button class="btn ghost sm" type="button" data-act="trunk-file-decide" data-id="${esc(proposal.id)}" data-decision="reject">${t("memory.review.reject")}</button><button class="btn sm" type="button" data-act="trunk-file-decide" data-id="${esc(proposal.id)}" data-decision="accept">${t("memory.review.accept")}</button></div></div>`).join("");
+}
+
+let decidingFile = false;
+async function decideFile(el) {
+  if (!ed || decidingFile) return;
+  keepFields();
+  const editor = ed;
+  const proposal = editor.proposals?.find((one) => one.id === el.dataset.id);
+  if (!proposal || !["accept", "reject"].includes(el.dataset.decision)) return;
+  const drafts = new Map(editor.files.map((file) => [file.name, file.text]));
+  decidingFile = true;
+  try {
+    const data = await api(`trunks/${editor.id}/files`, { proposalId: el.dataset.id, decision: el.dataset.decision });
+    if (ed !== editor) return;
+    ed.files = data.files.map((file) => el.dataset.decision === "accept" && file.name === proposal.name
+      ? file : { ...file, text: drafts.get(file.name) ?? file.text });
+    ed.proposals = data.proposals;
+    drawEditor();
+    await refresh();
+  } catch (error) { toast(error.message); }
+  finally { decidingFile = false; }
 }
 
 /* The pebble as this editor would save it: the draft's colour, shape, eyes and motion over the saved face. */
@@ -107,7 +169,7 @@ function lookTab(tr, d) {
     ${row("colour", `<div class="field"><label>${t("studio.colour")}</label><div class="swatches">${swatches}</div></div>`)}
     ${row("shape", `<div class="field"><label>${t("studio.shape")}</label><div class="shapes">${shapes}</div></div>`)}
     <div class="split" data-css="grid-template-columns:1fr 1fr">${photoField(tr)}${row("moves", `<div class="field"><label>${t("window.flows.trunk.moves")}</label><span class="seg">${moves}</span></div>`)}</div>
-    ${row("eyes", `<div class="field"><label>${t("window.flows.trunk.eyes")}</label><span class="seg">${eyes}</span></div>`)}`;
+    ${row("eyes", `<div class="field"><label>${t("window.flows.trunk.eyes")}</label><span class="seg">${eyes}</span></div>`)}${voicePicker()}`;
 }
 
 /* ---------- a photo instead of a face: POST /api/trunks/{id}/avatar, which keeps a PNG, JPEG or WebP under about 290 KB
@@ -184,7 +246,6 @@ function emojiRow(tr) {
 }
 
 const ctl = (id, title, sub) => `<div class="ctl"><b>${esc(title)}</b><input class="sw" type="checkbox" id="${id}" aria-label="${esc(title)}" data-sw="set"><small>${esc(sub)}</small></div>`;
-const ctlSeg = (title, sub, opts) => `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map((o) => `<button type="button" aria-pressed="false" data-act="seg">${esc(o)}</button>`).join("")}</span></span><small>${esc(sub)}</small></div>`;
 
 /* Which model: the engine's own presets (GET /api/state models.presets, by their names) in the window's ordinary select,
    saved at once as the Trunk's model (POST /api/trunks/{id} model, a preset id); Default ("") follows the conversation's
@@ -283,12 +344,14 @@ function setCopy(el) {
   saveKeys(el.dataset.id, (keys) => ({ ...keys, copyFromOwner: on }));
 }
 
-/* Drawn as the design has it and greyed, bar Which model: reading files, the browser and sending without asking each loosen
-   the Trunk (reviewed apart, not done from here); the engine's Spend money category holds no tool in this build (GET
-   /api/state approvalCategories), so there is nothing a Trunk could be let spend or kept from; and its own notes are
-   always kept apart (src/trunks/memory-scope.ts), which the engine has no switch for (sharedFacts is another thing). */
+/* Explain where authority is really controlled instead of showing switches that cannot save anything. */
 function mayTab(tr) {
-  return `<div>${ctl("tm-read", t("window.flows.trunk.read-files"), t("window.flows.trunk.read-hint"))}${ctl("tm-browse", t("window.flows.trunk.browser"), t("window.flows.trunk.browser-hint"))}${ctlSeg(t("window.flows.trunk.send"), t("window.flows.trunk.send-hint"), [t("mode.ask"), t("window.chat.tl.allowed")])}${ctlSeg(t("people.admin.kind.spend"), t("window.flows.trunk.spend-hint"), [t("window.flows.trunk.never")])}${modelSeg(tr)}${ctl("tm-notes", t("window.flows.trunk.notes"), t("window.flows.trunk.notes-hint"))}</div>`;
+  const row = (title, words) => `<div class="ctl"><b>${title}</b><small>${esc(words)}</small></div>`;
+  const may = (key) => t(`window.flows.trunk.may-${key}`);
+  const tools = may(tr.permissions?.length ? "tools-chosen" : "tools-all");
+  const notes = may(tr.id === E.defaultTrunkId ? "default-notes" : "notes");
+  const open = ownerHere() ? `<button class="btn sm" type="button" data-act="trunk-permissions">${esc(may("open-permissions"))}</button>` : "";
+  return `<div><p class="hint">${esc(tools)}</p>${row(t("window.flows.trunk.read-files"), may("read"))}${row(t("window.flows.trunk.browser"), may("browser"))}${row(t("window.flows.trunk.send"), may("send"))}${row(t("people.admin.kind.spend"), may("spend"))}${open}${modelSeg(tr)}${row(t("window.flows.trunk.notes"), notes)}</div>`;
 }
 
 /* The editor redraws whole on every change; where the dialog and the characters were scrolled to is kept. */
@@ -310,8 +373,9 @@ function editTrunk(id) {
   const tr = trunkById(id);
   if (!tr) return;
   const look = lookOf(tr);
-  ed = { id, tab: "look", d: { name: tr.name, title: tr.title ?? "", colour: hex(tr.chosenColour), shape: look.shape, motion: look.motion, eyes: tr.eyes ?? "round" } };
+  ed = { id, tab: "look", voices: [], d: { name: tr.name, title: tr.title ?? "", voice: tr.voice ?? "", colour: hex(tr.chosenColour), shape: look.shape, motion: look.motion, eyes: tr.eyes ?? "round" } };
   drawEditor();
+  loadTrunkVoices();
 }
 
 /* The whole look, with this editor's shape and motion (and any extra change) over what is saved. */
@@ -322,7 +386,7 @@ function fullLook(tr, change = {}) {
 async function saveEditor() {
   keepFields();
   const tr = trunkById(ed.id);
-  const body = { name: ed.d.name.trim(), title: ed.d.title.trim(), look: fullLook(tr), eyes: ed.d.eyes, ...(ed.d.colour ? { chosenColour: ed.d.colour } : {}) };
+  const body = { name: ed.d.name.trim(), title: ed.d.title.trim(), voice: ed.d.voice, look: fullLook(tr), eyes: ed.d.eyes, ...(ed.d.colour ? { chosenColour: ed.d.colour } : {}) };
   try {
     await api(`trunks/${encodeURIComponent(ed.id)}`, body);
     /* The window's own Trunks are read again before the editor closes: closing first left a moment in which Edit Trunk…
@@ -444,17 +508,32 @@ async function fromTemplate(i) {
   } catch (error) { toast(error.message); }
 }
 
-/* ---------- a new Trunk: the prototype's "Trunk 6 for now", made with POST /api/trunks; the engine has it introduce itself in its
-   own conversation, which then opens. Its name, colour and face change from the editor. ---------- */
-async function newTrunk() {
+/* A new Trunk is made only after the owner gives it a name. Cancelling leaves no Trunk or conversation behind. */
+function newTrunk() {
   closePop();
+  openDlg({ title: t("trunks.new"), body: `<div class="field"><label for="nt-name">${t("accounts.field.name")}</label><input class="inp" id="nt-name" maxlength="40" aria-describedby="nt-need-name"><small id="nt-need-name" class="hint">${esc(say("Give your Trunk a name."))}</small></div>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("window.chat.mktrunk.cancel")}</button><button class="btn pri" type="button" data-act="new-trunk-create" disabled>${t("action.create")}</button>` });
+  $("#nt-name")?.focus();
+}
+
+let creatingTrunk = false;
+async function createNamedTrunk() {
+  const input = $("#nt-name"), name = (input?.value ?? "").trim();
+  if (creatingTrunk || !input) return;
+  if (!name) { input.setAttribute("aria-invalid", "true"); input.focus(); return; }
+  const dlg = dialog(), from = [S.view, S.chat];
+  creatingTrunk = true;
+  dlg?.querySelector('[data-act="new-trunk-create"]')?.setAttribute("disabled", "");
   try {
-    let n = E.trunks.length + 1;
-    while (E.trunks.some((tr) => tr.name === `Trunk ${n}`)) n += 1;
-    const { trunk } = await api("trunks", { name: `Trunk ${n}` });
-    await refresh();
-    openChat(trunk.chatSessionId);
-  } catch (error) { toast(error.message); }
+    const { trunk } = await api("trunks", { name });
+    if (dialog() === dlg) closeDlg();
+    await refresh().catch((error) => console.warn(error.message));
+    if (S.view === from[0] && S.chat === from[1]) openChat(trunk.chatSessionId);
+    toast(t("window.flows.trunk.ready", { name: trunk.name }));
+  } catch (error) {
+    toast(error.message);
+    if (dialog() === dlg) dlg?.querySelector('[data-act="new-trunk-create"]')?.removeAttribute("disabled");
+  } finally { creatingTrunk = false; }
 }
 
 /* ---------- a new room: a name, two to six Trunks and up to eight people on this computer (POST /api/trunks/rooms
@@ -584,19 +663,42 @@ export function init() {
   on("grp-rule", (el) => { grp.name = $("#grp-name")?.value ?? grp.name; grp.rule = el.dataset.v; groupDlg(); });
   markLive(["sw:st-name", "sw:st-role", "sw:rn-name", "sw:grp-name", "edit", "st-tab", "st-colour", "st-shape", "st-anim", "st-shuffle", "st-save", "emo15", "pin", "rename", "rename-save", "remove", "trunk-remove-yes", "tmpl", "grp-new", "grp-pick", "grp-person", "grp-agent", "grp-make", "new-trunk"]);
   on("new-trunk", () => newTrunk());
+  on("new-trunk-create", () => createNamedTrunk());
+  markLive(["new-trunk-create", "sw:nt-name"]);
+  document.addEventListener("input", (e) => {
+    if (e.target.id !== "nt-name" || creatingTrunk) return;
+    e.target.removeAttribute("aria-invalid");
+    const button = dialog()?.querySelector('[data-act="new-trunk-create"]');
+    if (button) button.disabled = !e.target.value.trim();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.target.id !== "nt-name" || e.key !== "Enter" || e.isComposing) return;
+    e.preventDefault();
+    createNamedTrunk();
+  });
+  markLive(["trunk-permissions"]);
+  on("trunk-permissions", () => {
+    if (!ownerHere()) return;
+    keepFields();
+    closeDlg();
+    const button = document.createElement("button");
+    button.dataset.v = "permissions";
+    run("setgo", button);
+  });
   on("edit", (el) => editTrunk(el.dataset.id));
   on("st-tab", async (el) => {
     if (!ed) return; // only while an editor is open (a household person's Edit on the owner's Trunk opens none)
     keepFields();
     const id = ed.id;
     if (el.dataset.v === "files" && !ed.files) {
-      try { const data = await api(`trunks/${id}/files`); if (ed?.id !== id) return; ed.files = data.files; }
+      try { const data = await api(`trunks/${id}/files`); if (ed?.id !== id) return; ed.files = data.files; ed.proposals = data.proposals; }
       catch (error) { toast(error.message); return; }
     }
     ed.tab = el.dataset.v; drawEditor();
     if (ed.tab === "accounts") loadKeys(ed.id);
   });
-  markLive(["trunk-default", "trunk-file-save"]);
+  markLive(["trunk-default", "trunk-file-save", "trunk-file-decide"]);
+  on("trunk-file-decide", decideFile);
   on("trunk-default", async (el) => {
     try { await api(`trunks/${el.dataset.id}/default`, {}); await refresh(); }
     catch (error) { toast(error.message); }
@@ -620,7 +722,7 @@ export function init() {
     else if (e.target.dataset?.tkPool) pickAccount(e.target);
     else if (e.target.dataset?.tkNext) pickNext(e.target);
   });
-  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:tm-model-sel", "sw:tk-copy", "sw:tk-pool", "sw:tk-next"]);
+  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:st-voice", "sw:tm-model-sel", "sw:tk-copy", "sw:tk-pool", "sw:tk-next"]);
   on("st-shuffle", () => shuffle());
   on("st-save", () => saveEditor());
   on("emo15", (el) => setEmoji(el.dataset.v));

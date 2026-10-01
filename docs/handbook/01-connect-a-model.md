@@ -9,7 +9,7 @@ choosing one, paying as little as you have to, and knowing what each choice cost
 ## In one minute
 
 - **Settings → ChatGPT account** uses a ChatGPT plan you already pay for.
-- **Settings → Models** adds a connection to any of 36 online services with a key.
+- **Settings → Models** adds a connection to any of 37 online services with a key.
 - **Settings → Models on this computer** runs a model here instead, free and private.
 - **Settings → Which model does what** says which connection answers which kind of work.
 - **Usage** shows what everything has cost, in real money, all worked out on this computer.
@@ -31,7 +31,7 @@ Nothing leaves the machine and nothing is charged. See *Models that run here* be
 
 ## Which services work
 
-Branch knows 44 model services (36 online, 7 that run on this computer, and one address of your own), kept as plain data rather than as code, so the list in Settings, the
+Branch knows 45 model services (37 online, 7 that run on this computer, and one address of your own), kept as plain data rather than as code, so the list in Settings, the
 table in the reference and the setup screen can never disagree. Among them: OpenAI, Azure OpenAI,
 Anthropic, Google Gemini, Google Vertex AI, AWS Bedrock, Mistral, Groq, OpenRouter, Together,
 Fireworks, DeepSeek, xAI, Perplexity, Cohere, Cerebras, SambaNova, Hugging Face, GitHub Models,

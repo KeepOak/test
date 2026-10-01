@@ -10,8 +10,8 @@ import type { Store } from "../store.js";
 import { codingOn, partSettings, requireCoding } from "./settings.js";
 
 /**
- * R17-036: a conversation forked into its own copy of the project (a Git worktree), and, when the
- * owner asks for it, a copy of its own for each helper a task hands work to. The copies live where
+ * R17-036: a copy of its own (a Git worktree) for each helper a task hands work to, by default (the owner's ruling,
+ * 2026-09-30), and, only when the owner switches `forks` on, a conversation forked into its own copy. The copies live where
  * every parallel copy already lives (`.branch-worktrees`, src/integrations/git.ts), are made with the
  * owner's own Git (hooks off, never asking for a password), and a helper's copy is removed afterwards
  * only when it provably holds nothing: no commits of its own and no unsaved change. Otherwise it is
@@ -27,8 +27,10 @@ export const worktreeScope = (): string | undefined => place.getStore();
 export const inWorktree = <T>(scope: string, work: () => Promise<T>): Promise<T> => place.run(scope, work);
 
 export const WorktreeSettingsSchema = z.object({
-  /** Give each helper a task hands work to a copy of its own. */
-  perHelper: z.boolean().default(false),
+  /** Give each helper a task hands work to a copy of its own (on: the owner's ruling, 2026-09-30). */
+  perHelper: z.boolean().default(true),
+  /** Let a conversation be forked into a copy of its own. Off: each fork keeps a whole copy on disk for as long as it lives. */
+  forks: z.boolean().default(false),
 }).strict();
 const ForksSchema = z.object({
   forks: z.array(z.object({ sessionId: z.string().uuid(), name: z.string(), branch: z.string(), folder: z.string(), createdAt: z.string(),
@@ -83,6 +85,8 @@ export class WorktreePlaces {
   async fork(input: { sessionId: string; messageId: number }, signal: AbortSignal) {
     const { store, owner } = this.deps;
     requireCoding(store, owner, "worktrees");
+    if (!partSettings(store, owner, "worktrees", WorktreeSettingsSchema).forks)
+      throw new Error("Forking a conversation into its own copy of the project is off, because each fork keeps a whole copy on disk. The owner can switch it on (coding worktrees: forks).");
     if (worktreeScope()) throw new Error("This conversation already works in a copy of the project.");
     const folder = this.deps.projectFolder();
     this.requireAvailableSource(folder);
@@ -157,8 +161,8 @@ export class WorktreePlaces {
     }
     if (worktreeScope() && !parent) return this.inheritedPlace(run);
     // workbench (SELF-302): a helper its lead asked to give a copy of its own gets one, whatever the switches say: the
-    // switches decide what happens by default (it ships off, a whole copy on disk each time), the lead decides per helper.
-    if (parent && context.ownCopy) return this.helperPlace(run, context);
+    // switches decide what happens by default; the lead can explicitly request a copy for one helper.
+    if (parent && context.ownCopy) return this.helperPlace(run, context, true);
     if (!codingOn(store, owner, "worktrees")) {
       if (!parent && this.forks().some((fork) => fork.sessionId === run.sessionId))
         throw new Error("This conversation is assigned to a project copy, but project copies are switched off. Enable them before continuing this conversation.");
@@ -166,7 +170,8 @@ export class WorktreePlaces {
     }
     if (!parent) return this.forkPlace(run);
     if (!partSettings(store, owner, "worktrees", WorktreeSettingsSchema).perHelper) return this.inheritedPlace(run);
-    return this.helperPlace(run, context);
+    // A copy by default, not one the lead required: a project with no Git commit to copy from shares its folder, as it did.
+    return this.helperPlace(run, context, false);
   }
 
   /** A background child can outlive its lead while using the lead's existing copy. */
@@ -330,23 +335,28 @@ export class WorktreePlaces {
     } catch (error) { this.helperSources.delete(run.id); throw error; }
   }
 
-  private async helperPlace(run: { id: string }, context: ToolContext): Promise<TaskPlace | null> {
+  private async helperPlace(run: { id: string }, context: ToolContext, required: boolean): Promise<TaskPlace | null> {
     const folder = worktreeScope() ?? this.deps.projectFolder();
     this.requireAvailableSource(folder);
     this.helperSources.set(run.id, folder);
     let placed = false;
     try {
-      const copy = await this.createHelper(run, context, folder);
+      const copy = await this.createHelper(run, context, folder, required);
       placed = copy !== null;
       return copy;
     } finally { if (!placed) this.helperSources.delete(run.id); }
   }
 
-  private async createHelper(run: { id: string }, context: ToolContext, folder: string): Promise<TaskPlace | null> {
+  private async createHelper(run: { id: string }, context: ToolContext, folder: string, required: boolean): Promise<TaskPlace | null> {
     const cwd = join(this.deps.root, folder);
     const head = await this.deps.run(cwd, ["rev-parse", "HEAD"], context.signal).catch(() => null);
     if (!head || head.status !== "completed" || head.exitCode !== 0 || !head.stdout.trim()) {
       context.signal.throwIfAborted();
+      if (!required) {
+        // Inside a copy, the helper borrows that copy (its lease and durable marker), never the shared folder.
+        if (worktreeScope()) return this.inheritedPlace(run);
+        this.deps.note(run.id, "worktree.shared", { reason: "no-git-commit" }); return null;
+      }
       const reason = "The helper needs a separate project copy, but the project has no readable Git commit. The helper was not started in the shared project.";
       this.deps.note(run.id, "worktree.failed", { reason });
       throw new Error(reason);

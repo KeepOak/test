@@ -64,7 +64,7 @@ export class Asks {
     this.boards = new ProjectBoards(store, owner, { flows: () => deps.flows.list().map((f) => ({ id: f.id, name: f.name })) });
     this.intents = new IntentPipeline(store, owner, provider);
     this.analytics = new Analytics(store, owner, deps.fetch);
-    this.pages = new AnswerPages(store, owner);
+    this.pages = new AnswerPages(store, owner, deps.files); // SELF-309: a live page reads its workspace file
     this.answers = new AnswerEngine(store, owner, deps.web, provider, this.pages);
     this.articles = new ArticleWriter({ store, owner, web: deps.web, files: deps.files, provider });
     this.sources = new SourceSync({ store, owner, files: deps.files, fetch: deps.fetch,

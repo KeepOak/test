@@ -26,7 +26,7 @@ allowed.](docs/images/conversation.png)
    into the same folder. The installer refuses a missing or changed download.
 2. Double-click **Install Branch Agent.cmd**. Windows may warn you the download is unsigned: choose
    **More info**, then **Run anyway**.
-3. Open Branch Agent and connect a model — a ChatGPT plan, a key from any of 36 online services, or a model
+3. Open Branch Agent and connect a model — a ChatGPT plan, a key from any of 37 online services, or a model
    running on this very computer.
 
 Nothing else has to be installed first. To remove it, use **Add or remove programs**; your

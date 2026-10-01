@@ -48,7 +48,7 @@ test("every part ships as the owner's rule says, its tools are left out while of
   // The owner's rule (ships on, 2026-09-26): the coding parts ship "when needed", read-first ships on (Q250, a stricter
   // guard), fewer-rounds ships "when needed" too (2026-09-27); a damaged record reads as off; what "off" does is tested by
   // switching every part off.
-  const ships = { "read-first": "on", worktrees: "off" }; // worktrees: heavy disk
+  const ships = { "read-first": "on" }; // worktrees ships when needed for helpers only (the owner's ruling, 2026-09-30)
   for (const part of codingParts) assert.equal(app.coding.modes()[part], ships[part] ?? "when-needed", `${part} on a fresh install`);
   assert.equal(codingMode({ get: () => ({ data: { mode: "sideways" } }) }, "local", "notebooks"), "off", "a damaged record reads as off");
   for (const part of codingParts) app.coding.setMode(part, "off");
@@ -393,9 +393,13 @@ test("R17-036: a forked conversation works in its own copy, and a helper's copy 
   };
   started(first);
   const messageId = app.runtime.store.sqlite.prepare("SELECT source_id FROM messages WHERE session_id=?").get(first.sessionId)?.source_id;
-  app.coding.setMode("worktrees", "off"); // ships off (heavy disk); switched off explicitly all the same
+  app.coding.setMode("worktrees", "off");
   await assert.rejects(app.coding.worktrees.fork({ sessionId: first.sessionId, messageId }, AbortSignal.timeout(30_000)), /switched off/);
   on("worktrees");
+  // The owner's ruling (2026-09-30): helpers get copies by default, a forked conversation does not until forks is on.
+  await assert.rejects(app.coding.worktrees.fork({ sessionId: first.sessionId, messageId }, AbortSignal.timeout(30_000)), /Forking a conversation .* is off/);
+  assert.equal(app.coding.worktrees.forks().length, 0, "nothing was copied");
+  app.coding.worktrees["deps"].store.save("settings", app.runtime.owner, "coding-worktrees", { mode: "on", forks: true });
   const fork = await app.coding.worktrees.fork({ sessionId: first.sessionId, messageId }, AbortSignal.timeout(30_000));
   assert.match(fork.path, /^\.branch-worktrees\/fork-[a-f0-9]{8}$/);
   assert.ok(existsSync(join(app.runtime.workspace, fork.path, "README.md")));
@@ -418,8 +422,9 @@ test("R17-036: a forked conversation works in its own copy, and a helper's copy 
 
   const parent = context();
   const helperRun = () => started(app.store.createRun(app.runtime.owner, "helper"));
-  assert.equal(await app.coding.placeTask(helperRun(), context(), parent), null, "helpers share the folder unless asked");
-  app.coding.worktrees["deps"].store.save("settings", app.runtime.owner, "coding-worktrees", { mode: "on", perHelper: true });
+  app.coding.worktrees["deps"].store.save("settings", app.runtime.owner, "coding-worktrees", { mode: "on", perHelper: false });
+  assert.equal(await app.coding.placeTask(helperRun(), context(), parent), null, "with per-helper copies off, helpers share the folder");
+  app.coding.worktrees["deps"].store.save("settings", app.runtime.owner, "coding-worktrees", { mode: "on" }); // perHelper by default
   const empty = await app.coding.placeTask(helperRun(), context(), parent);
   assert.ok(existsSync(empty.workspace));
   await empty.release();
@@ -436,6 +441,45 @@ test("R17-036: a forked conversation works in its own copy, and a helper's copy 
   await borrowed.release();
   await app.coding.worktrees.remove(fork.sessionId, AbortSignal.timeout(30_000)).catch(() => undefined);
   void run;
+});
+
+test("R17-036: a helper's copy by default is skipped in a project with no Git commit, but one the lead asked for is refused", async (t) => {
+  const { app, on, context } = await fixture(t);
+  on("worktrees"); // perHelper by default; the workspace here has no Git repository at all
+  const started = (task) => {
+    app.store.event(task.id, "run.started", { source: "owner", parentRunId: null,
+      permissions: app.registry.permissions(), deadlineMs: 30_000, depth: 0, delegates: false });
+    return task;
+  };
+  const helper = () => started(app.store.createRun(app.runtime.owner, "helper"));
+  const parent = context();
+  assert.equal(await app.coding.placeTask(helper(), context(), parent), null, "an ordinary helper shares the folder, as it did");
+  await assert.rejects(app.coding.placeTask(helper(), { ...context(), ownCopy: true }, parent), /no readable Git commit/,
+    "a copy the lead required is never quietly swapped for the shared folder");
+});
+
+test("R17-036: a helper inside a borrowed copy with no Git commit keeps that copy's lease and marker, never the shared folder", async (t) => {
+  const { app, on, context, workspace } = await fixture(t);
+  on("worktrees"); // perHelper by default; the copy below has no readable Git commit
+  const started = (task) => {
+    app.store.event(task.id, "run.started", { source: "owner", parentRunId: null,
+      permissions: app.registry.permissions(), deadlineMs: 30_000, depth: 0, delegates: false });
+    return task;
+  };
+  const scope = ".branch-worktrees/helper-borrowed";
+  await mkdir(join(workspace, scope), { recursive: true });
+  const helper = started(app.store.createRun(app.runtime.owner, "helper"));
+  const place = await inWorktree(scope, () => app.coding.placeTask(helper, context(), context()));
+  assert.equal(place?.scope, scope, "the helper stays in the copy it was started from");
+  const kinds = app.store.events(helper.id).map((event) => event.kind);
+  assert.ok(app.store.events(helper.id).some((event) => event.kind === "worktree.inherited" && event.data.path === scope && event.data.borrowed === true),
+    "the borrowed copy is recorded durably");
+  assert.equal(kinds.includes("worktree.shared"), false, "a scoped helper is never recorded as sharing the root folder");
+  assert.equal(app.coding.worktrees["helperSources"].get(helper.id), scope, "the copy's live lease is held while the helper works");
+  await assert.rejects(app.coding.placeTask(helper, context(), undefined), /borrowed project copy/,
+    "a later continuation refuses rather than falling back to the shared workspace");
+  await place.release();
+  assert.equal(app.coding.worktrees["helperSources"].has(helper.id), false);
 });
 
 test("R17-043: the project's review checks run as read-only helpers against the changes", needsGit, async (t) => {
@@ -515,6 +559,6 @@ test("the API: switches, settings and refusals in plain words", async (t) => {
   await assert.rejects(call("GET", "/api/coding/nowhere"), (error) => error.status === 404);
   assert.equal(codingMode(app.store, app.runtime.owner, "init"), "when-needed");
   saveCodingMode(app.store, app.runtime.owner, "worktrees", "on");
-  assert.deepEqual((await call("POST", "/api/coding/worktrees", { perHelper: true })).settings, { perHelper: true });
+  assert.deepEqual((await call("POST", "/api/coding/worktrees", { perHelper: true })).settings, { perHelper: true, forks: false });
   assert.equal(codingMode(app.store, app.runtime.owner, "worktrees"), "on", "saving a part's settings keeps its switch");
 });

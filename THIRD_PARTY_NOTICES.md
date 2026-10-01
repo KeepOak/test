@@ -30,6 +30,17 @@ MIT License
 Copyright (c) 2023 SYSTRAN
 Copyright (c) 2020-present Silero Team
 
+## Hermes memory tool approval snapshot adaptation
+
+The whole-file proposal snapshot guard in `src/trunks/files.ts` adapts the pinned-entry approval pattern in
+[`tools/memory_tool.py`](https://github.com/NousResearch/hermes-agent/blob/94a57ead919dddfe54f7945cab5c829e907e5c26/tools/memory_tool.py),
+specifically `_pin_matched_entries` and `_gate_or_stage`. Branch captures the entire original file at staging,
+then refuses acceptance if that content changed. The integration always requires a person to review the proposal.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
@@ -110,6 +121,15 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+### Public MCP registry discovery
+
+`src/mcp-public-registry.ts` adapts the fetch-and-sanitise discovery flow from Cline's
+`apps/vscode/src/core/controller/marketplace/marketplace-helpers.ts` (Copyright 2026 Cline Bot Inc.,
+Apache-2.0; https://github.com/cline/cline). Branch replaces its protobuf catalog with the official
+registry response schema, checks the owner's network policy, caps response bytes, and offers no
+automatic installation. The Apache-2.0 license text is reproduced in this document.
 
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 

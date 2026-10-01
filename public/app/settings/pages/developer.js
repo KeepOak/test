@@ -1,9 +1,12 @@
 /* Settings › Developer, 1:1 with the prototype (only shown at the Technical level). The local address is the one this
    window is talking to; Copy puts it on the clipboard. A switch shows the engine's own value and is live only where a
    route changes it (WIRES); a three-way feature switch reads as on unless its mode is "off", turns on as "when-needed"
-   and off as "off". The session key is never shown; making a new one, sandboxed tool scripts and tools that join from
-   outside stay greyed (tools joining over a WebSocket shows the engine's mode). "Load tools only when needed", portable mode and
-   saving task trajectories are how Branch always works, so they are words, not switches (settings/rows15.js fact15). Finding Branch on other computers
+   and off as "off". The session key is never shown, and making a new one stays greyed. Tool scripts and WebAssembly is
+   the safety extras' two parts at once (POST /api/safety-extras/switch tool-scripts and wasm-add-ons, each sent and the
+   page read again, so a half-done change shows as it is); tools that join over a WebSocket is the interop part
+   client-tools, off as it ships (a program on this computer with the owner's key lends tools while it is on). "Load tools
+   only when needed" (src/tool-loading.ts), portable mode and saving task trajectories are how Branch always works, so they
+   are words, not switches (settings/rows15.js fact15). Finding Branch on other computers
    happens only while "Add a computer" is open (src/devices/find.ts), so its row opens that dialog (flows/computers.js,
    "addcomp"). Every other greyed row says why (core/why.js). A row of choices or a button with a translated title
    carries its English title's id as its reason key. Turn an OpenAPI file into tools reads a chosen file and
@@ -19,15 +22,20 @@ import { developer17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
 import { initPlayground } from "../playground.js";
 import { initOpenApiPick } from "../openapi-pick.js";
+import { seasonsSettingsRows, initSeasonsSettings } from "../seasons.js";
+import { loadKit } from "../kit17.js";
 import { drawGitHubDevice, initGitHubDevice, loadGitHubDevice } from "../github-device.js";
 import { say } from "../../core/words.js";
 import { reason } from "../../core/why.js";
 import { t } from "../../../i18n.js";
 
-const D = { ls: null, dbg: null, interop: null, counters: null, loop: null, comfort: null, tracing: null };
+const D = { ls: null, dbg: null, interop: null, counters: null, loop: null, comfort: null, tracing: null, safety: null };
 const onMode = (mode) => (mode ? mode !== "off" : false);
 const mode = (on) => (on ? "when-needed" : "off");
 const part = (name) => D.interop?.parts?.find((p) => p.part === name)?.mode;
+const SCRIPTS = ["tool-scripts", "wasm-add-ons"];
+const scriptsOn = () => SCRIPTS.every((name) => onMode(D.safety?.modes?.[name]));
+async function setScripts(on) { for (const name of SCRIPTS) await api("safety-extras/switch", { part: name, mode: mode(on) }); }
 
 /* Language servers and debug adapters: the route replaces the whole record, so the one read is sent back with only
    "enabled" changed. */
@@ -37,12 +45,10 @@ const WIRES = {
   "f15-flow-search": [() => onMode(part("flow-search")), (on) => api("interop/switch", { part: "flow-search", mode: mode(on) })],
   "f15-send-metrics-with-opentelemetry": [() => onMode(D.counters?.mode), (on) => api("usage/counters", { mode: mode(on) })],
   "f15-is-branch-keeping-up": [() => onMode(D.loop?.mode), (on) => api("event-loop", { mode: mode(on) })],
+  "f15-tool-scripts-and-webassembly": [scriptsOn, setScripts],
+  "f15-tools-that-join-over-a-websocket": [() => onMode(part("client-tools")), (on) => api("interop/switch", { part: "client-tools", mode: mode(on) })],
 };
-/* Shown as the engine holds it, never changed from here (security-greyed). */
-const SHOWN = {
-  "f15-tools-that-join-over-a-websocket": () => onMode(part("client-tools")),
-};
-const value = (id) => (WIRES[id]?.[0] ?? SHOWN[id])?.() ?? false;
+const value = (id) => WIRES[id]?.[0]?.() ?? false;
 const sw = (title, sub) => sw15(title, sub, value(id15(title)));
 
 /* The terminal's status line (the comfort card "display", statusLine): Default is the engine's null (the line as it has
@@ -81,20 +87,20 @@ export function draw() {
     + code15(t("window.settings.developer.loop-a-prompt"), t("window.settings.developer.or-heartbeat-for-the-check-in"), "/loop 10m check the build"));
   html += sec15(t("window.settings.developer.system"),
     fact15("Portable mode", "f15-portable-mode")
-    + sw("Send metrics with OpenTelemetry", D.tracing?.endpoint ?? "")
+    + sw("Send metrics with OpenTelemetry", D.tracing?.endpoint || "Sends each task's traces to your own OpenTelemetry collector.")
     + statusRow()
     + btn15(say("Find Branch on other computers nearby"), say("Tools and models on your network."), t("ov.open"), "addcomp", "f15-find-branch-on-other-computers-nearby")
     + sw("Is Branch keeping up", "Warns when the engine stalls for more than 5 seconds.")
     + fact15("Save task trajectories", "f15-save-task-trajectories"));
-  return html + drawGitHubDevice() + developer17(level17());
+  return html + seasonsSettingsRows() + drawGitHubDevice() + developer17(level17());
 }
 
 async function loadAll() {
   await loadGitHubDevice();
-  const [ls, dbg, interop, counters, loop, comfort, tracing] = await Promise.all(
-    ["developer/language-servers", "developer/debug-adapters", "interop", "usage/counters", "event-loop", "comfort", "tracing/settings"]
+  const [ls, dbg, interop, counters, loop, comfort, tracing, safety] = await Promise.all(
+    ["developer/language-servers", "developer/debug-adapters", "interop", "usage/counters", "event-loop", "comfort", "tracing/settings", "safety-extras"]
       .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
-  Object.assign(D, { ls, dbg, interop, counters: counters?.counters ?? null, loop: loop?.settings ?? null, comfort, tracing: tracing?.settings ?? null });
+  Object.assign(D, { ls, dbg, interop, counters: counters?.counters ?? null, loop: loop?.settings ?? null, comfort, tracing: tracing?.settings ?? null, safety });
   render();
 }
 
@@ -103,12 +109,13 @@ async function copyAddress() {
 }
 
 export function init() {
+  initSeasonsSettings();
   on("dv-copy", () => copyAddress());
   on("dv-status", (el) => setStatusLine(el.dataset.v));
   initPlayground();
   initOpenApiPick();
   initGitHubDevice();
-  markLive(["dv-copy", "dv-status", "sw:dv-ls", "sw:dv-dbg", "sw:f15-flow-search", "sw:f15-send-metrics-with-opentelemetry", "sw:f15-is-branch-keeping-up"]);
+  markLive(["dv-copy", "dv-status", ...Object.keys(WIRES).map((id) => "sw:" + id)]);
   document.addEventListener("change", async (e) => {
     const wire = WIRES[e.target.id];
     if (!wire) return;
@@ -118,6 +125,6 @@ export function init() {
   loadAll();
 }
 
-export async function load() { await loadAll(); }
+export async function load() { await Promise.all([loadAll(), loadKit()]); }
 
 export const live = { "dv-copy": true, "dv-status": true };
