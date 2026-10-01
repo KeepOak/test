@@ -54,32 +54,42 @@ export function save() {
 
 /* The engine's picture of things: state, the Trunks and the conversation list. */
 let refreshGeneration = 0;
-export async function refresh() {
+export async function refresh(isCurrent = () => true) {
   const mine = ++refreshGeneration;
+  const current = (profiles = E.profiles) => mine === refreshGeneration && isCurrent(profiles);
+  if (!current()) return;
   /* One request first: until the engine accepts the window, every refused request counts against sign-in. */
   const state = await api("state");
-  if (mine !== refreshGeneration) return;
+  if (!current()) return;
   const [trunks, profiles] = await Promise.all([
     api("trunks").catch(() => null),
     api("profiles").catch(() => null),
   ]);
-  if (mine !== refreshGeneration) return;
-  if (resetSessionPages(profiles ?? E.profiles)) E.sessions = [];
+  if (!current(profiles ?? E.profiles)) return;
+  if (resetSessionPages(profiles ?? E.profiles)) {
+    if (!current(profiles ?? E.profiles)) return;
+    E.sessions = [];
+  }
+  if (!current(profiles ?? E.profiles)) return;
   /* A read that failed keeps what the window last had. Emptied, one refused or dropped GET /api/trunks lost every Trunk
      and the modes: "@Ada …" then found no Ada and went out as an ordinary message in a new conversation (trunks-ui on
      CI), and the side list lost its Trunks and conversations until the next read. */
   if (profiles) E.profiles = profiles;
+  if (!current()) return;
   E.state = state;
   if (trunks) {
+    if (!current()) return;
     E.trunks = trunks.trunks ?? (Array.isArray(trunks) ? trunks : []);
     E.trunksRead = true; // pass 18: an empty Trunks list is a welcome only when the engine answered
     E.trunkModes = trunks.modes ?? {};
     E.defaultTrunkId = trunks.defaultId ?? null; // the default Trunk answers every chat nobody routed elsewhere
+    if (!current()) return;
     E.rooms = Array.isArray(trunks.rooms) ? trunks.rooms : [];
+    if (!current()) return;
     if (Array.isArray(trunks.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
   }
   const who = sessionPrincipal(E.profiles);
-  const stillHere = () => mine === refreshGeneration && sessionPrincipal(E.profiles) === who && S.signedIn
+  const stillHere = () => current() && sessionPrincipal(E.profiles) === who && S.signedIn
     && !document.getElementById("app")?.classList.contains("locked-b17");
   const sessions = await readSessionPages(E.profiles, stillHere);
   if (!stillHere()) return;
@@ -87,6 +97,7 @@ export async function refresh() {
     E.sessions = sessions.sessions ?? [];
     E.putAway = { archived: sessions.archived ?? 0, deleted: sessions.deleted ?? 0 }; // chat/putaway.js: Archived, Recently Deleted
   }
+  if (!stillHere()) return;
   E.loaded = true;
   render();
 }

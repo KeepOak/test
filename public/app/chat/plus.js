@@ -122,7 +122,7 @@ async function chooseWho(el) {
     const view = S.view, box = $("#prompt"), principal = sessionPrincipal(E.profiles);
     const binding = newConversationBinding(), home = E.defaultTrunkId, project = newConversationProject();
     const authority = sessionAuthority(E.profiles, $("#app"));
-    const authorized = () => authority.current(E.profiles) && S.signedIn && !$("#app")?.classList.contains("locked-b17");
+    const authorized = (profiles = E.profiles) => authority.current(profiles) && S.signedIn && !$("#app")?.classList.contains("locked-b17");
     const stillHere = () => authorized() && !S.chat && S.view === view && $("#prompt") === box && !Q.temporary
       && S.signedIn && !$("#app")?.classList.contains("locked-b17")
       && sessionPrincipal(E.profiles) === principal && newConversationBinding() === binding
@@ -140,9 +140,9 @@ async function chooseWho(el) {
       S.drafts[created.sessionId] = box?.value ?? S.drafts.new ?? "";
       delete S.drafts.new;
       const opened = await openConversation(created.sessionId, authorized);
-      const completedHere = () => authorized() && S.chat === created.sessionId && S.view === view;
+      const completedHere = (profiles = E.profiles) => authorized(profiles) && S.chat === created.sessionId && S.view === view;
       if (opened === false || !completedHere()) return;
-      await refresh().catch(error => { if (completedHere()) toast(error.message); });
+      await refresh(completedHere).catch(error => { if (completedHere()) toast(error.message); });
     } catch (error) { if (stillHere()) toast(error.message); }
     finally { authority.close(); Q.choosing = false; }
     return;
