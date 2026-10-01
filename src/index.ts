@@ -1,4 +1,5 @@
 import { environmentTool } from "./environment.js";
+import { ProfileGateways } from "./profile-gateways.js";
 import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks/secrets.js"; // RES-260
 import { currentAccountCall } from "./accounts/context.js";
 import { closeSpareAgents } from "./providers/cli-agent.js";
@@ -1741,12 +1742,14 @@ ${result.output || "(it said nothing)"}`;
   };
   // --- end bucket 14 ---
   let closing: Promise<void> | undefined;
+  const profileGateways = new ProfileGateways(dataDir);
   /** Wave mac2 (guards): the sections of the integrations file this start left out, which the launch-file card names. */
   const launchFile = { leftOut: [] as readonly string[] };
   /** The chat apps' host, filled in once `branch` exists, for apps the Set up panel connects (src/channel-setup/live.ts). */
   const channelHostRef: { current?: ChannelHost } = {};
   const miniAppSessions = new MiniAppSessions();
   const branch = {
+    profileGateways,
     store,
     registry,
     launchFile,
@@ -2089,6 +2092,7 @@ ${result.output || "(it said nothing)"}`;
       summary: (limit?: number) => liveScoreSummary(liveScores(store, runtime.owner, limit)),
     },
     close: () => (closing ??= (async () => {
+      await profileGateways.close();
       // bucket-18 (A0300): nothing is sent to GitHub while the app is closing.
       stopPullRequests();
       githubDevice.cancel();

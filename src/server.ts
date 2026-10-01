@@ -1429,6 +1429,37 @@ async function api(
   // eng-connectors: the connector catalogue, the owner's own servers and command-line tools, What's new, flagged replies.
   const connectors = await connectorsApi(app, request, path);
   if (connectors !== undefined) return connectors;
+  if (path.startsWith("/api/profile-gateways")) {
+    // Only the authenticated local window: paired doors and scoped script keys cannot manage or route workers.
+    if (throughDoor(request) || startedWithShortLivedKey()) throw new Error("Profile gateways require the local signed-in window.");
+    const match = /^\/api\/profile-gateways\/([a-f0-9-]{36})(?:\/(start|stop|route))?$/.exec(path);
+    if (!match) throw new Error("Choose a household profile ID and a gateway operation.");
+    const id = match[1]!;
+    if (!app.store.profiles.list().some((profile) => profile.id === id)) throw new Error("That household profile no longer exists.");
+    const action = match[2];
+    if (action === "route") {
+      if (!app.store.profiles.isOwner() && app.store.profiles.scope() !== `profile:${id}`) throw new Error("This gateway belongs to another profile.");
+      if (request.method !== "POST") throw new Error("Routing requires POST.");
+      const scope = app.store.profiles.scope();
+      const body = await readBody(request);
+      if (app.store.profiles.scope() !== scope) throw new Error("The profile changed; retry in its own window.");
+      return app.profileGateways.route(id, body, (configure) => {
+        if (app.store.profiles.scope() !== scope || !app.store.profiles.list().some((profile) => profile.id === id))
+          throw new Error("Profile ownership changed; retry.");
+        if (configure) app.store.profiles.requireOwner("Configuring an isolated profile's model credentials");
+      });
+    }
+    app.store.profiles.requireOwner("Managing isolated profile gateways");
+    if (!action && request.method === "GET") return app.profileGateways.view(id);
+    if (!action && request.method === "POST") {
+      const body = await readBody(request);
+      app.store.profiles.requireOwner("Creating an isolated profile gateway");
+      return app.profileGateways.create(id, body);
+    }
+    if (action === "start" && request.method === "POST") return app.profileGateways.start(id);
+    if (action === "stop" && request.method === "POST") { await app.profileGateways.stop(id); return { stopped: true, profileId: id }; }
+    throw new Error("Unsupported profile gateway operation.");
+  }
   if (request.method === "GET" && path === "/api/mcp/connection") return mcpConnectionSnippets(app, request, dataDir);
   if (path.startsWith("/api/mcp/")) return mcpApi(app, request, path);
   // Assistants elsewhere: the ones added, looking for more, and the link that pairs two installs.
