@@ -154,6 +154,28 @@ test("the view keeps to its own budget on the device socket, so a task's turns a
   assert.throws(() => screen.guard({ owner: "o", sessionId: "s", viaDoor: false, shortKey: false, keyValid: () => true }, "../etc"), /not a paired computer/);
 });
 
+test("a view that stops reading gets no more pictures (none is even asked for) until it has taken the last one", async () => {
+  let asked = 0;
+  const screen = new DeviceScreen({ owner: () => "o", isOwner: () => true, owns: () => true, lockdown: () => false, locked: () => null,
+    allows: () => true, paceMs: 10, inputRefusal: () => null, drive: () => undefined, driving: () => false, stoppedHere: () => false,
+    input: async () => undefined, capture: async () => { asked += 1; return { bytes: Buffer.from("x"), mime: "image/png" }; } });
+  const written = [];
+  // Like a real response whose window stopped reading: each write fills it until the window drains it.
+  const response = { destroyed: false, writableNeedDrain: false, writeHead() {}, once() {},
+    write(line) { written.push(line); this.writableNeedDrain = true; return false; }, end() { this.destroyed = true; } };
+  const streaming = screen.stream({ owner: "o", sessionId: "s", viaDoor: false, shortKey: false, keyValid: () => true }, "0123456789abcdef", response);
+  try {
+    await wait(150);
+    assert.equal(written.length, 1, "one picture waits in the response; no more pile up behind it");
+    assert.equal(asked, 1, "that computer is not asked for pictures nobody will read");
+    response.writableNeedDrain = false;
+    await until(() => written.length >= 2, "the next picture once the window reads again", 2000);
+  } finally {
+    screen.close();
+    await streaming;
+  }
+});
+
 test("the owner clicks and types on a paired computer from the view: only through its own switch, only while driving, only on the picture seen", async (t) => {
   const w = await world(t, { input: true });
   const post = async (path, body, key = w.server.token) => {
