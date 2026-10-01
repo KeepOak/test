@@ -2859,8 +2859,8 @@ async function chatWebhook(app: Branch, request: IncomingMessage, response: Serv
   // exactly as somewhere guessing the key is. That also keeps a flood off the record of refusals.
   // The random word on the end of the address is what makes it unguessable. Checked before the
   // channel is even looked up, so a wrong address tells nobody which channel names exist.
-  const verdict = webhookAddressVerdict(app.store, app.runtime.owner, match[1]!, match[2],
-    widerThanThisComputer(request, beyond));
+  const wider = widerThanThisComputer(request, beyond);
+  const verdict = webhookAddressVerdict(app.store, app.runtime.owner, match[1]!, match[2], wider);
   // mac7/channel-leaks: everything below asks `limit.proven` before it says anything at all. A
   // caller who has shown the word on the end holds a secret only this computer and the chat service
   // have, so it is worth telling them what is wrong; a caller who has not gets one sentence,
@@ -2872,7 +2872,13 @@ async function chatWebhook(app: Branch, request: IncomingMessage, response: Serv
   // mac6/bucket-16: WeChat and WeCom check the address with a GET and sign XML posts in the query.
   if (isSignedQueryChannel(adapter)) return signedQueryWebhook(app, adapter, request, response, limit);
   // Wave mac3 (channels-parity): services that are posted to and prove the post in their own way.
-  if (isPostedChannel(adapter)) return postedChatWebhook(app, adapter, request, response, limit);
+  if (isPostedChannel(adapter)) {
+    // The address this post came in on and the exact connection it was admitted for, checked again once its body has
+    // arrived: an address replaced or a chat app reconnected meanwhile does not let it in through the old one.
+    const bound = () => webhookAddressVerdict(app.store, app.runtime.owner, match[1]!, match[2], wider) === verdict
+      && app.channels.adapter(match[1]!) === adapter;
+    return postedChatWebhook(app, adapter, request, response, limit, bound);
+  }
   if (!(adapter instanceof WebhookChatAdapter)) {
     if (!limit.proven) return refuseWebhookAddress(app, request, response, limit);
     throw new HttpError(404, "No chat service with that name is connected");
@@ -2953,7 +2959,8 @@ function noteWrongWebhook(app: Branch, limit: ChatWebhookLimit, what: string): v
   if (state.until) noteWebhookWait(app.store, app.runtime.owner, limit.channel, state.until, limit.proven, now);
 }
 /** Wave mac3 (channels-parity): hands the exact bytes to a service that checks its own signature. */
-async function postedChatWebhook(app: Branch, adapter: ChannelAdapter & PostedChannel, request: IncomingMessage, response: ServerResponse, limit: ChatWebhookLimit): Promise<boolean> {
+async function postedChatWebhook(app: Branch, adapter: ChannelAdapter & PostedChannel, request: IncomingMessage, response: ServerResponse,
+  limit: ChatWebhookLimit, bound: () => boolean): Promise<boolean> {
   if (request.method !== "POST" || adapter.accepting?.() === false) {
     // Whether a service is switched off in Customize is state, so it is only said to a caller who
     // has shown the word on the end of the address.
@@ -2962,6 +2969,8 @@ async function postedChatWebhook(app: Branch, adapter: ChannelAdapter & PostedCh
       request.method === "POST" ? "That chat service is switched off in Customize" : "Endpoint not found");
   }
   const { raw } = await readBodyWithRaw(request, 256 * 1024).catch(() => { throw new HttpError(400, "That message could not be read"); });
+  // Telegram's inbox write follows this check with nothing awaited in between.
+  if (!bound()) { send(response, 404, { error: wrongWebhookAddress }); return true; }
   const result = await adapter.receivePost(raw, request.headers)
     .catch((error: unknown) => {
       if (error instanceof TelegramWebhookUnavailable) throw new HttpError(503, error.message);
