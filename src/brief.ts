@@ -9,14 +9,16 @@ import { nextDailyOccurrence } from "./scheduler.js";
 import { placeholders, substitute } from "./recipes.js";
 import { optionalFields } from "./feature-switches.js";
 import { markChosen, savedFields, shippedUnlessChosen } from "./ship-on.js";
+import { BriefSourceSchema, BriefSources, type BriefSource } from "./brief-sources.js";
+import type { WebAccess } from "./integrations/web.js";
 
 /**
  * One message first thing: what is planned today, what was left unfinished, documents that arrived,
  * watches that noticed something, and anything the person asked to be reminded of. Everything comes
- * from what the app already knows — no calendar account and nothing read aloud — and the wording is
- * a template the person can change.
+ * from what the app already knows, plus bounded public health/news pages when the owner selects
+ * them. No calendar account or personal-health provider; the wording is a template they can change.
  */
-export const briefSections = ["schedules", "tasks", "documents", "watches", "reminders"] as const;
+export const briefSections = ["schedules", "tasks", "documents", "watches", "reminders", "health", "news"] as const;
 export type BriefSection = (typeof briefSections)[number];
 export const defaultTemplate = `Good morning. Here is {{date}}.
 
@@ -33,7 +35,13 @@ export const defaultTemplate = `Good morning. Here is {{date}}.
 {{watches}}
 
 **Reminders**
-{{reminders}}`;
+{{reminders}}
+
+**Health sources**
+{{health}}
+
+**News sources**
+{{news}}`;
 const zone = z.string().min(1).max(64).refine((value) => {
   try { new Intl.DateTimeFormat("en-US", { timeZone: value }); return true; } catch { return false; }
 }, "Unknown timezone");
@@ -49,7 +57,9 @@ export const BriefSettingsSchema = z.object({
   timezone: zone.default(localZone),
   deliverTo: z.object({ channel: z.string().min(1).max(64), chatId: z.string().min(1).max(64) }).strict().nullable().default(null),
   template: z.string().max(4000).default(defaultTemplate),
-  sections: z.array(z.enum(briefSections)).max(5).default([...briefSections]),
+  sections: z.array(z.enum(briefSections)).max(7).default([...briefSections]),
+  /** Owner-selected public pages only; choosing sources authorizes reading them when the brief is sent. */
+  sources: z.array(BriefSourceSchema).max(4).default([]),
   nextAt: z.iso.datetime().nullable().default(null),
   lastSentAt: z.iso.datetime().nullable().default(null),
 }).strict();
@@ -73,10 +83,13 @@ export function assembleBrief(settings: BriefSettings, content: BriefContent, no
   const bound: Record<string, string> = {
     date: new Intl.DateTimeFormat("en-GB", { timeZone: settings.timezone, weekday: "long", day: "numeric", month: "long" }).format(now),
   };
-  for (const section of briefSections)
+  for (const section of briefSections) {
+    // Health and news only speak about pages the owner chose; with none chosen, their headings are left out.
+    const optional = section === "health" || section === "news";
     bound[section] = settings.sections.includes(section) && content[section].length
       ? content[section].map((line) => `- ${line}`).join("\n")
-      : settings.sections.includes(section) ? nothing : "";
+      : settings.sections.includes(section) && !optional ? nothing : "";
+  }
   const text = substitute(settings.template, bound);
   // A section that was switched off leaves its heading with an empty body; drop both.
   return text.replace(/\n\*\*[^*]+\*\*\n(?=\n|$)/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -89,12 +102,15 @@ export function assembleBrief(settings: BriefSettings, content: BriefContent, no
 export const briefShipsOn: Partial<BriefSettings> = { enabled: true };
 
 export class MorningBrief {
+  private readonly sourceReader: BriefSources | undefined;
+  private readonly sending = new Set<string>();
   constructor(
     readonly store: Store,
     private readonly monitors?: Monitors,
     private readonly documents?: DocumentLibrary,
     private readonly deliver?: DeliveryHandler,
-  ) {}
+    web?: WebAccess,
+  ) { this.sourceReader = web ? new BriefSources(store, web) : undefined; }
   settings(owner: string): BriefSettings {
     const saved = BriefSettingsSchema.safeParse(this.store.get("settings", owner, "brief")?.data ?? {});
     if (!saved.success) return BriefSettingsSchema.parse({});
@@ -103,16 +119,18 @@ export class MorningBrief {
     return saved.data.deliverTo ? saved.data : shippedUnlessChosen(this.store, owner, "brief", saved.data, briefShipsOn);
   }
   configure(owner: string, input: unknown, now = new Date()): BriefSettings {
+    if (input && typeof input === "object" && "sources" in input) this.store.profiles.requireOwner("Choosing brief sources");
     const before = this.store.get("settings", owner, "brief")?.data;
     const merged = BriefSettingsSchema.parse({ ...this.settings(owner), ...(input as object) });
     checkTemplate(merged.template);
     const value: BriefSettings = { ...merged,
       nextAt: merged.enabled ? nextDailyOccurrence(now, merged.dailyAt, merged.timezone).toISOString() : null };
     this.store.save("settings", owner, "brief", value);
+    if (JSON.stringify(before?.sources ?? []) !== JSON.stringify(value.sources)) this.sourceReader?.clear(owner);
     markChosen(this.store, owner, "brief", savedFields(before, BriefSettingsSchema.safeParse(before ?? {}).success, input, briefShipsOn));
     return value;
   }
-  /** Everything the brief can talk about, gathered from what the app already holds. */
+  /** Existing records plus dated source snapshots; gathering and preview never fetch. */
   gather(owner: string, now = new Date()): BriefContent {
     const since = new Date(now.getTime() - 86400000).toISOString();
     const endOfDay = new Date(now.getTime() + 86400000).toISOString();
@@ -131,7 +149,31 @@ export class MorningBrief {
       reminders: this.store.list("memory", owner)
         .filter((record) => /remind/i.test(`${String(record.data.attribute ?? "")} ${String(record.data.text ?? "")}`) && !record.data.validTo)
         .slice(0, 5).map((record) => String(record.data.text).slice(0, 160)),
+      health: this.sourceLines(owner, "health"),
+      news: this.sourceLines(owner, "news"),
     };
+  }
+  private selectedSources(settings: BriefSettings): BriefSource[] {
+    return settings.sources.filter((source) => settings.sections.includes(source.section));
+  }
+  private sourceLines(owner: string, section: "health" | "news"): string[] {
+    const sources = this.selectedSources(this.settings(owner));
+    return this.sourceReader?.lines(owner, sources, section)
+      ?? (sources.some((source) => source.section === section) ? ["Source reading is unavailable in this Branch instance."] : []);
+  }
+  private unchanged(owner: string, settings: BriefSettings): void {
+    this.store.profiles.requireOwner("Reading brief sources");
+    if (owner !== this.store.profiles.ownerName || JSON.stringify(this.settings(owner)) !== JSON.stringify(settings))
+      throw new Error("The brief settings changed while its sources were being read. Try again.");
+  }
+  /** Explicit refresh for the owner's own task; preview continues to use the saved, dated excerpts. */
+  async refresh(owner: string): Promise<{ markdown: string; content: BriefContent }> {
+    const settings = this.settings(owner);
+    this.unchanged(owner, settings);
+    const sources = this.selectedSources(settings);
+    if (sources.length && !this.sourceReader) throw new Error("Source reading is unavailable in this Branch instance.");
+    if (sources.length) await this.sourceReader!.refresh(owner, sources, () => this.unchanged(owner, settings));
+    return this.preview(owner);
   }
   preview(owner: string, now = new Date()): { markdown: string; content: BriefContent } {
     const settings = this.settings(owner);
@@ -139,7 +181,17 @@ export class MorningBrief {
   }
   /** Writes the brief into the conversation list and sends it on, when a chat was chosen. */
   async send(owner: string, now = new Date()): Promise<{ markdown: string; delivered: string | null; runId: string }> {
+    if (this.sending.has(owner)) throw new Error("The morning brief is already being sent. Wait for it to finish.");
+    this.sending.add(owner);
+    try { return await this.sendCurrent(owner, now); }
+    finally { this.sending.delete(owner); }
+  }
+  private async sendCurrent(owner: string, now: Date): Promise<{ markdown: string; delivered: string | null; runId: string }> {
     const settings = this.settings(owner);
+    if (this.selectedSources(settings).length) {
+      await this.refresh(owner);
+      this.unchanged(owner, settings);
+    }
     const markdown = assembleBrief(settings, this.gather(owner, now), now);
     const run = this.store.createRun(owner, "Morning brief");
     this.store.message(run.sessionId, { role: "assistant", content: markdown });
@@ -150,12 +202,15 @@ export class MorningBrief {
       await this.deliver(settings.deliverTo.channel, settings.deliverTo.chatId, markdown, `brief:${run.id}`);
       delivered = `${settings.deliverTo.channel}:${settings.deliverTo.chatId}`;
     }
-    this.store.save("settings", owner, "brief", { ...settings, lastSentAt: now.toISOString(),
-      nextAt: settings.enabled ? nextDailyOccurrence(now, settings.dailyAt, settings.timezone).toISOString() : null });
+    // A delivery can overlap a settings edit; retain the latest choices rather than restoring the earlier ones.
+    const current = this.settings(owner);
+    this.store.save("settings", owner, "brief", { ...current, lastSentAt: now.toISOString(),
+      nextAt: current.enabled ? nextDailyOccurrence(now, current.dailyAt, current.timezone).toISOString() : null });
     return { markdown, delivered, runId: run.id };
   }
   /** Called on every scheduler beat; sends the brief once its chosen time has come round. */
   async tick(owner: string, now = new Date()): Promise<boolean> {
+    if (this.sending.has(owner)) return false;
     const settings = this.settings(owner);
     // On as it ships, with no time worked out yet: the first one is the next morning, never one sent at once.
     if (settings.enabled && !settings.nextAt) {
@@ -168,7 +223,22 @@ export class MorningBrief {
   }
 }
 
+function registerSourceRefresh(registry: ToolRegistry, brief: MorningBrief): void {
+  registry.register({
+    name: "brief.refresh", reach: "outbound", permission: "brief.manage",
+    description: "Read the owner's selected public health/news pages and refresh the dated, cited excerpts. No personal health records or medical inference. Preview alone does not read the web.",
+    parameters: z.object({}).strict(),
+    execute: async (_input, context) => {
+      briefOwnerOnly(context);
+      if (startedFromChat(context, brief.store)) throw chatOwnerOnly("Reading brief sources");
+      if (!context.permissions.has("web.read")) throw new Error("Permission denied: web.read");
+      return brief.refresh(context.owner);
+    },
+  });
+}
+
 export function registerBrief(registry: ToolRegistry, brief: MorningBrief): void {
+  registerSourceRefresh(registry, brief);
   registry.register({
     name: "brief.preview", permission: "brief.read",
     description: "Put together the morning brief for right now and show it, without sending it anywhere.",
@@ -177,11 +247,15 @@ export function registerBrief(registry: ToolRegistry, brief: MorningBrief): void
   });
   registry.register({
     name: "brief.configure", permission: "brief.manage",
-    description: "Turn the morning brief on or off, choose the time of day and timezone, choose which parts it covers, change its wording, and choose the chat it is sent to.",
+    description: "Configure the morning brief, its parts and wording, and up to four selected public health/news pages. Selecting sources authorizes reading them when it is sent; no sources are selected by default. Enable their health/news sections, and include their headings in a custom template, to show those excerpts.",
     parameters: optionalFields(BriefSettingsSchema),
     execute: async (input, context) => {
       briefOwnerOnly(context);
       if (startedFromChat(context, brief.store)) throw chatOwnerOnly("Changing the morning brief");
+      if ((input as { sources?: unknown }).sources) {
+        brief.store.profiles.requireOwner("Choosing brief sources");
+        if (!context.permissions.has("web.read")) throw new Error("Permission denied: web.read");
+      }
       // The chat the brief goes to is the owner's to choose, as sending to it now is (channels.broadcast).
       if ((input as { deliverTo?: unknown }).deliverTo) {
         brief.store.profiles.requireOwner("Sending messages to your chats");
@@ -198,6 +272,8 @@ export function registerBrief(registry: ToolRegistry, brief: MorningBrief): void
     execute: async (_input, context) => {
       briefOwnerOnly(context);
       if (startedFromChat(context, brief.store)) throw chatOwnerOnly("Sending the morning brief to a chat");
+      if (brief.settings(context.owner).sources.length && !context.permissions.has("web.read"))
+        throw new Error("Permission denied: web.read");
       // With a chat chosen, sending the brief is sending to that chat, which asks what sending asks.
       if (brief.settings(context.owner).deliverTo) {
         brief.store.profiles.requireOwner("Sending messages to your chats");
