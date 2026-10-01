@@ -3,10 +3,13 @@ import { mcpHttp, mcpStdio } from './mcp-sdk.js';
 import { boundedFetch } from './bounded-fetch.js';
 import { runAsNode } from '../child-env.js';
 
+/** Seconds without progress before a tool call stops waiting. */
+export const McpCallTimeoutSchema = z.number().int().min(1).max(3600);
 const common = {
   id: z.string().regex(/^[a-z][a-z0-9-]{0,29}$/),
   tools: z.array(z.string().min(1).max(200)).min(1).max(64),
   expectedVersion: z.string().min(1).max(100),
+  callTimeoutSeconds: McpCallTimeoutSchema.optional(),
 };
 const stdioShape = {
   transport: z.literal('stdio'), command: z.string().min(1),
@@ -15,6 +18,8 @@ const stdioShape = {
 };
 const httpShape = {
   transport: z.literal('http'), url: z.string().url(),
+  /** Explicit preview; SDK 1.x remains the default legacy transport. */
+  protocol: z.enum(['legacy', 'stateless-preview', 'auto']).optional(),
   bearerEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(),
 };
 /** Just how to reach a server, without the allowlist a permanently configured one also needs. */

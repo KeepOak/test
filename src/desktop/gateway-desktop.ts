@@ -2,6 +2,7 @@ import { app, powerMonitor, powerSaveBlocker } from "electron";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startDesktopGateway } from "./gateway-runtime.js";
+import { prepareGatewayCode } from "./gateway-code.js";
 import { rememberedPort, rememberPort } from "./local-port.js";
 import { serveDesktopControl } from "./gateway-control.js";
 import { applyGatewayLive, gatewayApplyOwner } from "./gateway-live.js";
@@ -12,6 +13,11 @@ import type { LiveHooks } from "./updater.js";
 import type { Gateway } from "../never-break/gateway.js";
 import type { EngineHost } from "./engine-host.js";
 import { GatewayPowerPolicy } from "./gateway-power.js";
+import { diagnose } from "../diagnostic-log.js";
+import { brokerRequest } from "./gateway-engine.js";
+import { gatewayUpdates } from "./gateway-updates.js";
+import { requestUpdateBackup } from "../install/background-engine.js";
+import { updateScratchDir } from "./updater-ipc.js";
 
 export interface DetachedDesktopOptions {
   base: string; dataDir: string; workspace: string; appRoot: string;
@@ -23,6 +29,7 @@ export async function runDesktopGateway(options: DetachedDesktopOptions): Promis
   const { dataDir, appRoot } = options;
   if ((await desktopGatewayConfig(dataDir)).config.mode === "off") return null;
   let gateway: Gateway | null = null, live: LiveHooks | null = null, host: EngineHost | null = null;
+  let adoptedAlone: { ok: boolean; error?: string } | null = null;
   const power = new GatewayPowerPolicy({ blocker: powerSaveBlocker, events: powerMonitor,
     read: async () => { const saved = (await loadGatewayConfig(dataDir)).config;
       return { keepAwake: saved.keepAwake, gatewayDesired: saved.mode !== "off" }; },
@@ -37,18 +44,62 @@ export async function runDesktopGateway(options: DetachedDesktopOptions): Promis
     },
     ...(!app.isPackaged && process.env.BRANCH_TEST_ENGINE_HOOKS === "1" ? {
       "test-engine": () => ({ pid: host?.pid, handingOver: host?.handingOver, running: host?.running }),
+      // The gateway updating itself with no window: the adoption begins once no shell is joined (the asking one left).
+      "test-adopt-alone": (args) => {
+        if (!live) throw new Error("The retained engine is not ready to update.");
+        const hooks = live;
+        adoptedAlone = null;
+        void (async () => {
+          while (control.current() !== null) await new Promise((wake) => setTimeout(wake, 50));
+          adoptedAlone = await owner.apply(() => applyGatewayLive(appRoot, hooks, args, () => undefined))
+            .then(() => ({ ok: true }), (error: Error) => ({ ok: false, error: error.message }));
+        })();
+        return true;
+      },
+      "test-adopted-alone": () => adoptedAlone,
     } : {}),
   }).catch((error: unknown) => { power.close(); throw error; });
   const owner = gatewayApplyOwner(control);
   try {
-    gateway = await startDesktopGateway({ dataDir, engineFile: fileURLToPath(new URL("./engine-process.js", import.meta.url)),
+    gateway = await startDesktopGateway({ dataDir, appRoot, engineFile: fileURLToPath(new URL("./engine-process.js", import.meta.url)),
       port: await rememberedPort(join(dataDir, "local-port.json")), version: app.getVersion(),
       close: async () => { power.close(); await control.close(); },
       onOwnerOff: () => { void gateway?.stop().finally(() => app.exit(0)); },
+      // Owner's PC 2026-09-29: this gateway's engine stops and restarts (the watchdog's among them) went nowhere; they
+      // now go to the activity log main opened (main.ts startDetachedGateway), with the reason when there is one.
+      onWorker: (event) => {
+        if (event.kind === "ready") diagnose("gateway", "info", "The engine is ready", { fields: { pid: event.ready.pid, version: event.ready.version } });
+        else diagnose("gateway", "error", event.why ?? "The engine stopped unexpectedly", { fields: { code: event.code, signal: event.signal, tripped: event.tripped } });
+      },
       worker: (env, ready, checking) => retainedDesktopWorker(options, env, ready, checking, owner.control, (hooks, next) => { live = hooks; host = next; },
-        () => { void gateway?.stop().finally(() => app.exit(0)); }, power) });
+        () => { void gateway?.stop().finally(() => app.exit(0)); }, power, (inUse) => {
+          if (!gateway) throw new Error("The resident gateway is not ready to update.");
+          return prepareGatewayCode(appRoot, gateway, inUse);
+        }) });
   } catch (error) { power.close(); await control.close().catch(() => undefined); throw error; }
   if (gateway) rememberPort(join(dataDir, "local-port.json"), gateway.url);
   else { power.close(); await control.close(); }
+  // Update by itself with no window open: this gateway keeps Branch up to date (gateway-updates.ts). A window, once
+  // joined, runs its own loop and this one waits. Only an installed copy updates itself.
+  if (gateway && app.isPackaged) {
+    const engine = <T>(action: (client: import("./engine-client.js").EngineClient, url: string) => Promise<T>) => {
+      if (!host) throw new Error("The retained engine is not ready yet.");
+      const now = host;
+      return brokerRequest(now, (client) => action(client, now.url));
+    };
+    const call = (path: string, body?: unknown) => engine(async (client, url) => {
+      const response = await client.fetch(`${url}${path}`, { method: body === undefined ? "GET" : "POST", signal: AbortSignal.timeout(120_000),
+        headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      const answer = await response.json().catch(() => null) as { error?: string } | null;
+      if (!response.ok) throw new Error(answer?.error ?? `The engine answered ${response.status}.`);
+      return answer;
+    });
+    const { loop } = await gatewayUpdates({ dataDir, appRoot, scratchDir: updateScratchDir(), shellOpen: () => control.current() !== null, live: () => live,
+      adopt: (action) => owner.apply(action),
+      engine: call,
+      snapshot: async () => { const body = await call("/api/never-break/snapshot", {}) as { folder?: unknown }; if (typeof body?.folder !== "string") throw new Error("The retained engine did not make an update copy."); return body.folder; },
+      backup: () => engine(async (client, url) => { await requestUpdateBackup(url, "", { fetch: client.fetch }); }) });
+    loop.start(60_000);
+  }
   return gateway;
 }

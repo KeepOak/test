@@ -5,6 +5,8 @@ import MarkdownIt from "../vendor/markdown-it-15.0.2/markdown-it.js";
 import { chartCard } from "./chart.js";
 import { diagramCard } from "./diagram.js";
 import { codeBlock } from "./code-block.js";
+import { cachedMarkdown } from "./markdown-cache.js";
+import "./table.js"; // UI-270: enhance safe rendered reply tables, without changing parser/cache output.
 
 /* markdown-it (Vitaly Puzrin/Alex Kocharin, MIT) is vendored with its notices. Parser configuration
    follows OpenClaw's Markdown parser approach (OpenClaw Foundation, MIT), adapted to Branch's cards. */
@@ -31,7 +33,7 @@ parser.renderer.rules.code_block = (tokens, index) => codeBlock(tokens[index].co
 export const inlineText = (words) => parser.renderInline(String(words ?? ""));
 
 export function text(markdown) {
-  return parser.render(String(markdown ?? ""));
+  return cachedMarkdown(markdown, (source) => parser.render(source));
 }
 
 /* Markdown as the plain words a one-line preview shows (a sidebar row, a search hit): no "#", "**", "`", "|" or list

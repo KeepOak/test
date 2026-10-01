@@ -17,6 +17,11 @@ test("UP-UI-005: a fenced block is labelled with its language and Copy copies th
     holder.id = "code-test";
     holder.innerHTML = text("Here it is:\n\n```python\n" + source + "```\n\n    indented block\n");
     document.body.append(holder);
+    const writeText = navigator.clipboard.writeText.bind(navigator.clipboard);
+    navigator.clipboard.writeText = async value => {
+      window.codeCopyPayload = value;
+      await writeText(value);
+    };
   }, code);
   const blocks = page.locator("#code-test .code-window14");
   assert.equal(await blocks.count(), 2, "fenced and indented blocks both get the window");
@@ -25,6 +30,10 @@ test("UP-UI-005: a fenced block is labelled with its language and Copy copies th
   assert.equal(await blocks.first().locator("pre code").innerText(), code, "the code is shown as words, not markup");
   assert.equal(await page.locator("#code-test b").count(), 0);
   await blocks.first().locator('[data-act="code-copy14"]').click();
-  await waitInPage(page, async (want) => (await navigator.clipboard.readText()) === want, code, { timeout: 10000 });
+  // Windows' native text clipboard exposes CRLF even when the exact LF payload was written.
+  // Assert both the browser API input and the platform's real clipboard output, without a fake clipboard.
+  const clipboardCode = process.platform === "win32" ? code.replaceAll("\n", "\r\n") : code;
+  await waitInPage(page, async (want) => (await navigator.clipboard.readText()) === want, clipboardCode, { timeout: 10000 });
+  assert.equal(await page.evaluate(() => window.codeCopyPayload), code, "the real clipboard write receives every original byte of code");
   assert.deepEqual(errors, []);
 });

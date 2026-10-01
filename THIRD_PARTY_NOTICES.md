@@ -1,14 +1,217 @@
 # Third-party notices
 
+## Optional external Piper voice program
+
+The original `src/voice-piper.ts` adapter uses the stdin and WAV output contract documented by
+OHF-Voice/piper1-gpl at `efffbfb226bfb511ebbcf55d0cecd8b35a89743d`
+(`src/piper/__main__.py`, `docs/CLI.md`). Piper is GPL-3.0 software installed separately by the
+owner. Branch does not import, bundle, download or redistribute that program or any voice model.
+No Piper implementation code is copied here. Each chosen model has its own license.
+
+The persistent-worker approach was informed by Hermes Agent's MIT-licensed local TTS cache
+(`tools/tts_tool_local.py`, `a9a54245b2311c705d29050b7f9868c015917aec`) and Pipecat's BSD-2-Clause
+external Piper service distinction (`src/pipecat/services/piper/tts.py`,
+`20999cd7b816dc5950eb9553b1ae36a1e771f2bc`). Their implementation code is not copied.
+
+## Installed faster-whisper and Silero VAD integration
+
+`src/voice-whisper.ts` calls the installed faster-whisper local VAD and timestamp APIs,
+inspected at `ed9a06cd89a93e47838f564998a6c09b655d7f43` of
+https://github.com/SYSTRAN/faster-whisper (`faster_whisper/vad.py`, `transcribe.py`).
+Silero's MIT license was inspected at `1e261b036686cd0017d500ee96acd1c4ba572a9d`
+of https://github.com/snakers4/silero-vad. No inference implementation, ONNX model or
+Python dependency is bundled or downloaded; the existing external worker uses the
+owner's installed package asset and remains offline. The wrapper adapts faster-whisper's
+speech-span concatenation before language detection; it imports NumPy already required
+by that installed library.
+
+MIT License
+
+Copyright (c) 2023 SYSTRAN
+Copyright (c) 2020-present Silero Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+### Hermes chat branch argument parsing
+
+`src/channels/branch-command.ts` adapts the leading `--here` argument handling from `gateway/slash_commands_branch_thread.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, MIT. Branch uses its existing SessionBranches file/transcript copy, path records and per-conversation choices; it branches in place and does not open a native chat-app thread. The MIT license is reproduced elsewhere in this document under Hermes Agent.
+
+### OpenClaw Telegram inbound locations
+
+`src/channels/telegram-location.ts` adapts `extractTelegramLocation` from `extensions/telegram/src/bot/body-helpers.ts` and location text formatting from `src/channels/location.ts` in [OpenClaw](https://github.com/openclaw/openclaw), Copyright (c) 2026 OpenClaw Foundation, under the MIT License. Its Telegram venue precedence, live-pin detection, coordinate precision and accuracy formatting are retained; the implementation uses Branch's schemas and quotes venue labels as sender-provided material. The OpenClaw MIT license is reproduced elsewhere in this document.
+
+### Hermes chat progress level command
+
+`verboseInChat` in `src/channels/steps-display.ts` adapts the level cycle in `gateway/slash_commands.py` and override precedence in `gateway/display_config.py` from [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, under the MIT license reproduced elsewhere in this document. Branch persists the level per direct chat rather than per platform and supports its own four display levels.
+
+### Hermes Signal monospace formatting
+
+`src/channels/signal-format.ts` adapts code-block extraction, formatting marker removal and `MONOSPACE` style ranges from `gateway/platforms/signal_format.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, under the MIT license reproduced elsewhere in this document. Branch uses JavaScript's UTF-16 offsets and its existing progress spans, and sends signal-cli's `textStyle` parameters. OpenClaw `extensions/signal/src/format.ts` was reviewed but depends on its shared markdown renderer, which is not included here.
+
+### Hermes email sender authentication
+
+`src/channels/mail-auth.ts` ports the comment/quote-aware Authentication-Results clause and property parsing and sender-authentication decision from `plugins/platforms/email/adapter.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/plugins/platforms/email/adapter.py), Copyright (c) 2025 Nous Research, MIT. Branch considers only the first header, uses exact optional authserv-id pins, and uses exact domain alignment for SPF/DKIM fallback. The MIT license is reproduced elsewhere in this document under Hermes Agent.
+
+### MCP tool error feedback
+
+`src/integrations/mcp-errors.ts` adapts Gemini CLI's MCP tool error-result handling, with Branch's
+credential redaction, text-only limit and outside-content guard. Source:
+https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/tools/mcp-tool.ts
+(Copyright Google LLC, Apache-2.0). The Apache-2.0 license text is reproduced in this document.
+
+### MCP outside-content scanning
+
+`src/integrations/mcp-content.ts` adapts Hermes Agent's description scanning and scans both cached
+and live tools using Branch's existing content detector. Copyright (c) 2025 Nous Research, MIT;
+https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/mcp_tool_schema.py
+and `tools/mcp_tool_registration.py`. The MIT license text is reproduced in this document.
+## GitHub skill import
+
+The tree-first revision pinning, regular-blob selection and validate-before-quarantine approach in
+`src/skill-github.ts` is adapted from Nous Research's Hermes Agent at
+`a9a54245b2311c705d29050b7f9868c015917aec`, `tools/skills_hub_github.py` and
+`tools/skills_hub_install.py`. Branch uses an in-memory quarantine and immutable blob checks,
+and its existing skill scan, approval and switched-off install. No repository is automatically trusted.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
+
+## Hermes wake-word adapter
+
+`src/voice-wake-kws.ts` adapts threshold and phrase display mapping from
+`tools/wake_word_engines.py` at `a9a54245b2311c705d29050b7f9868c015917aec`
+of https://github.com/NousResearch/hermes-agent. Branch uses an external installed
+sherpa-onnx CLI and owner-supplied models/keywords, with no model downloads.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+## OpenClaw Realtime GA protocol adaptations
+
+The ChatGPT subscription adapter also adapts the pinned OpenClaw Quicksilver
+wire, audio-only SDP admission, sideband event and context append contracts
+(`extensions/openai/realtime-quicksilver-wire.ts`, `realtime-sdp-offer.ts`,
+`realtime-quicksilver-events.ts`, `realtime-quicksilver-protocol.ts`,
+`realtime-quicksilver-delegation-controller.ts`, `realtime-quicksilver-bridge-delegation.ts`).
+Branch adapts consultation generation/cancellation and bounded transcript admission
+to its existing delegated runtime and approval cards. OAuth is
+resolved by Branch's existing selected-account adapter; no account data or upstream
+implementation package is bundled. The MIT notice below covers these adaptations.
+
+`src/realtime-openai.ts` adapts beta/GA event names and the GA session shape from
+`extensions/openai/realtime-voice-events.ts` and `realtime-voice-session-policy.ts`
+at `1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef` of https://github.com/openclaw/openclaw.
+
+## OpenClaw realtime voice adaptations
+
+`src/realtime-openai.ts` and `public/app/chat/talklive.js` adapt cancellation,
+playback truncation, the minimum played-prefix guard, and retiring output from
+`extensions/openai/realtime-voice-protocol.ts` and `realtime-voice-events.ts`
+at commit `1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef` of
+https://github.com/openclaw/openclaw. The transport and browser integration are
+modified for Branch's existing run socket and PCM playback.
+
+MIT License
+
+Copyright (c) 2026 OpenClaw Foundation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 The browser also includes the pinned markdown-it 15.0.2 ESM bundle (MIT) at
 `public/app/vendor/markdown-it-15.0.2/markdown-it.js`. Its upstream license and
 the notices for bundled entities (BSD-2-Clause), linkify-it, mdurl, punycode.js
 and uc.micro (MIT) are retained alongside the bundle. See that folder's README
 for the official package source, version and checksum.
+
+## Pipecat dictation VAD and pre-speech adaptations
+
+`src/voice-dictation.ts` and `src/voice-dictation-preroll.ts` port the four-state
+speech hysteresis and pre-speech buffer approach from
+`src/pipecat/audio/vad/vad_analyzer.py` and
+`src/pipecat/audio/turn/smart_turn/base_smart_turn.py` at
+`20999cd7b816dc5950eb9553b1ae36a1e771f2bc` of https://github.com/pipecat-ai/pipecat.
+Modified to use Branch's local energy detector and forward every recorder frame.
+
+BSD 2-Clause License
+
+Copyright (c) 2024–2026, Daily
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## @hono/node-server 2.1.1
 
@@ -3264,13 +3467,49 @@ Copyright 2025 OpenAI
 
 The command names `branch` answers to beside its own (`config`, `skin`, `cron`, `pause`, `insights`, `checkpoints`, `kanban` and the rest, listed in `src/terminal-parity.ts` and `docs/configuration.md`) were chosen after reading the command lists of Hermes Agent (https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research) and OpenClaw (https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation). No code was taken from either; both are under the MIT licence, whose text is given under IronClaw above.
 
+### OpenClaw and Hermes Agent: the owner's own chat as the main session, MIT
+
+owner-dm-full (`ownerChats` in `src/channels/chat-permissions.ts`, `ownerFullFrom`/`ownerFullRun` in `src/channels/router.ts`, and the per-store check in `runOrigin`, `src/key-context.ts`) follows OpenClaw's sandbox mode "non-main" (`shouldSandboxSession` in `src/agents/sandbox/runtime-status.ts`, with the DM "main" session key in `src/routing/session-key.ts`, https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation): the owner's direct chat is the main session and runs with the full toolset on the host, while groups and other senders are held back. Hermes Agent's gateway does the same for its allowed users (`_is_user_authorized` in `gateway/authz_mixin.py`, https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research). The design was followed and the code written anew for Branch. Both are under the MIT licence, whose text is given under IronClaw above.
+
 ### Letta Code (Letta, Inc.), Apache-2.0
 
 `src/reflection/settings.ts` and `src/reflection/pass.ts` follow the reflection trigger model (off, every N steps with a default of 25, or when the conversation is compacted) in Letta Code's `src/reflection-settings.ts` and `src/cli/helpers/post-turn-reflection.ts`, and the order of work in its reflection subagent, `src/agent/subagents/builtin/reflection-v2.md` (https://github.com/letta-ai/letta-code, commit 6e84e8a). The ideas were rewritten in Branch's words; Branch's pass stages suggestions instead of writing. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0): you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
+### Agent Skills progressive disclosure (format reference)
+
+The separate-reference layout and lazy resource reads in `src/agent-skills.ts`, `src/skill-packages.ts` and `src/skill-tools.ts` were written for Branch after inspecting the progressive-disclosure format in Anthropic's skill-creator SKILL.md at commit `8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4` (https://github.com/anthropics/skills/blob/8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4/skills/skill-creator/SKILL.md, Apache-2.0). This source documents a format, not a compatible implementation of Branch's owner/version/governance storage APIs. No source text or executable code was copied. The PDF skill's proprietary materials were inspected for format only and are not included or adapted.
+
+### Hermes Agent skill guard, MIT
+
+`src/skill-scan-patterns.ts` adapts selected exfiltration, destructive, persistence, network and obfuscation regexes and the invisible-character set from `tools/skills_guard.py` at commit `a9a54245b2311c705d29050b7f9868c015917aec` (https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/skills_guard.py), Copyright (c) 2025 Nous Research, MIT. Changes: port selected families to JavaScript, supply Branch's finding reasons, scan both original and visible text and retain Branch's existing block/review policy instead of the upstream repository trust tiers. Package text/layout checks are Branch code and keep its existing size/file-count limits.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ### Gemini CLI (Google LLC), Apache-2.0
 
+The configured MCP call timeout and progress-token request pattern in `src/integrations/mcp.ts` is adapted from `packages/core/src/tools/mcp-client.ts`, lines 1440–1490 at commit `40d4dccfa9aec692b27798ca819b918609e2bc60` (https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/tools/mcp-client.ts), Copyright 2025 Google LLC, Apache-2.0. Changes: use the SDK's correlated progress token, reset the inactivity timer on progress, retain cancellation and add a one-hour total deadline; Branch supplies its own bounded per-server setting and owner controls. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), whose text appears above; distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
 The test in `src/skill-authoring.ts` for whether something deserves to be a new skill (a concrete, repeatable procedure, not general knowledge, a one-off fix or a preference; when in doubt, none) follows `packages/core/src/agents/skill-extraction-agent.ts` in Gemini CLI (https://github.com/google-gemini/gemini-cli, commit 6a466a7), rewritten in Branch's words. Copyright 2026 Google LLC. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), on the same terms as above.
+
+### Hermes Agent dangerous-command list (Nous Research), MIT
+
+`src/safety-extras/dangerous-commands.ts` is a port of Hermes Agent's `DANGEROUS_PATTERNS` and `HARDLINE_PATTERNS` (`tools/approval_detection.py` in https://github.com/NousResearch/hermes-agent, commit a9a54245) to JavaScript regular expressions, less the rows about Hermes's own gateway, updater and config files. Under Full access these are the only commands Branch asks about, as Hermes's CLI asks about them for its owner. Copyright (c) 2025 Nous Research. Used under the MIT licence, whose text is given below.
 
 ### Hermes Agent (Nous Research), MIT
 
@@ -3286,7 +3525,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### OpenClaw, MIT
 
-The meters on the dashboard's "This computer" card (`meter()` in `public/dashboard/sections.js`) follow the meter in OpenClaw's Control UI (`ui/src/pages/connection/system-section.ts`, https://github.com/openclaw/openclaw): an accessible `role="meter"` bar that turns to a warning at 75% and to a problem at 92%. The layout of the dashboard as a whole was studied from OpenClaw's Control UI and Hermes Agent's web dashboard; no other code was taken from either. Used under the MIT licence: In wave mac3, `src/channels/synology-chat.ts` follows the outgoing-webhook form fields and the `payload` reply shape in OpenClaw's `extensions/synology-chat`. In wave mac7 (nodes), Branch's devices (`src/devices/`, `apps/mobile/web/phone-node.js`) follow the shape of OpenClaw's node protocol (`docs/gateway/protocol/`, `src/gateway/server/ws-connection/connect-device-proof.ts`, `src/gateway/node-command-policy.ts`): a device dials out over a WebSocket, answers a per-connection challenge with an Ed25519 signature, advertises commands and answers `invoke` requests; its Linux GeoClue `where-am-i` output parsing follows `extensions/linux-node/src/location.ts`. The code was written anew; KDE Connect (GPL) inspired only the per-device, per-capability switches, and none of its code was read into Branch. The activity log's rotation (`rotate()` in `src/diagnostic-log.ts`), now shared by the engine and the desktop app's main process, is adapted from OpenClaw's file transport (`src/logging/logger-file-transport.ts`): it rotates only between whole lines, tries each move on its own, and still writes the line when a rotation fails.
+The meters on the dashboard's "This computer" card (`meter()` in `public/dashboard/sections.js`) follow the meter in OpenClaw's Control UI (`ui/src/pages/connection/system-section.ts`, https://github.com/openclaw/openclaw): an accessible `role="meter"` bar that turns to a warning at 75% and to a problem at 92%. The layout of the dashboard as a whole was studied from OpenClaw's Control UI and Hermes Agent's web dashboard; no other code was taken from either. Used under the MIT licence: In wave mac3, `src/channels/synology-chat.ts` follows the outgoing-webhook form fields and the `payload` reply shape in OpenClaw's `extensions/synology-chat`. In wave mac7 (nodes), Branch's devices (`src/devices/`, `apps/mobile/web/phone-node.js`) follow the shape of OpenClaw's node protocol (`docs/gateway/protocol/`, `src/gateway/server/ws-connection/connect-device-proof.ts`, `src/gateway/node-command-policy.ts`): a device dials out over a WebSocket, answers a per-connection challenge with an Ed25519 signature, advertises commands and answers `invoke` requests; its Linux GeoClue `where-am-i` output parsing follows `extensions/linux-node/src/location.ts`. The code was written anew; KDE Connect (GPL) inspired only the per-device, per-capability switches, and none of its code was read into Branch. The activity log's rotation (`rotate()` in `src/diagnostic-log.ts`), now shared by the engine and the desktop app's main process, is adapted from OpenClaw's file transport (`src/logging/logger-file-transport.ts`): it rotates only between whole lines, tries each move on its own, and still writes the line when a rotation fails. The gateway's engine watchdog (`src/never-break/engine-watchdog.ts`) is adapted from OpenClaw's armable stall watchdog (`src/channels/transport/stall-watchdog.ts`): armed only while it applies, it reports once per arming, and a failing callback never escapes its timer.
+
+The meters on the dashboard's "This computer" card (`meter()` in `public/dashboard/sections.js`) follow the meter in OpenClaw's Control UI (`ui/src/pages/connection/system-section.ts`, https://github.com/openclaw/openclaw): an accessible `role="meter"` bar that turns to a warning at 75% and to a problem at 92%. The layout of the dashboard as a whole was studied from OpenClaw's Control UI and Hermes Agent's web dashboard; no other code was taken from either. Used under the MIT licence: In wave mac3, `src/channels/synology-chat.ts` follows the outgoing-webhook form fields and the `payload` reply shape in OpenClaw's `extensions/synology-chat`. In wave mac7 (nodes), Branch's devices (`src/devices/`, `apps/mobile/web/phone-node.js`) follow the shape of OpenClaw's node protocol (`docs/gateway/protocol/`, `src/gateway/server/ws-connection/connect-device-proof.ts`, `src/gateway/node-command-policy.ts`): a device dials out over a WebSocket, answers a per-connection challenge with an Ed25519 signature, advertises commands and answers `invoke` requests; its Linux GeoClue `where-am-i` output parsing follows `extensions/linux-node/src/location.ts`. The code was written anew; KDE Connect (GPL) inspired only the per-device, per-capability switches, and none of its code was read into Branch. The activity log's rotation (`rotate()` in `src/diagnostic-log.ts`), now shared by the engine and the desktop app's main process, is adapted from OpenClaw's file transport (`src/logging/logger-file-transport.ts`): it rotates only between whole lines, tries each move on its own, and still writes the line when a rotation fails. The owner browser view's input-method handling (`captureInputCurrent` and the composition guard in `public/app/chat/stage-browser-control.js`) adapts the composition grant capture and IME key guard in OpenClaw's `ui/src/components/browser/browser-panel-controller-input.ts`: composed words are sent only while the conversation, control, tab and page they began in are still current.
 
 Copyright (c) 2026 OpenClaw Foundation
 
@@ -3298,7 +3539,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### Hermes Agent (Nous Research), MIT
 
-`src/channels/simplex.ts` follows the `newChatItems` event shape and reply handling in Hermes Agent's `plugins/platforms/simplex/adapter.py` (https://github.com/NousResearch/hermes-agent). Used under the MIT licence:
+`src/channels/simplex.ts` follows the `newChatItems` event shape and reply handling in Hermes Agent's `plugins/platforms/simplex/adapter.py` (https://github.com/NousResearch/hermes-agent). The same watchdog's probe follows Hermes Agent's desktop backend health check (`apps/desktop/electron/backend-health.ts`): a short timeout per probe inside a generous budget, since a busy backend can stall its event loop for tens of seconds without being gone. Used under the MIT licence:
 
 Copyright (c) 2025 Nous Research
 
@@ -3310,7 +3551,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### Hermes Agent credential pool (Nous Research), MIT
 
-`src/accounts/pool.ts` and `src/accounts/pool-provider.ts` follow the shape of Hermes Agent's credential pool, `agent/credential_pool.py` and `agent/credential_pool_model_cooldowns.py` (https://github.com/NousResearch/hermes-agent): the fill-first, round-robin and least-used strategies, resting a whole credential after an authentication or billing failure, resting one model only after a plain rate limit, and taking the rest's length from the service's own reset time. The code was written again for Branch. Used under the MIT licence:
+`src/accounts/pool.ts` and `src/accounts/pool-provider.ts` follow the shape of Hermes Agent's credential pool, `agent/credential_pool.py` and `agent/credential_pool_model_cooldowns.py` (https://github.com/NousResearch/hermes-agent): the fill-first, round-robin and least-used strategies, resting a whole credential after an authentication or billing failure, resting one model only after a plain rate limit, and taking the rest's length from the service's own reset time. The code was written again for Branch. `src/accounts/leases.ts` adapts its per-credential leases (`acquire_lease` and `release_lease` in `agent/credential_pool.py`, with `DEFAULT_MAX_CONCURRENT_PER_CREDENTIAL` = 1) and the lease each delegated child takes for its run (`_lease_child_credential` in `tools/delegate_tool_child_run.py`), so helpers working side by side spread over a connection's accounts; `src/accounts/rests.ts` keeps each account's rest on disk the way the pool saves `last_status`, `last_status_at` and `last_error_reset_at`. Used under the MIT licence:
 
 Copyright (c) 2025 Nous Research
 
@@ -3319,6 +3560,46 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### LiteLLM (BerriAI), MIT
+
+The prompt-cache pricing in `src/pricing.ts` (`promptCost`) follows LiteLLM's `litellm/litellm_core_utils/llm_cost_calc/utils.py` (https://github.com/BerriAI/litellm, commit 3a6744cd): a missing cache-read or cache-write rate falls back to the input rate and a missing one-hour write rate to the five-minute one (lines 382-394), and five-minute and one-hour cache writes are charged apart (`calculate_cache_writing_cost`). The Claude cache-read and cache-write rates in the same file were copied from LiteLLM's `model_prices_and_context_window.json` (commit 27c110cb); the Claude 3.x and 4.0/4.1 rates are its Bedrock entries for those models. Only the file outside LiteLLM's `enterprise/` directory was used, which is under the MIT licence:
+
+Copyright (c) 2023 Berri AI
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### models.dev, MIT
+
+The prices of `claude-opus-5-5` and `claude-sonnet-5-5` in `src/pricing.ts` were checked against models.dev's `providers/anthropic/models/*.toml` (https://github.com/anomalyco/models.dev, commit 1ba7a9df). Used under the MIT licence:
+
+Copyright (c) 2025 models.dev
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### OpenClaw rate-limit backoff, MIT
+
+The rest after a plain rate limit in `src/accounts/pool.ts` (`rateBackoffMs`, and `rest` never moving a running rest further out) is adapted from OpenClaw's `src/agents/auth-profiles/usage-failure-state.ts` (https://github.com/openclaw/openclaw, commit dc6e5cd2): 30 seconds doubling to at most a day (`RATE_LIMIT_BACKOFF_BASE_MS`, `RATE_LIMIT_BACKOFF_MAX_MS`, `calculateCappedExponentialBackoffMs`) and `keepActiveWindowOrRecompute`. The repository's LICENSE file is the MIT licence:
+
+Copyright (c) 2026 OpenClaw Foundation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### OpenAI Codex usage-limit refusals, Apache-2.0
+
+How a ChatGPT sign-in's 429 is read in `src/provider-retry.ts` and `src/accounts/pool.ts` is adapted from Codex's `codex-rs/codex-api/src/api_bridge.rs` (https://github.com/openai/codex, commit 8bd5a136, Copyright 2025 OpenAI): only an `error.type` of `usage_limit_reached` is a plan limit, lasting until the body's `resets_at` (seconds since the epoch); `usage_not_included` means the plan does not include that use; any other 429 is a passing rate limit. The code was rewritten in TypeScript for Branch. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
 
 ### PicoClaw, MIT
 
@@ -3570,6 +3851,16 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
+### Helper lifecycle (ideas only), MIT and Apache-2.0
+
+`src/helper-tree.ts` and the helper start, stop and limit in `src/runtime.ts` (`delegateBackground`, `cancel`, `stopHelpers`) were written for Branch after reading these projects; no code was copied.
+
+- Hermes Agent (https://github.com/NousResearch/hermes-agent, commit a9a5424, Copyright (c) 2025 Nous Research, MIT): a child registered with its parent before it runs, and one attached after the parent's stop landed stopped at once (`tools/delegate_tool_child_run.py`); background hand-offs refused at capacity rather than queued (`tools/delegate_tool_config.py`); the tools a child never has (`tools/delegate_tool_toolsets.py`).
+- OpenClaw (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation, MIT): a stop that walks a child's descendants (`src/agents/subagents/registry/subagent-control-kill.ts`), children at once per requester (`src/agents/spawn-plan.ts`, `src/config/agent-limits.ts`) and a reset that stops the session's children (`src/auto-reply/reply/session-reset-cleanup.ts`).
+- Codex (https://github.com/openai/codex, commit bd4204efc2, Apache-2.0): a spawn slot reserved before the child starts and given back when it ends (`codex-rs/core/src/agent/registry.rs`).
+
+The MIT licence text is given under IronClaw above. Codex is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); only its design was followed.
+
 ### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
 
 The window shows each service's own mark only to say which service a person connects, never to suggest that its maker
@@ -3662,3 +3953,115 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `public/art/channels/xmpp.svg`: Simple Icons `xmpp` (XMPP), source https://github.com/xsf/xmpp.org/blob/82856a2cec0a99b197c6985191635544e6b3ed69/static/images/logos/xmpp-logo.svg; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zalo.svg`: Simple Icons `zalo` (Zalo), source https://zalo.me; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zulip.svg`: Simple Icons `zulip` (Zulip), source https://github.com/zulip/zulip/blob/df9e40491dc77b658d943cff36a816d46e32ce1b/static/images/logo/zulip-org-logo.svg; usage rules: none published that I found; used unmodified to identify the service
+
+### Gemini CLI helper evaluation case categories, Apache-2.0
+
+The explicit-delegation and trivial-task restraint cases in `data/evaluation/helpers.json` adapt the case categories in Google Gemini CLI's `evals/subagents.eval.ts` at commit `38700b4b38bf387dafded6c97c3f190d084b49e9` (https://github.com/google-gemini/gemini-cli/blob/38700b4b38bf387dafded6c97c3f190d084b49e9/evals/subagents.eval.ts). Copyright 2026 Google LLC. Licensed under Apache-2.0, whose full text appears above. Gemini's Vitest TestRig/unified-agent implementation is incompatible with Branch's declarative evaluation suite and background helper API. The prompts, child provenance projection and scorer are original Branch code; no TestRig code is copied.
+
+## Hermes weekly recap aggregation
+
+`src/weekly-recap.ts` adapts guarded duration aggregation from `agent/insights.py` (`_compute_overview`) in NousResearch/hermes-agent at `16b214e1a1f0544218b1cf8c21b923b4e1c62768`. The listed weekly-review-planning recipe was read for context only. Branch owner scoping, task completion counts, Trunk attribution and manual-time estimate are original integration code.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/16b214e1a1f0544218b1cf8c21b923b4e1c62768/agent/insights.py
+
+## Price-watch condition recipe
+
+The listed Hermes `product-price-monitor` skill was read at commit `7327624d3500d4bbc9ad58b0a75c324a306d882a` (MIT). Its threshold/drop, successful-baseline, retained-good-observation and duplicate-alert shape informed the implementation. It is a recipe, not an executable price parser: `src/monitor-price.ts` and the Branch integration are original code, not a claimed source-code port.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/7327624d3500d4bbc9ad58b0a75c324a306d882a/skills/productivity/product-price-monitor/SKILL.md
+
+### Branch builds Branch (P0 fixes): Hermes Agent (MIT); Codex (Apache-2.0)
+
+- `boundSummaryInput` in `src/compaction-input.ts`, which holds a fold's input to its room by keeping 45% from the start and 55% from the end with a marker naming how much of the middle was left out, is adapted from `_bound_summary_input` in Hermes Agent's `agent/context_compressor.py` (https://github.com/NousResearch/hermes-agent, commit 7083a524a, Copyright (c) 2025 Nous Research, MIT; the licence text is given under IronClaw above).
+- `ownerWordsSection` in `src/compaction-input.ts` (the owner's own messages kept word for word through a fold, newest first up to a budget, the last one cut) follows `build_compacted_history_with_limit` and `COMPACT_USER_MESSAGE_MAX_TOKENS` in Codex's `codex-rs/core/src/compact.rs`, and `Runtime.summariseRange` in `src/runtime.ts` (a summariser refused as too long asked again without the oldest item) its handling of `ContextWindowExceeded` there (https://github.com/openai/codex, commit 5f3180c79).
+- `src/integrations/command-turns.ts` bounds how many host commands run at once after `MAX_UNIFIED_EXEC_PROCESSES` in Codex's `codex-rs/core/src/unified_exec/mod.rs` (commit 995138d71), and `src/processes.ts` settles a program left running once its output closes, or a moment after it exits, after `TRAILING_OUTPUT_GRACE` in `codex-rs/core/src/unified_exec/async_watcher.rs` (commit 4891c4e35).
+- `programStart` in `src/coding/hand-off.ts` starts an npm-installed Codex as its own program with the environment its npm launcher (`codex-cli/bin/codex.js`, commit d14143834) adds, as `codexBinary` in `src/asks/codex-app-server.ts` already did for the app-server.
+
+The Codex parts are used under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); Codex's NOTICE is given under "OpenAI Codex CLI" above.
+
+## OpenClaw GitHub device flow
+
+`src/integrations/github-device-auth.ts` adapts device response validation, anchored expiry and cumulative polling-delay behavior from [OpenClaw login.ts](https://github.com/openclaw/openclaw/blob/2663c6b6202807712586bb2928c22397ccc14b27/extensions/github-copilot/login.ts). Branch uses an owner-supplied OAuth client identity; no OpenClaw/Copilot client ID is included.
+
+## Hermes live-dashboard recipe (scheduled dashboard design)
+
+Reviewed `optional-skills/productivity/live-dashboard/SKILL.md` at bddd22be7c2e5f7630c3d90507e6e7280ff092e3. Its recipe informed source/timestamp state, stale last-good retention, regeneration and change notes. Branch scheduling, validators, persistence and script-free renderer are original implementation, not a port of executable upstream code. Upstream live read/verify instructions were not executed.
+## Hermes Telegram private-topic helpers
+
+The getMe capability check and 120-character topic title sanitizer in `src/channels/telegram.ts` are adapted from NousResearch/hermes-agent `gateway/run_topics.py`, https://github.com/NousResearch/hermes-agent/blob/main/gateway/run_topics.py (MIT). Branch uses its own chat routing, owner checks and Telegram transport.
+
+## Hermes personality selection helpers
+
+Neutral-name resolution and selecting a persisted name without rewriting personality files in `src/channels/personality-settings.ts` follow and adapt NousResearch/hermes-agent `hermes_cli/personality.py` and `gateway/slash_commands_model.py`, https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/personality.py and https://github.com/NousResearch/hermes-agent/blob/main/gateway/slash_commands_model.py (MIT). Branch uses its own per-chat setting and task snapshot; its fixed tone instructions are original. Hermes channel override configuration was inspected but not copied.
+
+## Hermes Agent Telegram draft streaming
+
+The private-chat draft eligibility/payload and draft-to-edit fallback in src/channels/telegram.ts and src/channels/reply-stream.ts are adapted from NousResearch/hermes-agent plugins/platforms/telegram/adapter.py (supports_draft_streaming and send_draft), MIT licensed. Branch retains its own plain-text preview, outbound guard, throttling and final delivery.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/main/plugins/platforms/telegram/adapter.py
+
+### OpenClaw skill manifest requirements (MIT)
+
+`src/skill-metadata.ts` adapts the `requires`/OS extraction structure from OpenClaw `resolveSkillManifestMetadata` and `resolveOpenClawManifestRequires`: https://github.com/openclaw/openclaw/blob/1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef/src/skills/loading/frontmatter.ts#L158-L190 and https://github.com/openclaw/openclaw/blob/1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef/src/shared/frontmatter.ts. Branch preserves bounded metadata and checks local availability without running installation declarations.
+
+Copyright (c) 2026 OpenClaw Foundation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### PDF.js CMap decoding and text-gap spacing (Apache-2.0)
+
+`src/document-pdf.ts` adapts byte-wise destination increment and code-space matching from Mozilla PDF.js CMap.mapBfRange/readCharCode, and its evaluator SPACE_IN_FLOW_MIN_FACTOR for TJ gaps. Sources reviewed at 18e8a26a3813a319b38c806076f0b0ef9baf1bf4: https://github.com/mozilla/pdf.js/blob/18e8a26a3813a319b38c806076f0b0ef9baf1bf4/src/core/cmap.js#L247-L273 and #L307-L328; https://github.com/mozilla/pdf.js/blob/18e8a26a3813a319b38c806076f0b0ef9baf1bf4/src/core/evaluator.js#L2514-L2536. Branch uses its own bounded reader and does not embed the PDF.js engine.
+
+Copyright 2012 Mozilla Foundation
+
+Licensed under the Apache License, Version 2.0 (the License); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0. Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an AS IS BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License. The complete Apache-2.0 license is reproduced above.
+
+## Hermes Agent profile import preview
+
+The Trunk import preview/apply flow adapts the staged manifest review in [hermes_cli/profile_distribution.py](https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/profile_distribution.py) (`plan_install`/`install_distribution`), reviewed on 2026-09-29. The implementation uses Branch Trunk JSON and its existing import route; no archive installer is included.
+
+## Hermes Agent Codex notification scope
+
+src/asks/codex-conversation.ts adapts _notification_scope_ids and
+_notification_belongs_to_turn from Hermes Agent's
+[agent/transports/codex_app_server_session.py](https://github.com/NousResearch/hermes-agent/blob/a4c31d592b9d8916ffed9ab80ebee48ba428c172/agent/transports/codex_app_server_session.py).
+The functions were translated to TypeScript for Branch's existing app-server transport.
+The transcript-prefix cache and Branch account/conversation binding are original code.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+## OpenClaw chat session lifecycle helpers
+
+The off-value aliases, bare-hour duration behavior and earliest idle/max-age expiry calculation in `src/channels/thread-lifecycle.ts` are adapted from OpenClaw `src/auto-reply/reply/commands-session.ts`, https://github.com/openclaw/openclaw/blob/main/src/auto-reply/reply/commands-session.ts (MIT). Branch uses its own saved threads, scoped sessions and next-message reset behavior.
+
+## OpenClaw Telegram poll and forward helpers
+
+The poll snapshot formatter and forwarded-origin normalization in `src/channels/telegram-content.ts` are adapted from OpenClaw `extensions/telegram/src/bot/body-helpers.ts`, https://github.com/openclaw/openclaw/blob/main/extensions/telegram/src/bot/body-helpers.ts (MIT). Branch validates and bounds the fields, quotes user-supplied labels and keeps forwarded origin separate from the authenticated current sender. Sticker handling uses Branch's existing attachment path.
+
+MIT License
+
+Copyright (c) 2026 OpenClaw Foundation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
