@@ -40,7 +40,7 @@ export async function scanChatGPT({ tree }: ScanInput): Promise<ScanResult> {
         if (visited.has(cursor)) throw new Error("A ChatGPT conversation has a cyclic parent mapping");
         visited.add(cursor); path.push(cursor);
         if (path.length > 1000) throw new Error("A ChatGPT branch has more than 1000 mapping nodes");
-        const parent = asRecord(mapping[cursor]).parent;
+        const parent: unknown = asRecord(mapping[cursor]).parent;
         cursor = typeof parent === "string" ? parent : undefined;
       }
       path.reverse();

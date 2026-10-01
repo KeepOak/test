@@ -88,15 +88,24 @@ export const waitingWords = (position, queued, slots) =>
   `Waiting for a CI slot, position ${position} of ${queued}: at most ${slots} pull-request runs hold runners at once. `
   + "This run was cancelled to wait, not failed; the queue starts it again when a slot frees. Pushing again starts a new run.";
 
-function github(token, repo) {
+/** GitHub's own passing errors: a 502 on the cancel once left a run that was to wait failed, never started again. */
+const passing = new Set([500, 502, 503, 504]);
+/** Only calls that are the same done twice are tried again: reads, cancelling a run, and adding or removing a label.
+ *  A rerun is not: a first attempt GitHub took before answering 502 would be started a second time. */
+const repeatable = (method, path) => method === "GET" || /\/cancel$/.test(path) || /\/labels(\/|$)/.test(path);
+
+export function github(token, repo, { get = fetch, pause = (ms) => new Promise((done) => setTimeout(done, ms)) } = {}) {
   return async (method, path, body) => {
-    const response = await fetch(`https://api.github.com/repos/${repo}/${path}`, {
-      method,
-      headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-    if (!response.ok && response.status !== 404) throw new Error(`${method} ${path}: ${response.status} ${await response.text()}`);
-    return response.status === 204 || response.status === 202 ? null : response.json().catch(() => null);
+    for (let tries = 1; ; tries += 1) {
+      const response = await get(`https://api.github.com/repos/${repo}/${path}`, {
+        method,
+        headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      if (passing.has(response.status) && tries < 3 && repeatable(method, path)) { await pause(tries * 2000); continue; }
+      if (!response.ok && response.status !== 404) throw new Error(`${method} ${path}: ${response.status} ${await response.text()}`);
+      return response.status === 204 || response.status === 202 ? null : response.json().catch(() => null);
+    }
   };
 }
 

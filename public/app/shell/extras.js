@@ -14,7 +14,7 @@ import { chatMenuTop } from "../chat/beside.js";
 import { pinnedCount } from "../chat/messages.js";
 import { pinItem } from "../chat/putaway.js"; // batch A: pin an ordinary conversation from its menu
 import { trunkMenu, trunkMenuEnd } from "../flows/trunk.js";
-import { binding, defaultOf, pressed, comboOf, kbd, spoken, saveKey } from "./keys.js";
+import { binding, bindings, usedBy, defaultOf, pressed, comboOf, kbd, spoken, saveKey } from "./keys.js";
 import { toggleSide, hiddenNow } from "./resize.js";
 import { initMachines } from "./machines.js";
 import { initFileView } from "./fileview.js";
@@ -131,7 +131,8 @@ const nameOf = (action) => KEYS.find(([a]) => a === action)?.[1] ?? "";
 
 function keyRow([action, words]) {
   const now = binding(action), was = defaultOf(action);
-  const set = `<button type="button" class="k-set15 ${listening === action ? "listen15" : ""}" data-act="key15" data-v="${action}" aria-label="${esc(t("window.shell.extras.action-keys-change", { action: say(words), keys: spoken(now) }))}">${listening === action ? `<em>${t("window.shell.extras.press-the-keys")}</em>` : kbd(now, esc)}</button>`;
+  const active = bindings(action);
+  const set = `<button type="button" class="k-set15 ${listening === action ? "listen15" : ""}" data-act="key15" data-v="${action}" aria-label="${esc(t("window.shell.extras.action-keys-change", { action: say(words), keys: active.map(spoken).join(" / ") }))}">${listening === action ? `<em>${t("window.shell.extras.press-the-keys")}</em>` : active.map((combo) => kbd(combo, esc)).join(" / ")}</button>`;
   const back = now !== was ? `<button type="button" class="icon-btn" aria-label="${t("activityLog.action.putBack")} ${esc(spoken(was))}" data-act="keyreset15" data-v="${action}">${ic("x", "s")}</button>` : "<span></span>";
   return `<div class="k-row15"><span>${esc(say(words))}</span>${set}${back}</div>`;
 }
@@ -151,8 +152,8 @@ async function takeKeys(e) {
   listening = null;
   if (e.key === "Escape") { showShortcuts(); return; }
   if (!/^(Ctrl|Control|Alt)\+/.test(combo)) { showShortcuts(); toast(t("window.shell.extras.use-ctrl-or-alt-with-it")); return; }
-  const clash = KEYS.find(([a]) => a !== action && spoken(binding(a)).toLowerCase() === spoken(combo).toLowerCase());
-  if (clash) { showShortcuts(); toast(t("window.shell.extras.combo-already-does-value", { combo: spoken(combo), value: clash[1] })); return; }
+  const clash = usedBy(combo, action);
+  if (clash) { showShortcuts(); toast(t("window.shell.extras.combo-already-does-value", { combo: spoken(combo), value: nameOf(clash) || clash })); return; }
   try {
     await saveKey(action, combo);
     showShortcuts();

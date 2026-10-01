@@ -92,6 +92,8 @@ export interface UpdaterOptions {
   devBuildDir?: string | null;
   /** Told of every change to the status, so the window can show the update as it goes. */
   onChange?: (status: UpdateStatus) => void;
+  /** The clock (milliseconds); tests hand in their own. */
+  now?: () => number;
   /**
    * hot-update: Beta changes that the app's main process does not load are applied live, without packaging or a
    * restart (src/hot-update/). `build` answers "shell" for a change that must go the packaged way.
@@ -272,6 +274,9 @@ export async function beforeInstall<T>(steps: () => Promise<T>): Promise<T> {
   }
 }
 
+/** How often Beta looks for a newer build (betaCheckEveryMs in src/comfort/auto-update.ts, kept equal). */
+const betaLookEveryMs = 60 * 1000;
+
 export class Updater {
   status: UpdateStatus;
   private busy = false;
@@ -296,6 +301,8 @@ export class Updater {
   /** Why the install under way was called off while it built or waited (the owner changed their mind), or null. */
   private calledOff: string | null = null;
   private devToolsFound = false;
+  /** When a look last found a release (the clock's milliseconds), so an automatic install does not take a stale one. */
+  private lookedUpAt = 0;
   constructor(private readonly options: UpdaterOptions) {
     this.installed = { version: options.currentVersion, commit: options.currentCommit ?? null };
     this.status = this.fresh("idle", "Updates have not been checked yet.");
@@ -308,6 +315,7 @@ export class Updater {
     if (reason)
       this.status = this.fresh("unsupported", reason);
   }
+  private now(): number { return (this.options.now ?? Date.now)(); }
   get selectedChannel(): UpdateChannel { return this.channel; }
   setChannel(channel: UpdateChannel): UpdateStatus {
     if (this.busy) throw new Error("Wait for the current update before changing channels.");
@@ -338,6 +346,7 @@ export class Updater {
     try {
       const release = await this.latestRelease();
       if (generation !== this.generation) return this.status;
+      this.lookedUpAt = this.now();
       if (release.channel === "beta") {
         const change = release.commit?.slice(0, 7), mine = this.installed.commit?.slice(0, 7);
         // Never offered as newer, and never installed by itself: only the owner's confirmation in the window moves to it.
@@ -392,9 +401,11 @@ export class Updater {
     try {
       if (options.confirm !== undefined) release = await this.confirmedOtherLine(options.confirm);
       else {
-        // Beta or Stable (#215): a release chosen for the other channel is looked up again.
+        // Beta or Stable (#215): a release chosen for the other channel is looked up again. Update by itself on Beta also
+        // looks again once the last look is a look window old: a build that keeps waiting must not hide newer ones.
         const selected = this.status.release;
-        release = selected?.available && selected.channel === this.channel ? selected : (await this.lookUp()).release;
+        const stale = this.automatic && this.channel === "beta" && this.now() - this.lookedUpAt >= betaLookEveryMs;
+        release = selected?.available && selected.channel === this.channel && !stale ? selected : (await this.lookUp()).release;
         if (!release?.available) throw new Error("There is no newer version to install.");
       }
     } catch (error) {
