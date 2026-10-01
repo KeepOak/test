@@ -1,11 +1,13 @@
 import { Curator } from "../learning-more/curator.js";
+import { lockdownActive } from "../lockdown.js";
 import type { ModelPreset } from "../models.js";
 import type { Runtime } from "../runtime.js";
 import { draftFromNote, draftNewSkill } from "../skill-authoring.js";
 import type { Store } from "../store.js";
 import { typedBy } from "./evidence.js";
 import { GardenBook, type LedgerEntry, type Proof, type Seed, type SkillState } from "./garden-book.js";
-import { prove, type ProofParts } from "./proof.js";
+import { modelKind } from "./overnight.js";
+import { GardenPaused, prove, type ProofParts, type ProofRequest } from "./proof.js";
 import { seasonsSettings, type SeasonsSettings } from "./settings.js";
 import { asked, lessons, recurring, type Planting, type TaskFacts } from "./triggers.js";
 
@@ -40,6 +42,27 @@ export class Gardener {
   }
   private get owner(): string { return this.runtime.owner; }
   settings(): SeasonsSettings { return seasonsSettings(this.store, this.owner); }
+  private allowed(preset: ModelPreset, stillQuiet: () => boolean): boolean {
+    const settings = this.settings();
+    return settings.rings === "on" && settings.gardener === "on" && !lockdownActive(this.store, this.owner)
+      && (modelKind(preset) !== "billed" || settings.paidModels) && stillQuiet();
+  }
+  private sameSeed(seed: Seed): boolean { return JSON.stringify(this.book.seed(seed.id)) === JSON.stringify(seed); }
+  private sameRevision(skillId: string, revision: number): boolean {
+    try { return this.store.skills.view(this.owner, skillId).revision === revision; } catch { return false; }
+  }
+  private growable(seed: Seed): boolean {
+    if (seed.pinned || !this.sameSeed(seed)) return false;
+    if (!seed.skillId || !seed.document) return true;
+    try {
+      const skill = this.store.skills.view(this.owner, seed.skillId);
+      return skill.activeVersion === null && this.store.skills.read(this.owner, skill.id, { version: skill.headVersion }).document === seed.document;
+    } catch { return false; } // A draft the owner removed also needs their attention.
+  }
+  private async proof(preset: ModelPreset, request: ProofRequest, allowed: () => boolean): Promise<Proof | null> {
+    try { return await prove(this.store, this.runtime, preset, request, this.parts(preset), allowed); }
+    catch (error) { if (error instanceof GardenPaused || !allowed()) return null; throw error; }
+  }
 
   /** The owner's own finished or failed tasks, newest first, each with the tools it used. */
   private tasks(): TaskFacts[] {
@@ -59,16 +82,23 @@ export class Gardener {
   /** The night's garden work, after Rings has read the day. Stops between steps once the owner is back. */
   async night(step: GardenStep): Promise<GardenReport> {
     const report: GardenReport = { planted: 0, adopted: 0, discarded: 0, rolledBack: 0, pruned: 0, grafted: 0 };
-    if (this.settings().gardener === "off") return report;
+    const allowed = () => this.allowed(step.preset, step.stillQuiet);
+    if (!allowed()) return report;
     report.planted = this.plantFromTriggers().length;
-    for (const seed of this.book.seeds().filter((entry) => entry.status === "waiting").slice(0, perNight)) {
-      if (!step.stillQuiet()) return report;
-      const grown = await this.grow(seed, step.preset, step.now);
+    let attempts = 0;
+    for (const seed of this.book.seeds().filter((entry) => entry.status === "waiting")) {
+      if (!allowed()) return report;
+      if (attempts >= perNight) break;
+      if (!this.growable(seed)) continue;
+      // Skipped owner-protected drafts cost no model work; an interrupted attempt still uses a night's slot.
+      attempts++;
+      const grown = await this.grow(seed, step.preset, step.now, step.stillQuiet);
+      if (grown.status !== "adopted" && grown.status !== "discarded") continue;
       report[grown.status === "adopted" ? "adopted" : "discarded"]++;
     }
-    if (step.stillQuiet() && await this.recheck(step)) report.rolledBack++;
-    if (step.stillQuiet() && await this.graft(step.preset)) report.grafted++;
-    if (step.stillQuiet()) report.pruned = this.prune(step.now);
+    if (allowed() && await this.recheck(step)) report.rolledBack++;
+    if (allowed() && await this.graft(step.preset, step.stillQuiet)) report.grafted++;
+    if (allowed()) report.pruned = this.prune(step.now, allowed);
     return report;
   }
 
@@ -77,21 +107,37 @@ export class Gardener {
    * dated on the night's own clock (`now`), the clock `recheck` and `prune` read it on: dated on the computer's clock
    * instead, a night whose clock ran ahead found the skill it had just adopted due for a re-proof that same night.
    */
-  async grow(seed: Seed, preset: ModelPreset, now: Date = new Date()): Promise<Seed> {
-    const settings = this.settings();
-    let drafted: Awaited<ReturnType<typeof draftNewSkill>>;
-    try {
-      drafted = await draftNewSkill(this.store, this.owner, this.runtime,
-        { evidence: seed.evidence.slice(0, 12000), notes: "Keep it short: at most 25 lines.", fromRunId: seed.sourceRunIds[0] ?? "" }, { model: preset.id });
-    } catch (error) { return this.discard(seed, `not-drafted: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300), null, now); }
-    if (!drafted) return this.discard(seed, "nothing-worth-a-skill", null, now);
-    const withDraft = this.book.saveSeed({ ...seed, skillId: drafted.skillId, name: drafted.name, document: drafted.document });
-    if (drafted.document.length > settings.maxSkillChars) return this.discard(withDraft, "too-long", null, now);
-    if (this.indexCost() + lineCost(drafted.name, drafted.description) > settings.indexBudget) return this.discard(withDraft, "over-budget", null, now);
-    const proof = await prove(this.store, this.runtime, preset, { tasks: seed.tasks, withDocument: drafted.document, baseline: null, label: drafted.name }, this.parts(preset));
+  async grow(seed: Seed, preset: ModelPreset, now: Date = new Date(), stillQuiet: () => boolean = () => true): Promise<Seed> {
+    let withDraft = seed;
+    const allowed = () => this.allowed(preset, stillQuiet) && this.sameSeed(withDraft) && !withDraft.pinned;
+    if (!allowed() || seed.status !== "waiting") return seed;
+    if (!seed.skillId || !seed.document) {
+      let drafted: Awaited<ReturnType<typeof draftNewSkill>>;
+      try {
+        drafted = await draftNewSkill(this.store, this.owner, this.runtime,
+          { evidence: seed.evidence.slice(0, 12000), notes: "Keep it short: at most 25 lines.", fromRunId: seed.sourceRunIds[0] ?? "" }, { model: preset.id });
+      } catch (error) {
+        return allowed() ? this.discard(seed, `not-drafted: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300), null, now) : seed;
+      }
+      if (!this.sameSeed(seed)) return this.book.seed(seed.id) ?? seed;
+      if (!drafted) return allowed() ? this.discard(seed, "nothing-worth-a-skill", null, now) : seed;
+      // The draft is inactive; retain it for the next permitted night even if permission changed while drafting.
+      withDraft = this.book.saveSeed({ ...seed, skillId: drafted.skillId, name: drafted.name, document: drafted.document });
+    }
+    if (!allowed()) return withDraft;
+    const settings = this.settings(), skill = this.store.skills.view(this.owner, withDraft.skillId!);
+    if (skill.activeVersion !== null || this.store.skills.read(this.owner, skill.id, { version: skill.headVersion }).document !== withDraft.document) return withDraft;
+    if (withDraft.document!.length > settings.maxSkillChars) return this.discard(withDraft, "too-long", null, now);
+    if (this.indexCost() + lineCost(skill.name, skill.description) > settings.indexBudget) return this.discard(withDraft, "over-budget", null, now);
+    const unchanged = () => allowed() && this.sameRevision(skill.id, skill.revision);
+    const proof = await this.proof(preset, { tasks: seed.tasks, withDocument: withDraft.document!, baseline: null, label: skill.name }, unchanged);
+    if (!proof || !unchanged()) return this.book.seed(seed.id) ?? withDraft;
     const proved = this.book.saveSeed({ ...withDraft, proofs: [proof] });
+    const fresh = this.settings();
+    if (proved.document!.length > fresh.maxSkillChars) return this.discard(proved, "too-long", proof, now);
+    if (this.indexCost() + lineCost(skill.name, skill.description) > fresh.indexBudget) return this.discard(proved, "over-budget", proof, now);
     if (proof.unreadable) return this.discard(proved, `unreadable: ${proof.unreadable}`, proof, now);
-    if (proof.gain < settings.minGain) return this.discard(proved, "no-gain", proof, now);
+    if (proof.gain < this.settings().minGain) return this.discard(proved, "no-gain", proof, now);
     return this.adopt(proved, proof, now);
   }
   private parts(preset: ModelPreset): ProofParts | undefined { return this.proofParts?.(preset); }
@@ -130,7 +176,8 @@ export class Gardener {
 
   /** Re-proves the adopted skill checked longest ago; one that regressed is switched off by itself. True when rolled back. */
   async recheck(step: GardenStep): Promise<boolean> {
-    const settings = this.settings();
+    const permitted = () => this.allowed(step.preset, step.stillQuiet);
+    if (!permitted()) return false;
     const due = this.book.seeds().filter((seed) => seed.status === "adopted" && seed.skillId && seed.tasks.length && !seed.pinned
       && step.now.getTime() - Date.parse(seed.checkedAt ?? seed.decidedAt ?? seed.createdAt) >= dayMs / 2)
       .sort((a, b) => (a.checkedAt ?? "").localeCompare(b.checkedAt ?? ""))[0];
@@ -138,10 +185,12 @@ export class Gardener {
     const skill = this.store.skills.view(this.owner, due.skillId!);
     if (skill.activeVersion === null) return false;
     const document = this.store.skills.read(this.owner, skill.id, { version: skill.activeVersion }).document;
-    const proof = await prove(this.store, this.runtime, step.preset, { tasks: due.tasks, withDocument: document, baseline: null, label: skill.name }, this.parts(step.preset));
+    const allowed = () => permitted() && this.sameSeed(due) && this.sameRevision(skill.id, skill.revision);
+    const proof = await this.proof(step.preset, { tasks: due.tasks, withDocument: document, baseline: null, label: skill.name }, allowed);
+    if (!proof || !allowed()) return false;
     const adoptedWith = due.proofs[0]?.with.mean ?? 0;
     const checked = this.book.saveSeed({ ...due, proofs: [...due.proofs, proof].slice(-20), checkedAt: step.now.toISOString() });
-    if (proof.unreadable || (proof.gain >= 0 && proof.with.mean >= adoptedWith - settings.minGain)) return false;
+    if (proof.unreadable || (proof.gain >= 0 && proof.with.mean >= adoptedWith - this.settings().minGain)) return false;
     this.setActive([{ skillId: skill.id, activeVersion: null }]);
     this.book.write({ action: "rolled-back", seedId: due.id, name: skill.name, proof, reason: `gain ${proof.gain}`,
       before: [{ skillId: skill.id, activeVersion: skill.activeVersion }], after: [{ skillId: skill.id, activeVersion: null }] });
@@ -154,20 +203,28 @@ export class Gardener {
    * version, proved against the two it replaces on both skills' tasks; only when it does no worse is it switched on
    * and the other switched off. True when a graft was made.
    */
-  async graft(preset: ModelPreset): Promise<boolean> {
+  async graft(preset: ModelPreset, stillQuiet: () => boolean = () => true): Promise<boolean> {
+    const permitted = () => this.allowed(preset, stillQuiet);
+    if (!permitted()) return false;
     const adopted = new Map(this.book.seeds().filter((seed) => seed.status === "adopted" && seed.skillId).map((seed) => [seed.skillId!, seed]));
     const overlap = new Curator(this.store).overlaps(this.owner).find((pair) => adopted.has(pair.a.id) && adopted.has(pair.b.id)
       && !adopted.get(pair.a.id)!.pinned && !adopted.get(pair.b.id)!.pinned);
     if (!overlap) return false;
     const keep = this.store.skills.view(this.owner, overlap.a.id), fold = this.store.skills.view(this.owner, overlap.b.id);
     if (keep.activeVersion === null || fold.activeVersion === null) return false;
+    const keptSeed = adopted.get(keep.id)!, foldedSeed = adopted.get(fold.id)!;
+    const unchangedSeeds = () => this.sameSeed(keptSeed) && this.sameSeed(foldedSeed);
     const plan = new Curator(this.store).dryRun(this.owner, { keepId: keep.id, foldId: fold.id });
     const drafted = await draftFromNote(this.store, this.owner, this.runtime, { skillId: keep.id, note: plan.note }, { model: preset.id });
+    if (!permitted() || !unchangedSeeds() || !this.sameRevision(fold.id, fold.revision)) return false;
+    const candidate = this.store.skills.view(this.owner, keep.id);
+    if (candidate.headVersion !== drafted.candidateVersion || candidate.activeVersion !== keep.activeVersion) return false;
+    const allowed = () => permitted() && unchangedSeeds() && this.sameRevision(keep.id, candidate.revision) && this.sameRevision(fold.id, fold.revision);
     const merged = this.store.skills.read(this.owner, keep.id, { version: drafted.candidateVersion }).document;
     const tasks = [...adopted.get(keep.id)!.tasks.slice(0, 2), ...adopted.get(fold.id)!.tasks.slice(0, 2)];
     const baseline = `${this.store.skills.read(this.owner, keep.id, { version: keep.activeVersion }).document}\n\n${this.store.skills.read(this.owner, fold.id, { version: fold.activeVersion }).document}`;
-    const proof = await prove(this.store, this.runtime, preset, { tasks, withDocument: merged, baseline, label: `${keep.name} + ${fold.name}` }, this.parts(preset));
-    if (proof.unreadable || proof.gain < 0) return false;
+    const proof = await this.proof(preset, { tasks, withDocument: merged, baseline, label: `${keep.name} + ${fold.name}` }, allowed);
+    if (!proof || !allowed() || proof.unreadable || proof.gain < 0) return false;
     const before: SkillState[] = [{ skillId: keep.id, activeVersion: keep.activeVersion }, { skillId: fold.id, activeVersion: fold.activeVersion }];
     const after: SkillState[] = [{ skillId: keep.id, activeVersion: drafted.candidateVersion }, { skillId: fold.id, activeVersion: null }];
     this.setActive(after);
@@ -177,10 +234,11 @@ export class Gardener {
   }
 
   /** Pruning: an adopted skill nothing has used for `archiveAfterDays` is switched off (never removed). */
-  prune(now: Date): number {
+  prune(now: Date, allowed: () => boolean = () => true): number {
     const settings = this.settings();
     let pruned = 0;
     for (const skill of this.adoptedSkills()) {
+      if (!allowed()) break;
       const seed = this.book.seeds().find((entry) => entry.skillId === skill.id && entry.status === "adopted")!;
       if (seed.pinned || now.getTime() - this.lastUsed(skill.id, seed) < settings.archiveAfterDays * dayMs) continue;
       this.setActive([{ skillId: skill.id, activeVersion: null }]);
