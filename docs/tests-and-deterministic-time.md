@@ -26,11 +26,11 @@ hand and a pull request into anything but `redesign/window` run the whole suite 
   files import `dist/index.js`, which imports nearly all of `src/`.
 
 A pull request into `redesign/window` is then made light, because the merge queue runs the whole suite on every
-system before anything lands: at most `prLinuxShards` (2) Linux shares, filled with `always`, the changed tests, what
+system before anything lands: at most `prLinuxShards` (4) Linux shares, filled with `always`, the changed tests, what
 the change reaches by name, mapping or graph, the tests near a `src/` change (`nearTests`: the tests that use a
 changed file or a `src/` file that uses it, never through a hub file that more than `hubTests` tests import), then
-every browser test for a page change, lightest first within each group, while the predicted time fits two shares of
-the whole suite. What does not fit is named in the summary as left for the merge queue. `npm run build` in each
+every browser test for a page change, lightest first within each group, while the predicted time fits `prLinuxShards` of
+the whole suite's eight Linux shares (now four). What does not fit is named in the summary as left for the merge queue. `npm run build` in each
 share is the type-check, and every pull request that is not documentation only plans at least one share.
 
 Windows and macOS run on a pull request only when it touches their own code (`platforms` in
@@ -46,7 +46,7 @@ reused, and the push run still ends green, so promote and the Beta updater (`new
 for a release tag or by hand (`package.yml`, `mobile.yml`), and release publication still requires the exact
 commit's `Checks` success.
 
-At most `prSlots` pull-request runs (`tests/test-impact.json`) hold runners at once, oldest first
+At most `prSlots` (3) pull-request runs (`tests/test-impact.json`) hold runners at once, oldest first
 (`scripts/ci-queue.mjs`). Every unfinished pull-request run holds a slot: an admitted run whose shares all wait for
 runners reports `queued`, not `in_progress`, and counting only `in_progress` runs let about 29 runs in at once on
 2026-09-29. A run asking for a slot counts only the unfinished runs that started before it, so runs that plan at the
@@ -57,6 +57,21 @@ head was cancelled (held, or parked by hand) is waiting too; drafts and pull req
 Pushes are never held. Only a rerun the queue itself started goes straight to its slot; a rerun started by a person
 (the Rerun button, or rerunning failed jobs) waits in line like any run. Label a pull request `ci-priority` to put
 it at the front of the line. Do not rerun a cancelled run by hand: the queue does it.
+
+How 3 slots and 4 shares were sized (2026-10-01): this is modeled admitted work against a cap of 180 concurrent jobs.
+That 180 was measured: run 36849796914 in KeepOak/ci-capacity-probe (a 256-job matrix) held exactly 180 jobs in
+progress across the organization (179 of its own and 1 of this repository's), with 77 queued, from 10:33:44 to
+10:35:19 UTC on 2026-10-01; it matches the owner's reading of the enterprise settings page. The macOS share of the cap
+was not measured. The model counts every admitted pull request at the full matrix, whatever its plan: a
+pull request labelled `ci-full` or into a base other than `redesign/window` runs all 8 Linux shares, because
+`prLinuxShards` caps only a light plan. A full pull-request run is about 14 Checks jobs (plan, local voice, 8 Linux,
+2 Windows, 1 macOS, verify-suite), and CodeQL default setup adds 6 more for the same pull request, one of them a macOS
+Swift job: about 20 jobs, 2 of them macOS. A merge-queue group is the same 14 Checks jobs (with the stale-group check in
+place of plan) and the same 6 CodeQL jobs, and the merge queue builds at most 5 groups at once (`max_entries_to_build`
+in the ruleset). So 3 pull-request runs × 20 = 60 jobs (6 macOS) plus 5 groups × 20 = 100 (10 macOS) is about 160
+admitted jobs. That is close to the cap with no reserve: CodeQL for pull requests still waiting for a slot, pushes, the
+nightly run and unrelated workflows are not counted and can push the total over 180, in which case the jobs past the
+limit wait in GitHub's queue rather than fail. Revisit these numbers if a new measurement shows a higher limit.
 
 Shared hosted-runner queue time is not controlled by repository code. Never run fork pull-request code on a personal
 NAS or runner with vault, LAN, or signing-secret access.
