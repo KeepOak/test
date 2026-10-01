@@ -15,8 +15,9 @@ export const id15 = (title) => "f15-" + title.toLowerCase().replace(/[^a-z0-9]+/
 export const fact15 = (title, key, value = "") =>
   `<div class="ctl fact15" data-fact="${esc(key)}"><b>${esc(say(title))}</b>${value ? `<span class="right"><span class="fact15-v">${esc(value)}</span></span>` : ""}<small>${esc(reason(key))}</small></div>`;
 
-export const sw15 = (title, sub, on = false) =>
-  `<div class="ctl"><b>${esc(say(title))}</b><input class="sw" type="checkbox" id="${id15(title)}" ${on ? "checked" : ""} aria-label="${esc(say(title))}" data-sw="set"><small>${esc(say(sub))}</small></div>`;
+/* `busy`: the engine's value is not read yet, so the switch is shown waiting and cannot be moved, never as off. */
+export const sw15 = (title, sub, on = false, busy = false) =>
+  `<div class="ctl"><b>${esc(say(title))}</b><input class="sw" type="checkbox" id="${id15(title)}" ${busy ? 'disabled aria-busy="true"' : on ? "checked" : ""} aria-label="${esc(say(title))}" data-sw="set"><small>${esc(say(sub))}</small></div>`;
 
 export const btn15 = (title, sub, label, act = "soon", why = "") =>
   `<div class="ctl"><b>${esc(title)}</b><span class="right"><button class="btn sm" type="button" data-act="${esc(act)}" data-why="${esc(why || id15(title))}">${esc(label)}</button></span><small>${esc(sub)}</small></div>`;
