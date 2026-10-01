@@ -3675,6 +3675,10 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+### LibreChat, MIT: one renewal per sign-in at a time
+
+`OAuthConnections.accessToken` in `src/oauth.ts` lets calls that find a sign-in expired at the same moment share one renewal, following LibreChat's in-flight refresh map (https://github.com/LibreChat-AI/LibreChat/blob/4d33d8c2c71ad497fdfaa2c4334b0a2293bcbd67/packages/api/src/mcp/oauth/tokens.ts#L1021-L1025, Copyright (c) 2026 LibreChat). The code was written for Branch. Used under the MIT licence, whose text is given under IronClaw above.
+
 ### OpenCode command arity table, MIT
 
 The table of how many words name a program's action in `src/command-prefix.ts` (`git status`, `npm run dev`) is copied from OpenCode's `packages/opencode/src/permission/arity.ts` (https://github.com/sst/opencode), together with its longest-prefix lookup. Used under the MIT licence:
