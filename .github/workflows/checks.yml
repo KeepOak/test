@@ -125,6 +125,17 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
+      # The queue's own script and prSlots come from the base, never from the pull request under test: a pull request
+      # that changed them (#1367 raised prSlots) would otherwise admit runs by its own unmerged rule. This step and the
+      # restart in verify each read the base as it is when they run, so the two may see different base commits.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.base_ref || github.sha }}
+          path: .ci-queue-base
+          sparse-checkout: |
+            scripts/ci-queue.mjs
+            tests/test-impact.json
+          sparse-checkout-cone-mode: false
       # At most `prSlots` pull-request runs hold runners at once, oldest first. A run that must wait says so, labels
       # its pull request ci-waiting and cancels itself; the queue starts it again when a slot frees.
       - id: slot
@@ -133,7 +144,7 @@ jobs:
           RUN: ${{ github.run_id }}
           ACTOR: ${{ github.triggering_actor }}
           PR: ${{ github.event.pull_request.number }}
-        run: node scripts/ci-queue.mjs admit --run="$RUN" --actor="$ACTOR" --pr="$PR"
+        run: node .ci-queue-base/scripts/ci-queue.mjs admit --run="$RUN" --actor="$ACTOR" --pr="$PR"
       - name: Waiting for a CI slot (this run is being cancelled, not failed)
         if: steps.slot.outputs.held == 'true'
         run: |
@@ -377,6 +388,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: always()
         with:
+          # The base's queue script and prSlots, as in plan: never the pull request's own.
+          ref: ${{ github.event_name == 'pull_request' && github.base_ref || github.sha }}
           sparse-checkout: |
             scripts/ci-queue.mjs
             tests/test-impact.json
