@@ -42,7 +42,7 @@ async function tick() {
       try { await readStageStream(sid, controller.signal, current, changed); return; }
       catch { if (!current()) return; L.retryStreamAt = Date.now() + 30_000; }
     }
-    changed(await api(`panels/live?session=${encodeURIComponent(sid)}`, undefined, "GET", controller.signal));
+    changed(await api(`panels/live?session=${encodeURIComponent(sid)}${L.fast ? "&observe=steps" : ""}`, undefined, "GET", controller.signal));
   } catch (error) {
     if (!current()) return;
     // Said once, not again on every read while the engine keeps refusing for the same reason.

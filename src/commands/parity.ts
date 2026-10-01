@@ -73,7 +73,7 @@ export const PARITY: readonly ParityRow[] = [
   row("A quiet check on this conversation", "/heartbeat, /hb (Hermes)", "/heartbeat", "built", "Speaks up only with news; five minutes apart at least."),
   row("More to a goal", "/subgoal (Hermes)", "/subgoal", "built", "The judge counts the goal done only when every sub-goal holds."),
   row("A task on the side, in its own conversation", "/bg (Hermes)", "/bg", "built", "At most three at once."),
-  row("Carry on elsewhere", "/handoff (Hermes)", "/handoff", "built", "A chat app that has talked to Branch, a terminal, or another assistant."),
+  row("Carry on elsewhere", "/handoff (Hermes)", "/handoff", "built", "An exact admitted Telegram owner DM from the Share chooser, a terminal command, or a named assistant."),
   row("Suggested automations", "/suggestions, /suggest (Hermes)", "/suggestions", "built", "A no is kept for good."),
   row("Automation blueprints", "/blueprint, /bp (Hermes)", "/blueprint", "built", "The blanks are checked; the owner's own command is the yes."),
   // r17-i

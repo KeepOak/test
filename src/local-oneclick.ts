@@ -13,13 +13,17 @@ import { localRuntimeFetch } from "./local-policy.js";
 import { localVllmModel } from "./local-vllm.js";
 import { lockdownActive } from "./lockdown.js";
 import { startedWithShortLivedKey } from "./key-context.js";
-import { currentPerson } from "./people/context.js";
+import { currentPerson, throughPairedDoor } from "./people/context.js";
+import { currentCaller } from "./caller.js";
 import { detectTools, installPlan, isInstallable, planSize, runInstall, type InstallPlan, type InstallableRunner } from "./local-install.js";
 import {
   ButtonGoSchema, ButtonPlanSchema, installGuard, needsAgreementNote, notInstalledNote, oneButtonMode, onceGuard, planChangedNote,
   sizeChoices, systemWideAllowed,
   type ButtonGo, type PressContext, type SizeChoice,
 } from "./local-one-button.js";
+
+/** vLLM is set up only from the owner's own window on this computer, never through a door (src/caller.ts). */
+export const vllmHereOnly = "Set up vLLM from the owner's own Branch window on this computer.";
 
 /**
  * Wave mac5 (local models): one click, from "I want this model" to a connection that answers.
@@ -363,6 +367,8 @@ export class OneClick {
   }
   private vllmGuard(): void {
     assertLocalModelsOn(this.deps.store, this.deps.owner);
+    // Only from the owner's own window on this computer: never a paired phone, a phone's own key or from beyond.
+    if (currentCaller().throughDoor || throughPairedDoor()) throw new Error(vllmHereOnly);
     if (lockdownActive(this.deps.store, this.deps.owner) || this.deps.store.profiles.scope() !== this.deps.owner || currentPerson() || startedWithShortLivedKey())
       throw new Error("Only the owner in their own profile can set up vLLM, while Lockdown is off.");
   }
