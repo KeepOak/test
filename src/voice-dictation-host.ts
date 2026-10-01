@@ -1,6 +1,7 @@
-import { endChild, startQuietly, windowBytes } from "./mic-capture.js";
+import { endChild, startKeepingErrors, startQuietly, windowBytes } from "./mic-capture.js";
 import { mostWords } from "./voice-dictation.js";
 import type { SoundStreamRunner, SpeechStreamRunner } from "./voice-dictation-run.js";
+import { StreamWords } from "./voice-stream-words.js";
 
 /**
  * mac7/live-voice: the real programs live dictation runs on this computer, and — beside the word
@@ -21,13 +22,17 @@ import type { SoundStreamRunner, SpeechStreamRunner } from "./voice-dictation-ru
  */
 export function speechStreamRunner(): SpeechStreamRunner {
   return (command, onWords, onEnded) => {
-    const child = startQuietly(command);
+    // This upstream microphone example writes numbered final segments to stderr alongside diagnostics.
+    const segmented = command.file.includes("sherpa-onnx-vad-microphone-offline-asr");
+    const child = segmented ? startKeepingErrors(command) : startQuietly(command);
+    const words = new StreamWords(onWords);
     let done = false;
-    const finish = (why: string | null) => { if (done) return; done = true; endChild(child); onEnded(why); };
+    const finish = (why: string | null) => { if (done) return; done = true; words.finish(); endChild(child); onEnded(why); };
     child.stdout.setEncoding("utf8");
     // Words are handed on where they arrive and never held: nothing here accumulates, and a
     // program that will not stop writing is cut off by the cap rather than piling up in memory.
-    child.stdout.on("data", (piece: string) => { if (!done) onWords(piece.slice(0, mostWords)); });
+    child.stdout.on("data", (piece: string) => { if (!done) words.write(piece); });
+    if (segmented) segmentOutput(child as ReturnType<typeof startKeepingErrors>, onWords, () => done);
     child.on("error", (error) => finish(error.message));
     child.on("close", () => finish(null));
     child.stdin.on("error", () => undefined); // a program that has gone is not an unhandled failure
@@ -44,6 +49,22 @@ export function speechStreamRunner(): SpeechStreamRunner {
       stop() { finish(null); },
     };
   };
+}
+
+function segmentOutput(
+  child: ReturnType<typeof startKeepingErrors>, onWords: (text: string, final: boolean) => void, done: () => boolean,
+): void {
+  let pending = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (piece: string) => {
+    if (done()) return;
+    const lines = (pending + piece).split("\n");
+    pending = (lines.pop() ?? "").slice(-mostWords);
+    for (const line of lines) {
+      const text = /^\s*\d+:\s*(.+)$/.exec(line)?.[1];
+      if (text) onWords(text.slice(0, mostWords), true);
+    }
+  });
 }
 
 /**

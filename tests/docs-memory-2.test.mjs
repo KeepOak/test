@@ -170,6 +170,14 @@ test("a plain PDF gives its words with a page marker", () => {
   assert.equal(read.pages, 1);
 });
 
+test("UP-RESEARCH-055: a simple font's named encoding and Differences turn bytes back into the right letters", () => {
+  const plain = pdf({ content: "BT /F1 12 Tf 72 720 Td (AB\\200) Tj ET" }).toString("latin1");
+  const encoded = plain.replace("/BaseFont /Helvetica >>",
+    "/BaseFont /Helvetica /Encoding << /BaseEncoding /WinAnsiEncoding /Differences [ 65 /eacute /germandbls ] >> >>");
+  const read = pdfText(Buffer.from(encoded, "latin1"));
+  assert.equal(read.pages[0].text, "éß€", "Differences replace A and B; WinAnsi's 0x80 is the euro sign");
+});
+
 test("a compressed PDF stream is unpacked", () => {
   const read = pdfText(pdf({ compress: true, content: "BT /F1 12 Tf 72 700 Td (Squeezed words) Tj ET" }));
   assert.equal(read.pages.length, 1);
@@ -715,4 +723,34 @@ test("an answer about a document can never carry a saved password back out", asy
   assert.ok(!JSON.stringify(answer).includes(sentinel), "neither the answer nor the quoted passage carries it");
   const diff = await app.runtime.executeTool("documents.compare", { file: "door.md", against: "door2.md" });
   assert.ok(!JSON.stringify(diff).includes(sentinel), "and neither does a comparison of two documents");
+});
+
+test("a wide gap inside TJ reads as a space, a small kern does not", () => {
+  assert.equal(readContent("BT /F1 12 Tf 10 20 Td [(Hello) -250 (world) -20 (!)] TJ ET", new Map()), "Hello world!");
+});
+
+test("ToUnicode ranges map by the font's own code width, list form included, and a ligature target does not throw", () => {
+  const map = parseCmap("begincodespacerange <00> <FF> endcodespacerange beginbfrange <01> <02> [<0066006C> <0041>] endbfrange"
+    + " beginbfrange <10> <11> <D835DC00> endbfrange");
+  assert.equal(map.get(0x01), "fl");
+  assert.equal(map.get(0x02), "A");
+  assert.equal(map.get(0x11), "𝐁", "a surrogate pair target counts up as bytes");
+  assert.equal(readContent("BT /F1 12 Tf 10 20 Td <0102> Tj ET", new Map([["F1", map]])), "flA", "one-byte codes, not two");
+});
+
+test("a page with no Resources of its own uses the fonts its parent Pages lists", () => {
+  const cmap = "begincodespacerange <00> <FF> endcodespacerange beginbfchar <01> <0048> <02> <0069> endbfchar";
+  const content = "BT /F1 12 Tf 72 700 Td <0102> Tj ET";
+  const body = [
+    "%PDF-1.4",
+    "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
+    "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 /Resources << /Font << /F1 5 0 R >> >> >> endobj",
+    "3 0 obj << /Type /Page /Parent 2 0 R /Contents 4 0 R >> endobj",
+    `4 0 obj << /Length ${content.length} >>\nstream\n${content}\nendstream endobj`,
+    "5 0 obj << /Type /Font /Subtype /Type0 /BaseFont /Custom /ToUnicode 6 0 R >> endobj",
+    `6 0 obj << /Length ${cmap.length} >>\nstream\n${cmap}\nendstream endobj`,
+    "trailer << /Root 1 0 R >>",
+    "%%EOF",
+  ].join("\n");
+  assert.match(pdfText(Buffer.from(body, "latin1")).pages[0].text, /Hi/);
 });

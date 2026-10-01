@@ -1,4 +1,5 @@
 import { inflateSync } from "node:zlib";
+import { pdfEncoding, pdfGlyphText } from "./pdf-font-encodings.js";
 
 /**
  * Reading the words out of a PDF without asking anything else to help. A PDF is a bag of numbered
@@ -169,7 +170,7 @@ function pageContent(objects: Map<number, RawObject>, page: RawObject, limits: s
  * A page's fonts and, for each, the table that turns the numbers in a drawn string back into
  * letters. Only the tables written into the file itself are used; nothing is looked up elsewhere.
  */
-function pageFonts(objects: Map<number, RawObject>, page: RawObject, budget: Budget): Map<string, Map<number, string>> {
+function pageFonts(objects: Map<number, RawObject>, page: RawObject, budget: Budget, limits: string[]): Map<string, Map<number, string>> {
   const fonts = new Map<string, Map<number, string>>();
   const resources = resourceDictionary(objects, page);
   const fontBlock = dictValue(resources, "Font") ?? "";
@@ -179,29 +180,131 @@ function pageFonts(objects: Map<number, RawObject>, page: RawObject, budget: Bud
     if (!font) continue;
     const unicode = referenceNumber(dictValue(latin(font.body), "ToUnicode"));
     const source = unicode === null ? null : objects.get(unicode);
-    fonts.set(entry[1]!, source ? parseCmap(latin(unpack(source, budget).bytes ?? Buffer.alloc(0))) : new Map());
+    const unicodeMap = source ? parseCmap(latin(unpack(source, budget).bytes ?? Buffer.alloc(0))) : null;
+    const encoded = fontEncoding(objects, font, limits);
+    if (encoded && unicodeMap) for (const [code, text] of encoded) if (!unicodeMap.has(code)) unicodeMap.set(code, text);
+    fonts.set(entry[1]!, unicodeMap ?? encoded ?? new Map());
   }
   return fonts;
 }
+/** Simple font encodings stay byte-wide; a ToUnicode map always wins over a named glyph. */
+function fontEncoding(objects: Map<number, RawObject>, font: RawObject, limits: string[]): Map<number, string> | null {
+  const dictionary = latin(font.body);
+  if (dictValue(dictionary, "Subtype") === "/Type0") return null;
+  const raw = dictValue(dictionary, "Encoding");
+  if (!raw) return null;
+  const ref = referenceNumber(raw);
+  const encoding = (ref === null ? raw : latin(objects.get(ref)?.body ?? Buffer.alloc(0))).trim();
+  const base = encoding.startsWith("/") ? encoding.slice(1) : (dictValue(encoding, "BaseEncoding") ?? "/StandardEncoding").slice(1);
+  const names = pdfEncoding(base), map = parseCmap("1 begincodespacerange <00> <ff> endcodespacerange");
+  const note = (message: string) => { if (!limits.includes(message)) limits.push(message); };
+  if (!names) note("A PDF font uses an unsupported base encoding; unmapped characters could not be read.");
+  for (let code = 0; code < 256; code++) map.set(code, names?.[code] ? pdfGlyphText(names[code]!, base === "ZapfDingbatsEncoding") ?? "�" : "�");
+  const value = dictValue(encoding, "Differences");
+  if (value) applyDifferences(value, objects, map, base === "ZapfDingbatsEncoding", note);
+  return map;
+}
+/** Adapted PDF.js evaluator Differences iteration: numbers set a byte index; following names advance it. */
+function applyDifferences(value: string, objects: Map<number, RawObject>, map: Map<number, string>, dingbat: boolean, note: (message: string) => void): void {
+  const tokens = [...pdfTokens(value, 1024)];
+  if (tokens.length >= 1024) note("A PDF font Differences array exceeded the reader limit.");
+  let code = 0;
+  for (let at = 0; at < tokens.length; at++) {
+    let token = tokens[at]!;
+    const generation = tokens[at + 1], marker = tokens[at + 2];
+    if (token.kind === "number" && generation?.kind === "number" && marker?.kind === "op" && marker.text === "R") {
+      const object = objects.get(token.value);
+      const resolved = object ? [...pdfTokens(latin(object.body), 2)] : [];
+      if (resolved.length !== 1) { note("A PDF font has an invalid indirect Differences entry."); code = -1; at += 2; continue; }
+      token = resolved[0]!; at += 2;
+    }
+    if (token.kind === "number") {
+      code = Number.isInteger(token.value) && token.value >= 0 && token.value <= 255 ? token.value : -1;
+      if (code < 0) note("A PDF font Differences index is outside its byte range.");
+      continue;
+    }
+    if (token.kind !== "name" || code < 0 || code > 255) { note("A PDF font has an invalid Differences entry."); continue; }
+    const name = token.text.replace(/#([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+    const text = pdfGlyphText(name, dingbat);
+    if (text === null) note("Some PDF font glyph names could not be converted to text.");
+    map.set(code++, text ?? "�");
+  }
+}
 function resourceDictionary(objects: Map<number, RawObject>, page: RawObject): string {
-  const value = dictValue(latin(page.body), "Resources") ?? "";
-  if (value.startsWith("<<")) return value;
-  const reference = referenceNumber(value);
-  return reference === null ? "" : latin(objects.get(reference)?.body ?? Buffer.alloc(0));
+  const seen = new Set<number>();
+  let current: RawObject | undefined = page;
+  for (let depth = 0; current && depth < 32 && !seen.has(current.number); depth++) {
+    seen.add(current.number);
+    const dictionary = latin(current.body), value = dictValue(dictionary, "Resources");
+    if (value !== null) {
+      if (value.startsWith("<<")) return value;
+      return latin(objects.get(referenceNumber(value) ?? -1)?.body ?? Buffer.alloc(0));
+    }
+    current = objects.get(referenceNumber(dictValue(dictionary, "Parent")) ?? -1);
+  }
+  return "";
 }
 
+interface CodeSpace { width: number; from: number; to: number }
+const codeSpaces = new WeakMap<Map<number, string>, Map<number, CodeSpace[]>>();
 /** The `bfchar` and `bfrange` entries of a ToUnicode table: which number means which letter. */
 export function parseCmap(text: string): Map<number, string> {
-  const map = new Map<number, string>();
-  for (const block of text.matchAll(/beginbfchar([\s\S]*?)endbfchar/g))
-    for (const pair of block[1]!.matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g))
-      map.set(parseInt(pair[1]!, 16), hexToText(pair[2]!));
-  for (const block of text.matchAll(/beginbfrange([\s\S]*?)endbfrange/g))
-    for (const row of block[1]!.matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g)) {
-      const from = parseInt(row[1]!, 16), to = parseInt(row[2]!, 16), start = parseInt(row[3]!, 16);
-      for (let code = from; code <= to && code - from < 1024; code++) map.set(code, String.fromCodePoint(start + (code - from)));
+  const map = new Map<number, string>(), spaces: CodeSpace[] = [], inferred: CodeSpace[] = [];
+  const range = (low: string, high: string): CodeSpace => ({ width: low.length / 2, from: parseInt(low, 16), to: parseInt(high, 16) });
+  for (const block of text.matchAll(/begincodespacerange([\s\S]*?)endcodespacerange/g))
+    for (const row of block[1]!.matchAll(/<([0-9a-fA-F]{2,8})>\s*<([0-9a-fA-F]{2,8})>/g)) {
+      if (row[1]!.length % 2 === 0 && row[1]!.length === row[2]!.length) spaces.push(range(row[1]!, row[2]!));
     }
+  for (const block of text.matchAll(/beginbfchar([\s\S]*?)endbfchar/g))
+    for (const pair of block[1]!.matchAll(/<([0-9a-fA-F]{2,8})>\s*<([0-9a-fA-F]+)>/g)) {
+      map.set(parseInt(pair[1]!, 16), hexToText(pair[2]!));
+      inferred.push(range(pair[1]!, pair[1]!));
+    }
+  for (const block of text.matchAll(/beginbfrange([\s\S]*?)endbfrange/g))
+    for (const row of block[1]!.matchAll(/<([0-9a-fA-F]{2,8})>\s*<([0-9a-fA-F]{2,8})>\s*(<([0-9a-fA-F]+)>|\[([^\]]*)\])/g)) {
+      const { from, to } = range(row[1]!, row[2]!);
+      inferred.push(range(row[1]!, row[2]!));
+      const array = row[5] === undefined ? null : [...row[5].matchAll(/<([0-9a-fA-F]+)>/g)].map(item => item[1]!);
+      const destination = row[4] ? Buffer.from(row[4], "hex") : null;
+      for (let code = from; code <= to && code - from < 1024; code++) {
+        const value = array ? array[code - from] : destination?.toString("hex");
+        if (value === undefined) break;
+        map.set(code, hexToText(value));
+        if (destination) incrementDestination(destination);
+      }
+    }
+  codeSpaces.set(map, indexedSpaces(spaces.length ? spaces : inferred));
   return map;
+}
+/** Merge ranges by byte width so decoding does not scan every mapping for every character. */
+function indexedSpaces(spaces: CodeSpace[]): Map<number, CodeSpace[]> {
+  const index = new Map<number, CodeSpace[]>();
+  for (const space of spaces.sort((a, b) => a.width - b.width || a.from - b.from)) {
+    if (!Number.isInteger(space.width) || space.width < 1 || space.width > 4 || space.to < space.from) continue;
+    const ranges = index.get(space.width) ?? [], last = ranges.at(-1);
+    if (last && space.from <= last.to + 1) last.to = Math.max(last.to, space.to);
+    else ranges.push({ ...space });
+    index.set(space.width, ranges);
+  }
+  return index;
+}
+function containsCode(ranges: CodeSpace[], code: number): boolean {
+  let low = 0, high = ranges.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >>> 1, range = ranges[middle]!;
+    if (code < range.from) high = middle - 1;
+    else if (code > range.to) low = middle + 1;
+    else return true;
+  }
+  return false;
+}
+/** Adapted from pdf.js CMap.mapBfRange (Apache-2.0): increment bytes, not a Unicode scalar.
+ * Multi-unit UTF-16 destinations remain strings, so a ligature cannot throw fromCodePoint. */
+function incrementDestination(destination: Buffer): void {
+  for (let at = destination.length - 1; at >= 0; at--) {
+    destination[at] = (destination[at]! + 1) & 0xff;
+    if (destination[at] !== 0) break;
+  }
 }
 const hexToText = (hex: string): string => {
   let out = "";
@@ -293,7 +396,7 @@ function apply(
   if (operator === "T*") { state.lineY -= 12; return newLine(state); }
   if (!["TJ", "Tj", "'", '"'].includes(operator)) return;
   if (operator === "'" || operator === '"') { state.lineY -= 12; newLine(state); }
-  const text = drawnText(operands, state.font);
+  const text = drawnText(operands, state.font, operator === "TJ");
   if (!text) return;
   pieces.push({ y: state.y, x: state.x, text });
   state.x += text.length;
@@ -302,20 +405,37 @@ const newLine = (state: TextState): void => { state.x = state.lineX; state.y = s
 const lastName = (operands: PdfToken[]): string =>
   operands.flatMap((token) => (token.kind === "name" ? [token.text] : [])).at(-1) ?? "";
 /** The letters one drawing instruction puts on the page, from its literal and hex strings. */
-function drawnText(operands: PdfToken[], font: Map<number, string>): string {
+function drawnText(operands: PdfToken[], font: Map<number, string>, spacedArray: boolean): string {
   let out = "";
+  let gap = false;
   for (const token of operands) {
-    if (token.kind === "string")
-      out += font.size ? mapCodes([...unescapeLiteral(token.text)].map((c) => c.charCodeAt(0)), font) : unescapeLiteral(token.text);
-    else if (token.kind === "hex") out += mapCodes(hexCodes(token.text, font), font);
+    // pdf.js SPACE_IN_FLOW_MIN_FACTOR (0.102), adapted to TJ's thousandths of the font size.
+    if (token.kind === "number" && spacedArray) { if (token.value <= -102) gap = true; continue; }
+    let text = "";
+    if (token.kind === "string") {
+      const bytes = unescapeLiteral(token.text);
+      text = font.size ? mapCodes(hexCodes(Buffer.from(bytes, "latin1").toString("hex"), font), font) : bytes;
+    } else if (token.kind === "hex") text = mapCodes(hexCodes(token.text, font), font);
+    if (!text) continue;
+    if (gap && out && !/\s$/.test(out) && !/^\s/.test(text)) out += " ";
+    out += text; gap = false;
   }
   return out;
 }
+/** Adapted from pdf.js CMap.readCharCode (Apache-2.0): match declared ranges, up to four bytes. */
 const hexCodes = (hex: string, font: Map<number, string>): number[] => {
-  const clean = hex.replace(/\s+/g, "");
-  const width = font.size && [...font.keys()].some((code) => code > 255) ? 4 : 2;
+  const clean = hex.replace(/\s+/g, ""), spaces = codeSpaces.get(font);
   const codes: number[] = [];
-  for (let at = 0; at < clean.length; at += width) codes.push(parseInt(clean.slice(at, at + width).padEnd(width, "0"), 16));
+  for (let at = 0; at < clean.length;) {
+    let width = 2, code = parseInt(clean.slice(at, at + 2).padEnd(2, "0"), 16);
+    for (let bytes = 1; bytes <= 4 && at + bytes * 2 <= clean.length; bytes++) {
+      const candidate = parseInt(clean.slice(at, at + bytes * 2), 16);
+      if (containsCode(spaces?.get(bytes) ?? [], candidate)) {
+        width = bytes * 2; code = candidate; break;
+      }
+    }
+    codes.push(code); at += width;
+  }
   return codes;
 };
 /** A table entry where the file gave one, otherwise the number read as ordinary Latin text. */
@@ -359,7 +479,7 @@ export function pdfText(bytes: Buffer, deadline = Infinity): PdfText {
     // Checked before each page rather than only at the end, so a long file stops at the time it was
     // given and says which pages it got to instead of holding everything else up.
     if (Date.now() > deadline) { limits.push(readingStopped(index, found.length)); break; }
-    pages.push({ page: index + 1, text: readContent(pageContent(objects, page, limits, budget), pageFonts(objects, page, budget)) });
+    pages.push({ page: index + 1, text: readContent(pageContent(objects, page, limits, budget), pageFonts(objects, page, budget, limits)) });
   }
   return { pages, pictures: pages.length > 0 && pages.every((page) => !page.text.trim()), limits };
 }

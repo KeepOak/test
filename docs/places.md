@@ -1,8 +1,8 @@
 # Where things go
 
-Branch Agent has one window: the conversation, six places and Settings. The places are the new
-window's own (`public/app/shell/shell.js` PLACES): Overview, Inbox, Automations, Library, Team and
-Customize. Every feature, old or new, lives in exactly one of them, and the owner should be able to
+Branch Agent has one window: the conversation, seven places and Settings. The places are the new
+window's own (`public/app/shell/shell.js` PLACES): Overview, Inbox, Automations, Library, Team, Customize and
+Seasons. Every feature, old or new, lives in exactly one of them, and the owner should be able to
 guess which before looking. This page is the rule for choosing, the list of homes, and how a new
 screen puts itself there. The terminal view (`src/terminal-places.ts`) shows the same map: the
 conversation and the places on its tab row (Overview is reached from the Trunks strip), and the
@@ -16,6 +16,7 @@ Settings pages in the window's order (`public/app/settings/settings.js` NAV).
 | **Inbox** | What needs the owner's decision, what finished, and the full record | Is it waiting for a yes, or reporting something that already happened? |
 | **Automations** | Work that runs without being asked each time | Does it start on a schedule, a trigger, or as a saved procedure? |
 | **Library** | What the assistant knows and what it has made | Is it knowledge, memory or an output the owner may want to open again? |
+| **Seasons** | Overnight learning, measured gains and reversible improvements | Is it about what Branch learned or changed about itself? |
 | **Customize** | What the assistant can do and who can reach it | Does it add an ability, a connection, or a way in? |
 | **Team** | The people who use Branch and what their Trunks are doing now | Is it about who uses Branch, or what everyone's work is doing right now? |
 | **Settings** (a window, not a place) | How the app behaves on this computer | Would the owner set it once and rarely look again? |
@@ -39,6 +40,7 @@ A home is written `place:tab`, or `settings:page`, or `settings:models:tab`.
 | `library:memory` | Remembered facts, tidying, how much it keeps, import and export, checkpoints |
 | `library:documents` | Documents, knowledge bases, the notes folder |
 | `library:made` | Pictures, files and reports the assistant made |
+| `seasons` | Rings history and candidate Veto/Keep, Gardener gains and Pin/Unpin, undo ledger and Budding |
 | `customize:trunks` | The owner's Trunks: making one, editing, pausing, starting from a job |
 | `customize:tools` | Skills, plugins, tool servers (MCP in both directions), command-line tools, other agents and the owner's own accounts |
 | `customize:specialists` | Specialists, proposing new ones, and how Trunks work together |

@@ -5,12 +5,14 @@
 
 import { $, esc, onRender } from "../core/dom.js";
 import { openDlg, closeDlg, openPop, closePop, toast, ic, av, mi, COLOURS, SHAPE_NAMES, hex, faceOf, dialog } from "../core/ui.js";
-import { S, E, refresh, activeId } from "../core/state.js";
+import { S, E, refresh, activeId, ownerHere } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { initPause } from "./pause.js";
 import { init as initShare } from "./share.js";
+import { initTrunkImport } from "./trunk-import.js";
+import { initTrunkInbox } from "./trunk-inbox.js";
 import { looks17, look17, NEW17 } from "../core/art17.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
@@ -19,6 +21,7 @@ import { itsTab, onChange as computersChanged } from "./computers17.js"; // pass
 import { loadAccounts, poolById } from "./account.js"; // models-ui: account names as Settings › Accounts shows them
 import { logo } from "../core/logos.js";
 import { gsel } from "../core/gsel.js";
+import { fact15 } from "../settings/rows15.js";
 
 /* The prototype's colours and shapes (COLOURS, SHAPES, SHAPE_NAMES) are kept beside av() in core/ui.js. */
 /* The prototype's Bob is the engine's sway (the engine has no bob). */
@@ -220,7 +223,11 @@ async function loadKeys(id) {
 }
 const accountName = (pool, a) => poolById(pool)?.accounts?.find((x) => x.id === a.id)?.label || a.label || a.id;
 /* Whether this connection is the Trunk's own model: a pool is named after its connection (a ChatGPT pool holds its models). */
-const usesPool = (tr, pool) => !!tr.model && (tr.model === pool.id || (pool.id === "chatgpt" && tr.model.startsWith("chatgpt")));
+const usesPool = (tr, pool) => {
+  if (!tr.model) return false;
+  const preset = E.state?.models?.presets?.find((one) => one.id === tr.model);
+  return (preset?.accountPool ?? tr.model) === pool.id;
+};
 function poolRow(tr, pool, keys) {
   const picked = keys.accounts[pool.id] ?? "", known = pool.accounts.some((a) => a.id === picked);
   const none = keys.copyFromOwner ? t("window.flows.trunk.acc-yours") : t("window.flows.trunk.acc-none");
@@ -361,7 +368,7 @@ function shuffle() {
 /* The conversation menu's items for a Trunk's or a room's own conversation; "" for any other conversation. */
 export function trunkMenu() {
   const tr = trunkOfChat();
-  if (tr) return mi("pin", "pin", tr.pinned ? t("accounts.action.unpin") : t("window.flows.trunk.pin-top")) + mi("pausetrunk", "pause", tr.paused ? t("autonomy.resume") : t("window.flows.pause.this"), "", `data-id="${esc(tr.id)}"`) + mi("rename", "edit", t("accounts.action.rename")) + mi("edit", "sliders", t("window.flows.trunk.edit-trunk"), "", `data-id="${esc(tr.id)}"`) + mi("teach-start", "teach", t("window.flows.trunk.show-how"));
+  if (tr) return (ownerHere() ? mi("trunk-inbox", "chat", t("place.inbox"), "", `data-id="${esc(tr.id)}"`) : "") + mi("pin", "pin", tr.pinned ? t("accounts.action.unpin") : t("window.flows.trunk.pin-top")) + mi("pausetrunk", "pause", tr.paused ? t("autonomy.resume") : t("window.flows.pause.this"), "", `data-id="${esc(tr.id)}"`) + mi("rename", "edit", t("accounts.action.rename")) + mi("edit", "sliders", t("window.flows.trunk.edit-trunk"), "", `data-id="${esc(tr.id)}"`) + mi("teach-start", "teach", t("window.flows.trunk.show-how"));
   const r = roomOfChat();
   if (r) return mi("pin", "pin", r.pinned ? t("accounts.action.unpin") : t("window.flows.trunk.pin-top")) + mi("rename", "edit", t("window.flows.trunk.rename-room")) + mi("room-rules", "sliders", t("window.flows.trunk.room-rules"), t(RULE_SHORT[ruleOf(r)]), `data-id="${esc(r.id)}"`);
   return "";
@@ -487,7 +494,7 @@ function groupDlg() {
     <div class="fld"><span>${t("window.flows.trunk.people-eight")}</span><span class="chips8">${people.map((p) => chip("grp-person", p.id, p.name, grp.people.includes(p.id))).join("")}</span></div>
     <div class="fld"><span>${t("window.flows.trunk.agents")}</span><span class="chips8">${agents.map((a) => chip("grp-agent", a.id, `${a.name}${where(a)}`, grp.agents.includes(a.id))).join("")}</span></div>
     ${ruleSeg("grp-rule", grp.rule)}
-    ${ctl("grp-talk", t("window.flows.trunk.talk"), t("window.flows.trunk.talk-hint"), true)}`, // state: every room lets its Trunks talk (room-plan.ts)
+    ${fact15(t("window.flows.trunk.talk"), "grp-talk")}`, // every room lets its Trunks talk (room-plan.ts): words, no switch
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="grp-make"${needName() || needTwo() ? " disabled" : ""}>${t("window.flows.trunk.start-group")}</button>` });
 }
 
@@ -572,6 +579,8 @@ async function setRule(el, field) {
 export function init() {
   initPause();
   initShare();
+  initTrunkImport();
+  initTrunkInbox();
   markLive(["room-rules", "room-rule", "room-pat", "grp-rule"]);
   on("room-rules", (el) => openRules(el.dataset.id));
   on("room-rule", (el) => setRule(el, "rule"));

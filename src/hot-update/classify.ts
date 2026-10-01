@@ -8,7 +8,7 @@ import { join, posix } from "node:path";
  *   and the open window takes them in place.
  * - engine: the engine's code (src/** that the desktop's main process never loads, and data/**). Compiled only (tsc), never
  *   packaged; the new engine starts beside the old one and takes over from it.
- * - gateway: the gateway's own code (the import closure of src/never-break/worker-link.ts and gateway.ts). Its listener is handed over.
+ * - gateway: compatible Gateway methods replace the resident implementation while its listener and connections stay open.
  * - shell: anything the desktop's main process or preload loads, Electron itself, or the packages. Only these still need
  *   today's packaged swap.
  *
@@ -115,6 +115,8 @@ export function classify(input: ClassifyInput): Classified {
     // src/desktop/** is main's, except what only the engine's own process loads (engine-process.ts and what it alone imports).
     if (path.startsWith("src/desktop/") && (shell.has(path) || !engine.has(path))) return "shell";
     if (path.startsWith("src/")) {
+      // Only this module has a resident-state replacement contract. Shared imports keep their main-process classification.
+      if (path === "src/never-break/gateway.ts") return "gateway";
       // A removed file is judged by the folders alone (it is in no closure of the new change).
       if (shell.has(path)) return "shell";
       if (gateway.has(path)) return "gateway";

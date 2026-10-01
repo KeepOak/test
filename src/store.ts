@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { healthChanged } from "./health-changes.js";
 import { forgetTeamResults, markDeletedTurnParts } from "./team-tasks.js"; // Q61
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
@@ -158,6 +159,7 @@ export class Store {
         UPDATE messages SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=new.id; END;`);
     // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
     this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS events_run_kind ON events(run_id, kind, id)"); // exact task attribution without repeated history scans
     this.conversations = new ConversationMarks(this.db, () => this.clock());
     ensureThreadTable(this.db); // defaulttrunk: which Trunk each conversation is with (src/trunks/threads.ts), read by history
     ensureForgotten(this.db);
@@ -194,7 +196,8 @@ export class Store {
       .prepare("PRAGMA table_info(usage)")
       .all()
       .map((row) => row.name);
-    for (const column of ["attempts", "unreported_calls", "incomplete_calls"])
+    // Prompt-cache reads and writes, as parts of reported_input, so each can be priced at its own rate (src/pricing.ts).
+    for (const column of ["attempts", "unreported_calls", "incomplete_calls", "reported_cached_input", "reported_cache_write", "reported_cache_write_hour"])
       if (!usageColumns.includes(column))
         this.db.exec(
           `ALTER TABLE usage ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`,
@@ -226,8 +229,8 @@ export class Store {
     return this.library.search(owner, input, this.hiddenSessions().slice(0, 500), agent);
   }
   /** The recent conversations with what was last said in each, for picking one up on a phone. */
-  recentSessions(owner: string, limit?: number) {
-    return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500));
+  recentSessions(owner: string, limit?: number, offset = 0) {
+    return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500), undefined, offset);
   }
   /** A project's conversations, newest first, in the same shape as recentSessions (src/session-library.ts projectOf). */
   projectSessions(owner: string, project: string, limit = 100) {
@@ -623,6 +626,23 @@ export class Store {
     return this.db.prepare("SELECT id FROM tasks WHERE owner=? AND created_at >= ? ORDER BY created_at DESC LIMIT ?")
       .all(owner, since, limit).map((row) => String(row.id));
   }
+  /** Weekly recap: finish time includes a task started earlier; deleted conversations remain out of sight. */
+  completedRunsBetween(owner: string, since: string, until: string, limit: number): Run[] {
+    return this.db.prepare("SELECT * FROM tasks WHERE owner=? AND status='completed' AND updated_at>=? AND updated_at<=? "
+      + "AND session_id NOT IN (SELECT session_id FROM conversation_marks WHERE deleted_at IS NOT NULL) "
+      + "ORDER BY updated_at DESC, rowid DESC LIMIT ?")
+      .all(owner, since, until, limit).map((row) => this.toRun(row));
+  }
+  /** Original Trunk attribution for an already owner-scoped list, read once rather than loading every task's events. */
+  runTrunkIds(ids: readonly string[]): Map<string, string> {
+    const rows = this.db.prepare("SELECT run_id, json_extract(data,'$.trunkId') AS trunk FROM events "
+      + "WHERE kind='trunk.turn' AND run_id IN (SELECT value FROM json_each(?)) ORDER BY id")
+      .all(JSON.stringify(ids));
+    const trunks = new Map<string, string>();
+    for (const row of rows) if (typeof row.trunk === "string" && row.trunk && !trunks.has(String(row.run_id)))
+      trunks.set(String(row.run_id), row.trunk);
+    return trunks;
+  }
   /** Settings › Permissions › Messages per conversation per hour: how many tasks a conversation started since then. */
   sessionTasksSince(sessionId: string, since: string): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE session_id=? AND created_at >= ?").get(sessionId, since) as { n: number }).n);
@@ -908,6 +928,15 @@ export class Store {
         createdAt: String(row.created_at),
       }));
   }
+  /** A bounded event-log snapshot: callers retain this high-water mark across pages. */
+  eventLogEnd(runId: string): number {
+    return Number(this.db.prepare("SELECT MAX(id) AS last FROM events WHERE run_id=?").get(runId)?.last ?? 0);
+  }
+  eventLogPage(runId: string, after: number, through: number): Event[] {
+    return this.db.prepare("SELECT * FROM events WHERE run_id=? AND id>? AND id<=? ORDER BY id LIMIT 500")
+      .all(runId, after, through).map((row) => ({ id: Number(row.id), runId: String(row.run_id),
+        kind: String(row.kind), data: JSON.parse(String(row.data)), createdAt: String(row.created_at) }));
+  }
   /** The newest events across all of one owner's tasks, for the diagnostics bundle. */
   recentEvents(owner: string, limit = 200): Event[] {
     return this.db
@@ -934,18 +963,21 @@ export class Store {
     runId: string,
     estimatedInput: number,
     estimatedOutput: number,
-    reported?: { input: number; output: number },
+    reported?: { input: number; output: number; cachedInput?: number | undefined; cacheWrite?: number | undefined; cacheWrite1h?: number | undefined },
     completed = true,
   ): void {
     this.db
       .prepare(
-        "UPDATE usage SET estimated_input=estimated_input+?,estimated_output=estimated_output+?,reported_input=reported_input+?,reported_output=reported_output+?,reports=reports+?,unreported_calls=MAX(0,unreported_calls-?),incomplete_calls=MAX(0,incomplete_calls-?) WHERE run_id=?",
+        "UPDATE usage SET estimated_input=estimated_input+?,estimated_output=estimated_output+?,reported_input=reported_input+?,reported_output=reported_output+?,reported_cached_input=reported_cached_input+?,reported_cache_write=reported_cache_write+?,reported_cache_write_hour=reported_cache_write_hour+?,reports=reports+?,unreported_calls=MAX(0,unreported_calls-?),incomplete_calls=MAX(0,incomplete_calls-?) WHERE run_id=?",
       )
       .run(
         estimatedInput,
         estimatedOutput,
         reported?.input ?? 0,
         reported?.output ?? 0,
+        reported?.cachedInput ?? 0,
+        reported?.cacheWrite ?? 0,
+        reported?.cacheWrite1h ?? 0,
         reported ? 1 : 0,
         reported ? 1 : 0,
         completed ? 1 : 0,
@@ -959,6 +991,9 @@ export class Store {
       estimatedOutput: Number(r?.estimated_output ?? 0),
       reportedInput: Number(r?.reported_input ?? 0),
       reportedOutput: Number(r?.reported_output ?? 0),
+      reportedCachedInput: Number(r?.reported_cached_input ?? 0),
+      reportedCacheWrite: Number(r?.reported_cache_write ?? 0),
+      reportedCacheWrite1h: Number(r?.reported_cache_write_hour ?? 0),
       reports: Number(r?.reports ?? 0),
       attempts: Number(r?.attempts ?? 0),
       unreportedCalls: Number(r?.unreported_calls ?? 0),
@@ -1032,6 +1067,7 @@ export class Store {
         `INSERT INTO ${table} VALUES(?,?,?,?,?) ON CONFLICT(id,owner) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at`,
       )
       .run(id, owner, JSON.stringify(data), now, now);
+    if (table === "settings") healthChanged(this.db, { kind: "setting", owner, id });
     return this.get(table, owner, id)!;
   }
   get(table: RecordTable, owner: string, id: string): SavedRecord | undefined {
@@ -1058,11 +1094,13 @@ export class Store {
       const refusal = pinnedDeleteRefusal(this, this.profiles.ownerName, this.profiles.isOwner(), id);
       if (refusal) throw new PinnedSettingError(refusal);
     }
-    return (
+    const removed = (
       this.db
         .prepare(`DELETE FROM ${table} WHERE owner=? AND id=?`)
         .run(owner, id).changes > 0
     );
+    if (removed && table === "settings") healthChanged(this.db, { kind: "setting", owner, id });
+    return removed;
   }
   usageStore(): UsageStore { return new UsageStore(this.db); }
   /** The spans of running and finished tasks, beside the events. Created on first use. */
@@ -1121,7 +1159,7 @@ export class Store {
     const result = this.db
       .prepare(
         `UPDATE schedules SET data=json_set(data,'$.statusBeforeTrigger',json_extract(data,'$.status'),'$.status','running'),updated_at=?
-         WHERE owner=? AND id=? AND json_extract(data,'$.status') IN ('pending','paused','completed','failed')
+         WHERE owner=? AND id=? AND json_extract(data,'$.status') IN ('pending','paused','completed','failed','interrupted')
          AND (? IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(data,'$.triggerSlots') WHERE json_extract(value,'$.slot')=?))
          RETURNING *`,
       )

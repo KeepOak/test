@@ -88,6 +88,9 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
   // r17-i: another of the owner's computers hands a message to a Trunk here with the "run" key it was given;
   // the message is quoted as that computer's text, capped and limited per hour (src/reach/remote-trunks.ts).
   post("/api/reach/trunks/inbox", "a message from a Trunk on another of the owner's computers"),
+  post("/api/reach/continuity/receive", "receives idempotent continuation work from its owner-paired run key"),
+  post("/api/reach/continuity/status", "reads only the continuity receipt belonging to this paired key"),
+  post("/api/reach/continuity/release", "fences and stops only the continuity transfer belonging to this paired key"),
   // mac7/r17-g: the safety extras. Everything else under /api/safety-extras (the switches, letting the
   // emergency stop go, setting up authenticator codes, installing or running WebAssembly add-ons) is
   // refused by the rule above. Reading /api/safety-extras is allowed: it never carries the code key.
@@ -104,6 +107,13 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
 
 /** Reads a short-lived key may not make: what they return is a secret, or everybody's data. */
 const ownerOnlyReads: readonly RegExp[] = [
+  /^\/api\/reach\/continuity(\/|$)/,
+  /^\/api\/taste(\/|$)/,
+  /^\/api\/self-development\/publications(\/|$)/,
+  new RegExp(`^/api/monitors/${id}/prices$`),
+  /^\/api\/schedules\/[a-f0-9-]{36}\/dashboard$/,
+  // Saved task images are read by the profile window, never through a short-lived script key.
+  /^\/api\/artifacts\/file$/,
   /^\/api\/backup$/,
   // accounts-wizard-plans: a waiting ChatGPT sign-in's one-time code links Branch to whoever types it on OpenAI's page.
   /^\/api\/chatgpt\/status$/,
@@ -120,6 +130,7 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/terminal$/,
   // phase2/delight: the owner's achievements are the owner's alone (src/delight.ts).
   /^\/api\/delight\/achievements$/,
+  /^\/api\/weekly-recap$/, // owner-wide completed work and the owner's manual-time assumption
   new RegExp(`^/api/(triggers|webhooks)(/${id})?$`),
   /^\/api\/channels\/addresses$/,
   // integration review (bucket 16, merged into bucket 19): the waiting Slack events carry message text.
@@ -193,6 +204,8 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/self-development\/merge(\/|$)/,
   // The bounded diff of such a change: Branch's own source as a task changed it, for the owner to read.
   new RegExp(`^/api/self-development/requests/${id}/diff$`),
+  // The committed draft of such a change, read before the owner publishes it from the Inbox.
+  new RegExp(`^/api/self-development/requests/${id}/draft$`),
 ];
 
 /**

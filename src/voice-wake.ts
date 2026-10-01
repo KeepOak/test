@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { findLocalWhisper, type LocalWhisper, type LocalWhisperFound } from "./voice-whisper.js";
+import { keywordSpotter } from "./voice-wake-kws.js";
 // mac7/live-voice: the microphone itself now lives on its own in src/mic-capture.ts, because live
 // dictation wants exactly the same sound from exactly the same programs, held open rather than
 // taken one window at a time. Nothing about the wake word changed with the move: the names below
@@ -38,6 +40,9 @@ export const WakeWordSettingsSchema = z.object({
   word: z.string().trim().max(40).default(""),
   /** How sure the spotter must be, out of a hundred. Lower hears the word more often, and more often wrongly. */
   sureness: z.number().int().min(50).max(99).default(80),
+  keywordModel: z.string().trim().max(400).default(""),
+  keywordFile: z.string().trim().max(400).default(""),
+  confirmationFrames: z.number().int().min(1).max(20).default(3),
   /**
    * The longest piece of sound the listener will hold at once, in seconds. A piece longer than this
    * is dropped without being looked at, so however the sound arrives, no more than this is ever in
@@ -80,7 +85,8 @@ export interface WakeSpotter {
    * Which spotter this is. Windows' own engine can open the microphone for itself; a speech program
    * the owner set up is handed sound by something else. The capture below turns on that difference.
    */
-  kind: "windows-speech" | "own-program" | "none";
+  kind: "windows-speech" | "own-program" | "faster-whisper" | "streaming-keyword" | "none";
+  whisper?: LocalWhisperFound;
   /** What it would use, or why it cannot, in the owner's words. */
   how: string;
   /**
@@ -191,12 +197,23 @@ export function wakeSpotter(
   settings: VoiceSettings, wake: WakeWordSettings, platform: string = process.platform,
   /** True when this spotter is the one opening the microphone, rather than being handed sound. */
   ownMicrophone = false,
+  present: ProgramPresent = programOnThisComputer,
 ): WakeSpotter {
   if (!wake.word) return { available: false, kind: "none", how: "No word has been chosen yet.", command: null };
+  const keyword = keywordSpotter(settings, wake, present);
+  if (keyword) return keyword;
   // mac7/wake-mic: when this spotter is the one opening the microphone, Windows' own engine is the
   // only thing here that can, whatever speech program the owner has set up for writing out
   // recordings — Windows ships no recorder to feed one.
   if (ownMicrophone && platform === "win32") return windowsSpotter(wake.word, wake.sureness, true, wake.windowSeconds);
+  const python = /(?:^|[\\/])python[\d.]*?(?:\.exe)?$/i.test(settings.localSpeechExecutable);
+  if (settings.localSpeechKind === "faster-whisper" || python || !settings.localSpeechExecutable) {
+    const whisper = findLocalWhisper({ ...settings, localSpeechKind: python ? "faster-whisper" : settings.localSpeechKind }, { platform });
+    if (whisper.available) return { available: true, kind: "faster-whisper", command: null, whisper,
+      how: "Your existing faster-whisper worker keeps its model loaded between wake-word recordings. Everything stays on this computer; recordings still use separate windows and can miss speech during recognition." };
+    if (settings.localSpeechKind === "faster-whisper" || python)
+      return { available: false, kind: "none", command: null, how: whisper.how };
+  }
   if (settings.localSpeechExecutable && settings.localSpeechModel) return ownSpeechProgram(settings, wake.word);
   if (platform === "win32") return windowsSpotter(wake.word, wake.sureness, ownMicrophone, wake.windowSeconds);
   return nothingHere(platform);
@@ -266,8 +283,10 @@ export function wakeCapture(
 ): WakeCapture {
   // mac7/wake-mac: a Mac is looked at before the spotter, so the card can say which recording
   // program is here, or which to install, even while there is nothing to spot the word with yet.
+  if (spotter.kind === "streaming-keyword") return { kind: "spotter-listens", available: true,
+    command: null, how: "Your installed keyword program holds the microphone open while the wake word is on and closes it when listening ends." };
   if (platform === "darwin") return macRecorder(present, windowSeconds);
-  if (!spotter.command)
+  if (!spotter.available)
     return cannotListen("Nothing here can spot the word, so there is nothing to listen with either.");
   if (spotter.kind === "windows-speech")
     return { kind: "spotter-listens", available: true, command: null,
@@ -297,7 +316,7 @@ export function wakeParts(
 ): { wake: WakeWordSettings; spotter: WakeSpotter; capture: WakeCapture } {
   const wake = wakeWordSettings(store, owner);
   const voice = voiceSettings(store, owner);
-  const handedSound = wakeSpotter(voice, wake, platform);
+  const handedSound = wakeSpotter(voice, wake, platform, false, present);
   const recorded = wakeCapture(platform, present, handedSound, wake.windowSeconds);
   // The spotter that opens the microphone is a different program from the one that is handed sound,
   // so it is asked for once the capture has said which this is. Windows has nothing to record with,
@@ -305,7 +324,7 @@ export function wakeParts(
   // their own: that program could spot the word, but nothing on Windows could feed it.
   const listensItself = recorded.kind === "spotter-listens" || (!recorded.available && platform === "win32");
   if (!listensItself) return { wake, spotter: handedSound, capture: recorded };
-  const spotter = wakeSpotter(voice, wake, platform, true);
+  const spotter = wakeSpotter(voice, wake, platform, true, present);
   return { wake, spotter, capture: wakeCapture(platform, present, spotter, wake.windowSeconds) };
 }
 
@@ -375,12 +394,14 @@ export function wakeWordView(
   store: Store, owner: string, platform: string = process.platform, isOwner = true,
   listening = false, present: ProgramPresent = onThisComputer,
 ): {
-  settings: Omit<WakeWordSettings, "word"> & { word?: string }; spotter: { available: boolean; how: string };
+  settings: Omit<WakeWordSettings, "word" | "keywordModel" | "keywordFile"> & {
+    word?: string; keywordModel?: string; keywordFile?: string;
+  }; spotter: { available: boolean; how: string };
   capture: { available: boolean; how: string }; refusal: string | null; mode: FeatureMode;
   listening: boolean; canListen: boolean; wordChosen: boolean;
 } {
   const state = wakeWordState(store, owner, platform, listening, present);
-  const { word, ...rest } = state.settings;
+  const { word, keywordModel: _model, keywordFile: _keywords, ...rest } = state.settings;
   return {
     ...state,
     // The word is the owner's own. Somebody else on this computer is told whether one has been
@@ -419,7 +440,14 @@ export function isTheWord(text: string, word: string): boolean {
  * fake and no microphone is ever opened; nothing here writes a file, and the sound is handed to the
  * program on its standard input rather than being put anywhere on disk.
  */
-export async function askSpotter(runner: WakeRunner, spotter: WakeSpotter, word: string, sound: Uint8Array): Promise<WakeHeard> {
+export async function askSpotter(runner: WakeRunner, spotter: WakeSpotter, word: string, sound: Uint8Array, whisper?: LocalWhisper, signal?: AbortSignal): Promise<WakeHeard> {
+  if (spotter.whisper) {
+    try {
+      const heard = await whisper?.transcribe(spotter.whisper, sound, { partial: true }, signal);
+      const text = heard?.text.slice(0, 200) ?? "";
+      return { heard: isTheWord(text, word), text, ok: heard !== null && heard !== undefined };
+    } catch { return { heard: false, text: "", ok: false }; }
+  }
   if (!spotter.command) return { heard: false, text: "", ok: false };
   const done = await runner(spotter.command.file, spotter.command.args, sound, spotter.command.env);
   const text = done.code === 0 ? done.stdout.trim().slice(0, 200) : "";
@@ -461,6 +489,7 @@ export interface WakeListenerDeps {
   store: Store;
   owner: string;
   runner: WakeRunner;
+  whisper?: LocalWhisper;
   platform?: string;
   present?: ProgramPresent;
   /** The wait after a window; the real one above unless a test hands in its own. */
@@ -482,7 +511,7 @@ export interface WakeListenerDeps {
  * turn with the same permissions and the same questions as a typed one.
  */
 export async function listenForWake(
-  deps: WakeListenerDeps, sound: AsyncIterable<WakeChunk>,
+  deps: WakeListenerDeps, sound: AsyncIterable<WakeChunk>, signal?: AbortSignal,
 ): Promise<{ heard: boolean; text: string; refusal: string | null; windowsTried: number; windowsTooLong: number }> {
   const platform = deps.platform ?? process.platform;
   const present = deps.present ?? onThisComputer;
@@ -506,7 +535,7 @@ export async function listenForWake(
     if (chunk.seconds > wake.windowSeconds) { windowsTooLong += 1; await pause(0); continue; }
     held = chunk.sound;
     windowsTried += 1;
-    const answer = await askSpotter(deps.runner, spotter, wake.word, held);
+    const answer = await askSpotter(deps.runner, spotter, wake.word, held, deps.whisper, signal);
     held = null; // thrown away before the next window, heard or not
     if (answer.heard) return { heard: true, text: answer.text, refusal: null, windowsTried, windowsTooLong };
     // Integration review: the turn is always handed back to the app, and a spotter that failed
@@ -537,12 +566,38 @@ export interface WakeWordListener {
 
 export interface WakeWordDeps extends WakeListenerDeps {
   capture: WakeCaptureRunner;
+  stream?: WakeStreamRunner;
   /**
    * What the spotter wrote out, once the word was in it. The caller starts an ordinary turn with
    * it — the same one a typed message starts, with the same permissions and the same questions.
    * Hearing the word grants nothing.
    */
   onHeard: (text: string) => void | Promise<void>;
+}
+
+export type WakeStreamRunner = (command: NonNullable<WakeSpotter["command"]>,
+  onWord: (word: string) => void, signal: AbortSignal) => Promise<void>;
+
+async function keepStreaming(deps: WakeWordDeps, controller: AbortController, spotter: WakeSpotter): Promise<void> {
+  if (!spotter.command || !deps.stream) return;
+  let last = 0, busy = false;
+  const check = () => {
+    try {
+      if (deps.locked?.() || wakeRefusal(deps.store, deps.owner, deps.platform, deps.present)) controller.abort();
+    } catch { controller.abort(); }
+  };
+  const ticker = setInterval(check, 500); ticker.unref?.();
+  try {
+    await deps.stream(spotter.command, (text) => {
+      check();
+      const wake = wakeWordSettings(deps.store, deps.owner);
+      if (controller.signal.aborted || busy || Date.now() - last < wakeBackoffMs || !isTheWord(text.replace(/_/g, " "), wake.word)) return;
+      last = Date.now(); busy = true;
+      void Promise.resolve().then(() => {
+        check(); if (!controller.signal.aborted) return deps.onHeard(wake.word);
+      }).catch(() => undefined).finally(() => { busy = false; });
+    }, controller.signal);
+  } finally { clearInterval(ticker); }
 }
 
 /**
@@ -582,8 +637,10 @@ async function* windowsOfSound(deps: WakeWordDeps, signal: AbortSignal): AsyncIt
 /** Listens, again and again, starting an ordinary turn each time the word is heard. */
 async function keepListening(deps: WakeWordDeps, controller: AbortController, done: () => void): Promise<void> {
   try {
+    const { spotter } = wakeParts(deps.store, deps.owner, deps.platform, deps.present);
+    if (spotter.kind === "streaming-keyword") { await keepStreaming(deps, controller, spotter); return; }
     while (!controller.signal.aborted) {
-      const answer = await listenForWake(deps, windowsOfSound(deps, controller.signal));
+      const answer = await listenForWake(deps, windowsOfSound(deps, controller.signal), controller.signal);
       if (controller.signal.aborted || answer.refusal || !answer.heard) return;
       await deps.onHeard(answer.text);
       // Integration review: the one path that had no wait in it at all. Hearing the word returns
@@ -607,19 +664,23 @@ export function startWakeWord(deps: WakeWordDeps): WakeWordListener {
   const present = deps.present ?? onThisComputer;
   let running: AbortController | null = null;
   let loop: Promise<void> = Promise.resolve();
+  let configuration = "";
   const listener: WakeWordListener = {
     get listening() { return running !== null; },
     refresh() {
       // Integration review: being locked is a state, not a single push. A settings save — the card,
       // a settings file, a preset — must not be a way back to the microphone on a locked Branch.
       if (deps.locked?.() || wakeRefusal(deps.store, deps.owner, platform, present)) { void listener.stop(); return; }
+      const next = JSON.stringify(wakeParts(deps.store, deps.owner, platform, present));
+      if (running && next !== configuration) { void listener.stop().then(() => listener.refresh()); return; }
       if (running) return;
+      configuration = next;
       const controller = new AbortController();
       running = controller;
       // Every wait this listener makes ends when the listener does, so stopping is never held up.
       const paced: WakeWordDeps = { ...deps,
         pause: (ms) => waitOrStop(deps.pause ?? waitBetweenWindows, ms, controller.signal) };
-      loop = keepListening(paced, controller, () => { if (running === controller) running = null; });
+      loop = keepListening(paced, controller, () => { if (running === controller) running = null; }).catch(() => undefined);
     },
     async stop() {
       const controller = running;

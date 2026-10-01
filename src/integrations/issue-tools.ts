@@ -1,3 +1,4 @@
+import { assertHealthCurrent, currentHealthCheck } from "../health-check.js";
 import { z } from "zod";
 import { applyContentPolicy, detectInjection, type InjectionPolicy } from "../content-guard.js";
 import type { ToolRegistry } from "../registry.js";
@@ -6,6 +7,7 @@ import { linearIssueKey, type LinearAccess } from "./linear.js";
 import { issueContext, parseIssueLink, issueLinksIn, type IssueLink, type TrackerIssue } from "./issue-context.js";
 import type { GitLabAccess } from "./gitlab.js";
 import type { JiraAccess } from "./jira.js";
+import type { ConnectionHealth } from "../personal/probe.js";
 
 /**
  * The issue tools, one set whichever tracker the issue is in. Searching and reading are behind
@@ -52,6 +54,18 @@ export class IssueAccess {
   ) {}
   available(): ("github" | "linear" | "gitlab" | "jira")[] {
     return (["github", "linear", "gitlab", "jira"] as const).filter((id) => this.trackers[id]);
+  }
+  /** Explicit account checks prove authentication only, not access to a particular issue or repository. */
+  async checkAccount(id: "github" | "linear"): Promise<ConnectionHealth> {
+    assertHealthCurrent();
+    const access = this.trackers[id];
+    if (!access) throw new Error(`${id} is not set up.`);
+    currentHealthCheck()?.bindConnection(() => this.trackers[id] === access);
+    let ok = false, reason: string | null = null;
+    try { await access.checkAccount(); ok = true; }
+    catch { assertHealthCurrent(); reason = "Account access could not be verified. Check the saved credentials and network rules, then try again."; }
+    assertHealthCurrent();
+    return { checkedAt: new Date().toISOString(), ok, checks: [{ capability: `${id} authenticated account access`, ok, reason }] };
   }
   private github(): GitHubAccess {
     const access = this.trackers.github;

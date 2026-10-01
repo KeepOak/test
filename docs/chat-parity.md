@@ -20,6 +20,19 @@ Researched 2026-09-27. Sources:
   - `docs/concepts/streaming.md`, `typing-indicators.md`, `queue.md`
 - Branch: `src/channels/**`, `src/live-steps.ts`, `src/commands/catalog.ts`, `src/scheduler.ts`, `src/live-screen.ts`.
 
+## Connection status when returning to Settings
+
+Settings re-reads its current page when the owner returns through the gear, including after connecting or
+removing an app in Customize. Ordinary redraws keep the page's data and do not register its actions or fetch
+again. A failed channel read shows its error and keeps the last verified connection list; an initial failure does
+not claim that no app is connected. A successful empty list still shows the empty state. Superseded reads cannot
+overwrite a newer connection list or show an outdated error.
+
+Implementation: `public/app/settings/settings.js` and `public/app/settings/pages/chatapps.js`.
+Acceptance: `tests/settings-reentry.test.mjs` exercises return, removal, redraw and explicit page navigation;
+`tests/chatapps-stale.test.mjs` covers failed initial reads, failed refreshes, successful empty reads and out-of-order responses, alongside
+the existing lock/profile guards. `tests/chatapps-child-readers-stale.test.mjs` protects the child readers.
+
 ## Tested for real, app by app (CHAT-003)
 
 The cells below mostly rest on stand-in adapters. This section says which apps also run against a **real server**,
@@ -58,7 +71,7 @@ node scripts/real-chat/servers.mjs down
 
 <!-- real-chat:start (written by node scripts/real-chat/table.mjs) -->
 
-11 of 56 apps are tested for real; every other one says why not.
+11 of 57 apps are tested for real; every other one says why not.
 
 | App | Result | Server, or why not |
 | --- | --- | --- |
@@ -118,6 +131,7 @@ node scripts/real-chat/servers.mjs down
 | KOOK | Skipped | needs a KOOK bot token; there is no local or sandbox server for it |
 | WeChat Official Account | Skipped | needs a WeChat Official Account; there is no local or sandbox server for it |
 | WeCom app | Skipped | needs a WeCom organisation and self-built app; there is no local or sandbox server for it |
+| WhatsApp (personal number) | Skipped | needs a phone with a WhatsApp account to link the bridge to; WhatsApp has no test server, and the harness never uses a real account |
 
 <!-- real-chat:end -->
 
@@ -226,6 +240,7 @@ against its adapter, then renders one fixed task for every app.
 | Mumble (`mumble`) | — | plain words | 3500 | — | — | — | — | One summary line above the reply (plain words) |
 | KOOK (`kook`) | — | plain words | 4000 | — | yes | — | — | One summary line above the reply (plain words) |
 | iMessage through BlueBubbles (`bluebubbles`) | — | plain words | 3000 | — | — | off: no edits, so no progress | final answer only | One summary line above the reply (plain words) |
+| WhatsApp (personal number) (`whatsapp-web`) | — | plain words | 4000 | — | yes | new through the Baileys bridge | final answer only | One summary line above the reply (plain words) |
 | WeChat Official Account (`wechat-mp`) | — | plain words | 600 | — | — | off: no edits, so no progress | — | One summary line above the reply (plain words) |
 | WeCom app (`wecom-app`) | — | plain words | 600 | — | — | off; native stream message type instead | — | One summary line above the reply (plain words) |
 | Mattermost (`mattermost`) | — | plain words | 4000 | — | yes | new (edits in place) | partial draft preview | One summary line above the reply (plain words) |
