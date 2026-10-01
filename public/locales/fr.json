@@ -8384,6 +8384,7 @@
   "window.panes.add": "Ajouter un volet",
   "window.panes.answer": "Répondre",
   "window.panes.close-main": "Fermer ce volet",
+  "window.panes.attachments-wait": "Ce volet est occupé et accepte seulement du texte pour le moment. Votre message et vos fichiers restent dans la zone de saisie ; envoyez-les quand il aura terminé.",
   "window.panes.full": "{count} volets attendent déjà une réponse ; attendez que l’un se termine.",
   "window.panes.label": "Conversations côte à côte",
   "window.panes.make-main": "Ouvrir {name} ici en entier",

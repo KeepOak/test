@@ -606,7 +606,9 @@ async function destinationReady(sid, prompt) {
   return true;
 }
 
+let paneSending = false, draftRevision = 0; // one attempt owns the retained composer draft until the pane acknowledges it
 async function send(words, answered = false) {
+  if (paneSending) return;
   const box = $("#prompt");
   const prompt = (words ?? box?.value ?? "").trim();
   if (viewingHelper()) return; // pass 18a: a helper's conversation is view only
@@ -653,23 +655,35 @@ async function sendOver(id, prompt) {
     await send();
     return;
   }
-  if (prompt.startsWith("/")) {
-    let done;
-    try { done = await api("commands/run", { surface: "window", line: prompt, sessionId: id }); } catch (error) { toast(error.message); return; }
-    if (done?.handled) { clearBox(true); renderNow(); toast(done.text ?? ""); return; }
-  }
-  if (!paneRoom(id)) return; // before the files are taken: refused, they stay on their chips
-  /* The box is emptied as the message goes (its answer can take minutes, and the box is free for the next one meanwhile);
-     a message the engine refused at once puts its words back in the box, if it is still empty. */
-  const fields = await takePending(false), box = $("#prompt"), typed = box?.value ?? prompt;
-  filesSent();
-  practiceSent();
-  clearBox(true);
-  box?.dispatchEvent(new Event("input", { bubbles: true }));
-  box?.focus();
-  if (await sendToPane(id, prompt, fields)) return;
-  const again = $("#prompt");
-  if (again && !again.value.trim()) { again.value = typed; again.dispatchEvent(new Event("input", { bubbles: true })); }
+  if (paneSending) return;
+  paneSending = true;
+  const source = C.sessionId ?? "new", seat = C.seat, revision = draftRevision, typed = $("#prompt")?.value ?? prompt;
+  const clearAcceptedDraft = () => {
+    if (draftRevision !== revision) return;
+    if (S.drafts[source] === typed) S.drafts[source] = "";
+    const box = $("#prompt");
+    if (C.seat === seat && box?.value === typed) {
+      box.value = "";
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  };
+  try {
+    if (paneBusy(id) && hasFiles()) { toast(t("window.panes.attachments-wait")); return; }
+    if (prompt.startsWith("/")) {
+      let done;
+      try { done = await api("commands/run", { surface: "window", line: prompt, sessionId: id }); } catch (error) { toast(error.message); return; }
+      if (done?.handled) { clearAcceptedDraft(); renderNow(); toast(done.text ?? ""); return; }
+    }
+    if (!paneRoom(id)) return;
+    // Preparing uploads and awaiting the reply never consumes the draft. Refusal keeps the exact tray and text.
+    const fields = await takePending(false, true);
+    if (!(await sendToPane(id, prompt, fields))) return;
+    filesSent("main", fields.uploads ?? []);
+    if (fields.dryRun) practiceSent();
+    clearAcceptedDraft();
+    renderNow();
+  } catch (error) { toast(error.message); }
+  finally { paneSending = false; }
 }
 
 /* A choice card's answer (chat/furniture.js) is this conversation's next message, word for word: an option's title is
@@ -759,6 +773,7 @@ async function adopt(sessionId, before, keepDraft) {
 /* `withLead`: a message the person typed and sent carries the words hooked in front of it (addSendPrefix); a choice
    card's answer and a room's route are sent word for word. */
 async function sendPlain(said, withLead = false) {
+  if (paneSending) return;
   const lead = withLead ? PREFIX.map((take) => take(C.sessionId ?? null)).filter(Boolean).join("\n") : "";
   const prompt = lead ? `${lead}\n\n${said}` : said;
   const before = replyMark(C.messages), seat = C.seat, from = C.sessionId ?? "new";
@@ -816,6 +831,7 @@ async function sendPlain(said, withLead = false) {
    which says why; files still arriving wait, as they do for Enter. */
 let away = false;
 async function sendAway() {
+  if (paneSending) return;
   const box = $("#prompt"), prompt = (box?.value ?? "").trim();
   if (!prompt || viewingHelper() || away) return;
   const routed = !!routeFor(prompt, null, whoHere(), HOOKS); // words that call a Trunk by its @name go its way
@@ -1065,6 +1081,7 @@ export function init() {
   });
   document.addEventListener("input", (e) => {
     if (e.target.id !== "prompt") return;
+    draftRevision++;
     S.drafts[C.sessionId ?? "new"] = e.target.value;
     // Stop holds Send's place only while the box is empty: typing gives Send back, clearing the box brings Stop again.
     const stopNow = !e.target.value.trim() && (C.sending || !!liveRun());

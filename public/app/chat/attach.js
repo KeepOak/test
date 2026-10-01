@@ -171,17 +171,19 @@ const retryable = (f) => f.state === "failed" && f.offline && !!f.file;
 export const hasFiles = (name = "main") => tray(name).some((f) => f.state !== "failed" || retryable(f));
 
 /** The upload ids for the next message, once every file has finished sending. The chips stay until it is sent. */
-export async function readyUploads(name = "main") {
-  const files = tray(name);
+export async function readyUploads(name = "main", snapshot = false) {
+  const files = snapshot ? [...tray(name)] : tray(name);
   for (const f of files) if (retryable(f)) send(f);
   await Promise.all(files.filter((f) => f.state === "sending").map((f) => f.done));
   return files.filter((f) => f.state === "ready" && f.upload).map((f) => f.upload);
 }
 /** The message went (POST /api/run answered): its chips go with it, and a file that could not be sent is named. */
-export function filesSent(name = "main") {
-  const failed = tray(name).filter((f) => f.state === "failed");
-  for (const f of tray(name)) if (f.preview.thumb) URL.revokeObjectURL(f.preview.thumb);
-  A.trays[name] = [];
+export function filesSent(name = "main", uploads) {
+  // A pane may finish after more files were added: consume only the ids that its accepted request carried.
+  const sent = new Set(uploads === undefined ? tray(name) : tray(name).filter((f) => uploads.includes(f.upload)));
+  const failed = [...sent].filter((f) => f.state === "failed");
+  for (const f of sent) if (f.preview.thumb) URL.revokeObjectURL(f.preview.thumb);
+  A.trays[name] = tray(name).filter((f) => !sent.has(f));
   if (failed.length) toast(failed.map((f) => f.error).join(" "));
   redraw();
 }

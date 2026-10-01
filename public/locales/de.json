@@ -8384,6 +8384,7 @@
   "window.panes.add": "Bereich hinzufügen",
   "window.panes.answer": "Antworten",
   "window.panes.close-main": "Diesen Bereich schließen",
+  "window.panes.attachments-wait": "Dieser Bereich ist beschäftigt und nimmt gerade nur Text an. Deine Nachricht und Dateien bleiben im Eingabefeld; sende sie, sobald die Aufgabe fertig ist.",
   "window.panes.full": "Schon {count} Bereiche warten auf eine Antwort; warte, bis einer fertig ist.",
   "window.panes.label": "Unterhaltungen nebeneinander",
   "window.panes.make-main": "{name} hier vollständig öffnen",
