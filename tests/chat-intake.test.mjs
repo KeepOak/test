@@ -70,7 +70,7 @@ const from = { id: 42, first_name: "Ann" }, chat = { id: 501, type: "private" };
 
 test("what the Trunk sees ships on; presence ships off; a bad value is refused", () => {
   const rows = new Map(), store = { get: (_t, _o, id) => (rows.has(id) ? { data: rows.get(id) } : undefined), save: (_t, _o, id, data) => rows.set(id, data) };
-  assert.deepEqual(readChatIntake(store, "o"), { edited: true, albums: true, splitWaitMs: 1000, watchdog: true, reconnectMinutes: 3, stalledAfterSeconds: 90, presence: false });
+  assert.deepEqual(readChatIntake(store, "o"), { dmPolicies: {}, edited: true, albums: true, telegramMedia: true, splitWaitMs: 1000, watchdog: true, reconnectMinutes: 3, stalledAfterSeconds: 90, presence: false });
   assert.equal(saveChatIntake(store, "o", { splitWaitMs: 3000 }).splitWaitMs, 3000);
   assert.equal(readChatIntake(store, "o").edited, true, "the fields not named keep their value");
   assert.throws(() => saveChatIntake(store, "o", { splitWaitMs: 2000 }));
@@ -242,4 +242,21 @@ test("online status: off as shipped; on, 'Online' at start and 'Offline, back so
   await until(() => again.state.calls.some((c) => c.method === "setMyShortDescription" && c.body.short_description === "Online"), "Online at start");
   await app.channels.detachAll();
   assert.equal(again.state.calls.filter((c) => c.method === "setMyShortDescription").at(-1).body.short_description, "Offline, back soon");
+});
+
+test("CHAT-254: 'Only me' for direct messages needs a verified own account, and then refuses other senders' direct messages", async (t) => {
+  const { app } = await fixture(t);
+  const sent = [];
+  const adapter = { id: "chat", kind: "fake", botName: () => "Branch", async start() {}, async stop() {},
+    async send(chatId, text) { sent.push(text); return String(sent.length); } };
+  await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["friend"] });
+  app.channels.mergeWindowMs = 0;
+  assert.throws(() => app.channels.saveIntake({ dmPolicies: { chat: "owner" } }), /verified account/);
+  assert.throws(() => app.channels.saveIntake({ dmPolicies: { gone: "approved" } }), /no longer connected/);
+  assert.equal(app.channels.saveIntake({ dmPolicies: { chat: "approved" } }).dmPolicies.chat, "approved");
+  saveChatIntake(app.store, app.runtime.owner, { dmPolicies: { chat: "owner" } });
+  const dm = { channel: "chat", chatId: "c1", chatKind: "direct", senderId: "friend", senderName: "Pat", text: "hello", addressed: true, messageId: "m1" };
+  assert.equal(await app.channels.handle(dm), "rejected");
+  assert.equal(sent.length, 0);
+  assert.deepEqual(readChatIntake(app.store, app.runtime.owner).dmPolicies, { chat: "owner" }, "the other fields kept");
 });

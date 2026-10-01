@@ -14,17 +14,22 @@ export const hintDue = ({ rank = "Bronze", tipsOn = true, lastHint = 0, at = Dat
 
 /**
  * The line to say, or null for nothing worth saying.
- * now: { waiting: [{ who }], lockdown, noModel, running: [{ who }], view, owner, keys: { palette, sideList },
+ * now: { waiting: [{ runId }], connection, gateway, lockdown, noModel, failed, running: [{ id }], view, owner, keys,
  *        rank, tipsOn, lastHint, at }; `words(key, values)` puts a line into the window's language.
  */
 export function petLine(now, words) {
-  const waiting = now.waiting?.[0];
-  if (waiting) return { kind: "news", text: words("window.shell.scene.who-needs-a-yes-its-in", { who: waiting.who || "Branch" }) };
-  if (now.lockdown) return { kind: "news", text: words("window.shell.scene.lockdown-on") };
-  if (now.owner && now.noModel) return { kind: "news", text: words("window.shell.scene.no-model") };
+  const news = (key, message, values) => ({ kind: "news", key, text: words(message, values) });
+  if (now.connection === false) return news("offline", "window.shell.scene.connection-away");
+  const waiting = now.waiting ?? [];
+  if (waiting.length) return news(`waiting:${waiting.map((w) => w.runId).sort().join(",")}`, "window.shell.scene.answer-waiting");
+  if (now.lockdown) return news("lockdown", "window.shell.scene.lockdown-on");
+  if (now.owner && now.noModel) return news("no-model", "window.shell.scene.no-model");
+  if (now.owner && now.gateway?.problem) return news("gateway-problem", "window.shell.scene.gateway-problem");
+  if (now.failed) return news(`failed:${now.failed}`, "window.shell.scene.failed-here");
   const running = now.running ?? [];
-  if (running.length === 1) return { kind: "news", text: words("window.shell.scene.working-one", { who: running[0].who || "Branch" }) };
-  if (running.length > 1) return { kind: "news", text: words("window.shell.scene.working-many", { count: running.length }) };
+  if (running.length) return news(`running:${running.map((r) => r.id).sort().join(",")}`, running.length === 1 ? "window.shell.scene.working-one-safe" : "window.shell.scene.working-count", { count: running.length });
+  if (now.owner && now.view === "settings" && now.settingsPage === "gateway" && now.gateway?.supervised === false)
+    return news("gateway-unsupervised", "window.shell.scene.gateway-unsupervised");
   return hintLine(now, words);
 }
 
@@ -37,7 +42,9 @@ export function hintLine(now, words) {
 /* The hint for where the owner is. Each names only what this window really does there. */
 function hintFor(now) {
   if (now.view === "settings") return now.owner ? ["window.shell.scene.search-settings"] : ["window.shell.scene.hover-anything-to-see-what-it"];
-  if (now.view === "chat" && now.keys?.palette) return ["window.shell.scene.find-anything", { key: now.keys.palette }];
+  if (now.view === "chat" && now.keys?.focusPrompt) return ["window.shell.scene.focus-message", { key: now.keys.focusPrompt }];
   if (now.view === "chat" && now.keys?.sideList) return ["window.shell.scene.hide-list", { key: now.keys.sideList }];
+  if (now.view === "inbox") return ["window.shell.scene.inbox-request"];
+  if (now.keys?.palette) return ["window.shell.scene.find-anything", { key: now.keys.palette }];
   return ["window.shell.scene.hover-anything-to-see-what-it"];
 }
