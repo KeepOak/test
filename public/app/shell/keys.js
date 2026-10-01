@@ -8,7 +8,10 @@ import { E } from "../core/state.js";
 
 const MAC = /Mac/.test(navigator.platform);
 const FIRST = { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", stopTask: "Ctrl+Shift+S", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab",
-  previousConversation: "Ctrl+Shift+Tab", focusPrompt: "Ctrl+L", searchHistory: "Ctrl+Shift+F" };
+  previousConversation: "Ctrl+Shift+Tab", focusPrompt: "Ctrl+L", searchHistory: "Ctrl+Shift+F", lockdownOn: "Ctrl+Shift+L" };
+/* Multiple default chords approach: Hermes keybinds/actions.ts (Nous Research, MIT,
+   a9a54245b2311c705d29050b7f9868c015917aec). Original Branch compatibility layer. */
+const ALIASES = { sidePane: ["Ctrl+J"] };
 export const K = { keys: null, defaults: null, asked: false };
 const MODS = ["Ctrl", "Control", "Alt", "Shift"];
 const CODES = { Comma: ",", Period: ".", Slash: "/", Semicolon: ";", Space: "Space", Enter: "Enter" };
@@ -35,7 +38,16 @@ function same(combo) {
 
 export const binding = (action) => (K.keys ? K.keys[action] ?? "" : FIRST[action] ?? "");
 export const defaultOf = (action) => (K.defaults ? K.defaults[action] ?? "" : FIRST[action] ?? "");
-export const pressed = (e, action) => { const b = binding(action); return !!b && same(comboOf(e)) === same(b); };
+/** A custom primary or explicit unbind replaces all defaults; aliases give way to another action's primary. */
+export function bindings(action) {
+  const primary = binding(action);
+  if (!primary) return [];
+  if (same(primary) !== same(defaultOf(action))) return [primary];
+  const actions = Object.keys(K.keys ?? K.defaults ?? FIRST);
+  const aliases = (ALIASES[action] ?? []).filter((combo) => !actions.some((other) => other !== action && same(binding(other)) === same(combo)));
+  return [primary, ...aliases];
+}
+export const pressed = (e, action) => bindings(action).some((b) => same(comboOf(e)) === same(b));
 /* How a key is shown: the engine's "Ctrl" is the computer's main key, Command on a Mac, so a Mac shows it as Cmd.
    Only the display changes; what is kept and compared stays the engine's own writing. */
 const shown = (part) => (MAC && part === "Ctrl" ? "Cmd" : part);
@@ -45,7 +57,7 @@ export const spoken = (combo) => String(combo).split("+").map(shown).join(" ");
 /* The same keys for aria-keyshortcuts: the main key is Meta on a Mac and Control elsewhere; a Mac's own Control stays. */
 const ARIA = { Ctrl: MAC ? "Meta" : "Control", Control: "Control", Alt: "Alt", Shift: "Shift" };
 export const ariaKeys = (combo) => String(combo).split("+").filter(Boolean).map((x) => ARIA[x] ?? x).join("+");
-export const usedBy = (combo, except) => Object.keys(K.keys ?? FIRST).find((a) => a !== except && binding(a) && same(binding(a)) === same(combo));
+export const usedBy = (combo, except) => Object.keys(K.keys ?? K.defaults ?? FIRST).find((a) => a !== except && bindings(a).some((b) => same(b) === same(combo)));
 
 export async function loadKeys() {
   if (K.asked || !E.loaded) return;

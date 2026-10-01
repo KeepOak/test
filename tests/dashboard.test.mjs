@@ -515,3 +515,23 @@ test("Automations › Pause all works the same with the dashboard on", async (t)
   const put = await fetch(f.server.url + "/api/dashboard/automations", { method: "PUT", headers: { authorization: `Bearer ${f.server.token}` } });
   assert.equal(put.status, 405);
 });
+
+test("PLAT-014: a body that is not a restart request restarts nothing, and an idle restart holds when a task starts in the gap", async (t) => {
+  const f = await fixture(t);
+  const sent = [];
+  const request = { method: "POST", headers: {} };
+  const deps = {
+    platform: "linux", env: { INVOCATION_ID: "x" }, pid: 4242,
+    running: async () => ({ mode: "daemon", pid: 4242, port: 1, url: "", version: "1", startedAt: new Date().toISOString() }),
+    signal: (pid, name) => sent.push(["signal", pid, name]),
+    setExitCode: (code) => sent.push(["exit", code]),
+  };
+  const context = (readBody) => ({ dataDir: join(f.root, "data"), access: "full", readBody, deps });
+  await assert.rejects(dashboardApi(f.app, request, "/api/dashboard/restart", context(async () => { throw new SyntaxError("not JSON"); })));
+  await assert.rejects(dashboardApi(f.app, request, "/api/dashboard/restart", context(async () => ({ whenIdle: "soon" }))));
+  assert.deepEqual(await dashboardApi(f.app, request, "/api/dashboard/restart", context(async () => ({ whenIdle: true }))), { restarting: true });
+  const run = f.app.store.createRun(f.owner, "started in the gap");
+  f.app.store.event(run.id, "run.started", { source: "owner", parentRunId: null });
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.deepEqual(sent, [], "nothing was stopped");
+});

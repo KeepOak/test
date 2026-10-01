@@ -1,3 +1,4 @@
+import { processRunning } from "./process-running.mjs";
 /**
  * A background Beta build stays out of the owner's way (the owner, 2026-09-27: "when my app is in the middle of updating
  * in the background everything is slow and my computer is crying"). The build runs in a process of its own that lowers
@@ -266,7 +267,7 @@ test("the new version's check is started by a go-between, never by the app itsel
     assert.match(slow.detail, /it took too long and was stopped/);
     const { pid } = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(join(dir, "hang.pid"), "utf8")));
     let alive = true;
-    for (let i = 0; i < 50 && alive; i++) { try { process.kill(pid, 0); await wait(100); } catch { alive = false; } }
+    for (let i = 0; i < 50 && alive; i++) { try { alive = processRunning(pid); if (alive) await wait(100); } catch { alive = false; } }
     assert.equal(alive, false, "the new version stopped with it");
     const gone = await runCanary({ engine: { executable: join(dir, "no-such-program.exe"), script: pass.script }, dataCopy: await copy("c") });
     assert.match(gone.detail, /did not finish its check \(it could not be started: /);

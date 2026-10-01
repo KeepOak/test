@@ -15,8 +15,8 @@ import { api, origin } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
 import { logo } from "../core/logos.js";
-import { t, language, LANGUAGES } from "../../i18n.js";
-import { canSpeak, chooseLanguage } from "../shell/language.js";
+import { t, language } from "../../i18n.js";
+import { canSpeak, chooseLanguage, languageChoices } from "../shell/language.js";
 import { localPicker, freshPick, initLocalPick, helloAgain } from "./localpick.js";
 import { newConversationMode } from "../chat/chips.js"; // the mode a new conversation's first message carries
 import { sendBackup } from "../settings/more18.js"; // "Bring back your Branch", the same restore Settings › Accounts offers
@@ -42,19 +42,15 @@ const TEMPLATES = [
   ["window.flows.tmpl.trip", "window.flows.tmpl.trip-job", "#8A5AA8", 3],
 ];
 /* The language comes first (the owner's call). Only languages with words on file are listed (i18n.js LANGUAGES, the
-   locale files), so one appears as soon as its file does; each is named in its own language by the browser
-   (Intl.DisplayNames), never written here. The one shown is the one in force. */
-const ownName = (code) => {
-  const name = new Intl.DisplayNames([code], { type: "language" }).of(code) ?? code;
-  return name.charAt(0).toLocaleUpperCase(code) + name.slice(1);
-};
+   locale files), so one appears as soon as its file does; each keeps its own-language label and any translation notice.
+   The one shown is the one in force. */
 
 const pressed = (on) => `aria-pressed="${on}"`;
 const pose = (i) => i ? `<span class="mark mark-face ob-pose11" data-css="animation:none" aria-hidden="true"></span>` : "";
 
 function languageControl() {
   const now = language();
-  return `<div class="ctl ob-lang"><b>${t("appearance.language")}</b><span class="right">${gsel({ id: "ob-lang", sw: "ob-lang", label: t("appearance.language"), options: LANGUAGES.map(({ id }) => [id, ownName(id)]), value: now })}</span></div>`;
+  return `<div class="ctl ob-lang"><b>${t("appearance.language")}</b><span class="right">${gsel({ id: "ob-lang", sw: "ob-lang", label: t("appearance.language"), options: languageChoices(), value: now })}</span></div>`;
 }
 
 function welcome(o) {
@@ -273,24 +269,58 @@ async function close() {
 
 /* Leaving "Your first Trunks" makes each picked template a Trunk, skipping names that already exist. Picking one is
    asking for Trunks, so they are switched on first if they are off. */
-async function makeTrunks(o) {
+function makeTrunks(o) {
+  // Several exit controls can be pressed while a request is pending. Share the same creation pass.
+  if (o.makingTrunks) return o.makingTrunks;
+  o.makingTrunks = createPickedTrunks(o).finally(() => { o.makingTrunks = null; });
+  return o.makingTrunks;
+}
+
+async function createPickedTrunks(o) {
   if (E.trunkModes.trunks === "off") await api("trunks/switch", { part: "trunks", mode: "on" });
+  const intents = o.trunkIntents ??= new Map();
+  // A resolved refresh can still contain an older roster. Read this one explicitly before any write,
+  // including after setup was reopened following a lost creation response.
+  const roster = await api("trunks");
+  if (!Array.isArray(roster.trunks)) throw new Error("The Trunk list could not be checked. Try again before creating Trunks.");
+  E.trunks = roster.trunks;
   const have = new Set(E.trunks.map((tr) => tr.name));
   for (const i of o.tpls) {
     const [name, description] = TEMPLATES[i].slice(0, 2).map((key) => t(key));
     const [, , colour, shape] = TEMPLATES[i];
-    if (have.has(name)) continue;
-    /* The create takes name, title and description; the template's face follows as an edit, as flows/trunk.js does. */
-    const { trunk } = await api("trunks", { name, description });
-    await api(`trunks/${encodeURIComponent(trunk.id)}`, { chosenColour: hex(colour), look: { ...lookOf(null), shape: SHAPE_NAMES[shape] } });
+    await createSelection(intents, `template:${i}`, { name, description }, have,
+      { chosenColour: hex(colour), look: { ...lookOf(null), shape: SHAPE_NAMES[shape] } });
   }
-  /* A proposal is made with exactly the fields Branch proposed, the owner's own create (as chat/mktrunk.js). */
   for (const p of o.proposals) {
-    if (o.picks.has(p.name) && !have.has(p.name)) await api("trunks", { name: p.name, title: p.title, description: p.description });
+    if (o.picks.has(p.name)) await createSelection(intents, `proposal:${p.name}`,
+      { name: p.name, title: p.title, description: p.description }, have);
   }
   o.tpls.clear();
   o.picks.clear();
+  intents.clear(); // completed intents must not suppress later, genuinely new selections
   await refresh().catch(() => {});
+}
+
+async function createSelection(intents, key, fields, have, look) {
+  let intent = intents.get(key);
+  if (!intent) {
+    if (have.has(fields.name)) return;
+    // Save the immutable request before sending: even a lost response retries this exact intent.
+    intent = { body: { ...fields, requestId: crypto.randomUUID() }, look };
+    intents.set(key, intent);
+  }
+  if (!intent.trunk) {
+    const { trunk } = await api("trunks", intent.body);
+    if (!trunk?.id) throw new Error("The Trunk creation reply was incomplete. Try again to check the same request.");
+    intent.trunk = trunk;
+  }
+  if (intent.look) {
+    await api(`trunks/${encodeURIComponent(intent.trunk.id)}`, intent.look);
+    delete intent.look;
+  }
+  have.add(intent.trunk.name);
+  // The acknowledged record is authoritative even if the following refresh cannot read the roster.
+  if (!E.trunks.some((tr) => tr.id === intent.trunk.id)) E.trunks.push(intent.trunk);
 }
 
 /* The trunk.propose calls in a conversation's replies, with their arguments; one whose arguments are not JSON proposed

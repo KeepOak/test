@@ -1,6 +1,6 @@
 /* Settings › Accounts: the engine's accounts in the order it uses them (GET /api/accounts), moving one up, the account
    menu (flows/account.js) and, at Advanced, selecting several and acting on all of them. Never shows a key. */
-import { level, E, refresh } from "../../core/state.js";
+import { level, E, S, refresh } from "../../core/state.js";
 import { esc, renderNow } from "../../core/dom.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
@@ -16,7 +16,11 @@ import { moreSections, loadMore, initMore } from "../more18.js"; // Finish setti
 let picked = null;
 const key = (a) => `${a.pool}/${a.id}`;
 
-export function load() { loadMore(); return loadAccounts(); }
+export function load() {
+  // Settings commits its destination after starting this page. Capture the metadata fence once that move is done.
+  queueMicrotask(() => { if (S.view === "settings" && S.setPage === "accounts") loadMore(); });
+  return loadAccounts();
+}
 
 /* QA retest 2026-09-28 (m8): "used next" is said of the account the next answer comes from: the first of the list of
    the model that answers now (GET /api/accounts pools[].answering), or that model itself when it is on this computer. A

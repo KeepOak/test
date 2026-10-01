@@ -188,10 +188,13 @@ test("left alone, every face, the pet and the scene fall asleep; after ten minut
     && [...document.querySelectorAll("video")].every((v) => v.paused) && !document.getAnimations().some((a) => a.playState === "running"));
   assert.equal(await playing(page), 0, "no loop plays after the long sleep");
   // Held still, a loop gives back its decoder: none has a frame loaded, and those that had played keep their loop's name.
-  const decoders = await page.evaluate(() => [...document.querySelectorAll("video")].map((v) => ({ ready: v.readyState, held: !!v.dataset.held17 })));
+  const decoders = await page.evaluate(() => [...document.querySelectorAll("video")].map((v) => ({ loop: v.getAttribute("src") ?? v.dataset.held17, ready: v.readyState, held: !!v.dataset.held17 })));
   assert.deepEqual(decoders.filter((v) => v.ready !== 0), [], "no held loop keeps a decoder");
   assert.ok(decoders.some((v) => v.held), "the loops that played were held, not only paused");
-  assert.equal(await page.evaluate(() => document.getAnimations().filter((a) => a.playState === "running").length), 0, "no CSS animation runs");
+  // Named, so a failure says what still moves (a transition of the pet's box slid it in on a redraw while it slept).
+  const running = await page.evaluate(() => document.getAnimations().filter((a) => a.playState === "running")
+    .map((a) => `${a.animationName ?? a.transitionProperty ?? "animation"} on .${[...a.effect?.target?.classList ?? []].join(".")}`));
+  assert.deepEqual(running, [], "no CSS animation runs");
   assert.deepEqual(errors, []);
 });
 
@@ -255,10 +258,11 @@ test("the first press wakes the window and still opens the conversation it press
 test("a Trunk at work never sleeps", async (t) => {
   const { page, errors, trunks, work } = await fixture(t);
   work();
-  await waitFor(page, (id) => document.querySelector(`#side [data-rk="t:${id}"]`)?.dataset.st === "work", trunks.Busy.id);
+  await waitFor(page, (id) => document.querySelector(`#side [data-rk="t:${id}"]`)?.dataset.st === "think", trunks.Busy.id);
+  await settled(page, trunks.Busy, /tide\/think/);
   await page.clock.fastForward(10 * MIN + 5000);
   await settled(page, trunks.Ledger, /ember\/sleep/);
-  assert.match(await loopOf(page, trunks.Busy), /tide\/work/, "its working loop stays");
+  assert.match(await loopOf(page, trunks.Busy), /tide\/think/, "its held model turn stays thinking and awake");
   assert.equal(await onFace(page, trunks.Busy, "rest"), false);
   assert.match(await loopOf(page, trunks.Ledger), /ember\/sleep/, "the others sleep");
   assert.deepEqual(errors, []);

@@ -239,6 +239,8 @@ function hanging(app, { link = true } = {}) {
   return { dispatches: 0, run(options) {
     this.dispatches++;
     const run = app.store.createRun(app.runtime.owner, "team parent", options.sessionId);
+    app.store.event(run.id, "run.started", { source: "owner", parentRunId: null,
+      permissions: app.registry.permissions(), deadlineMs: 30_000, depth: 0, delegates: false });
     if (link) options.onStarted(run);
     return new Promise(() => {});
   } };
@@ -443,9 +445,11 @@ test("a parent turn that asks the owner through a tool of its own waits for the 
 test("recovery carries on a team turn the task did name", async (t) => {
   const { app, parentRunId } = await crashedTurn(t);
   const resumed = [];
-  const runtime = new Proxy(app.runtime, { get: (target, key) => (key === "resume" ? (id) => { resumed.push(id); return Promise.resolve(); } : Reflect.get(target, key)) });
+  const runtime = new Proxy(app.runtime, { get: (target, key) => (key === "resume" ? (id, restriction, onAdmitted) => {
+    resumed.push(id); return target.resume(id, restriction, onAdmitted);
+  } : Reflect.get(target, key)) });
   const report = await recoverAfterRestart({ store: app.store, runtime, journal: app.neverBreak.journal, mode: "on" });
-  assert.deepEqual(report.filter((r) => r.runId === parentRunId).map((r) => r.outcome), ["resumed"]);
+  assert.deepEqual(report.filter((r) => r.runId === parentRunId).map((r) => r.outcome), ["resumed"], app.store.run(parentRunId)?.output);
   assert.deepEqual(resumed, [parentRunId]);
 });
 

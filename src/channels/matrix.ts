@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { matrixPictureContent } from "./matrix-picture.js";
+import { createHash, randomUUID } from "node:crypto";
 import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
-import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js";
+import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile, SendGate } from "./router.js";
 import { matrixHtml } from "./progress-render.js";
 import { handle } from "./email.js";
 import { ReactionAnswers } from "./reaction-answers.js";
@@ -43,9 +44,12 @@ const eventSchema = z.object({
 }).passthrough();
 const syncSchema = z.object({
   next_batch: z.string(),
+  account_data: z.object({ events: z.array(eventSchema).default([]) }).passthrough().optional(),
   rooms: z.object({
     join: z.record(z.string(), z.object({
       timeline: z.object({ events: z.array(eventSchema).default([]) }).passthrough().optional(),
+      state: z.object({ events: z.array(eventSchema).default([]) }).passthrough().optional(),
+      summary: z.object({ "m.joined_member_count": z.number().int().min(0).optional() }).passthrough().optional(),
     }).passthrough()).default({}),
   }).passthrough().optional(),
 }).passthrough();
@@ -63,12 +67,22 @@ export class MatrixAdapter implements ChannelAdapter {
   private loop: Promise<void> | null = null;
   private since: string | undefined;
   private encryptedSeen = 0;
+  readonly pictureViewOnly = true;
+  private readonly directPeers = new Map<string, string | null>();
+  private readonly encryptedRooms = new Set<string>();
+  private privacyOverflow = false;
+  private readonly memberCounts = new Map<string, number>();
+  private readonly pictures = new Map<string, { eventId: string; roomId: string; peer: string }>();
   /** Who wrote each recent message read here, so only its own sender's edit of it counts. */
   private readonly authors = new Map<string, string>();
   /** Room ids are longer than the delivery ledger allows, so long ones get a short handle. */
   private readonly rooms = new Map<string, string>();
   /** Original event ids are kept only for recent inbound messages, never accepted from a chat handle alone. */
-  private readonly received = new Map<string, { roomId: string; eventId: string }>();
+  private readonly received = new Map<string, { roomId: string; eventId: string; chatId: string }>();
+  /** Thread roots stay case-sensitive, following OpenClaw monitor/threads.ts (MIT); Branch-specific implementation. */
+  private readonly threads = new Map<string, string>();
+  private readonly eventChats = new Map<string, string>();
+  private readonly sentChats = new Map<string, string>();
   private readonly reactions = new Map<string, { emoji: string; eventId: string }>();
   constructor(private readonly options: MatrixOptions) {
     this.id = options.id;
@@ -139,6 +153,7 @@ export class MatrixAdapter implements ChannelAdapter {
     const body = syncSchema.parse(await response.json());
     const first = this.since === undefined;
     this.since = body.next_batch;
+    this.roomPrivacy(body);
     const messages: InboundMessage[] = [];
     for (const [roomId, room] of Object.entries(body.rooms?.join ?? {}))
       for (const event of room.timeline?.events ?? []) {
@@ -148,6 +163,36 @@ export class MatrixAdapter implements ChannelAdapter {
         if (inbound && !first) messages.push(inbound);
       }
     return messages;
+  }
+  /** Only this account's direct-room data plus a known two-member room can select the direct-chat path. */
+  private roomPrivacy(body: z.infer<typeof syncSchema>): void {
+    const direct = body.account_data?.events.find(event => event.type === "m.direct");
+    if (direct) {
+      this.directPeers.clear();
+      const parsed = z.record(z.string(), z.array(z.string().max(500)).max(1000)).safeParse(direct.content);
+      if (parsed.success) for (const [peer, rooms] of Object.entries(parsed.data).slice(0, 1000)) {
+        if (peer === this.options.userId) continue;
+        for (const room of rooms) {
+          if (this.directPeers.size >= 1000 && !this.directPeers.has(room)) continue;
+          const before = this.directPeers.get(room);
+          this.directPeers.set(room, before === undefined || before === peer ? peer : null);
+        }
+      }
+    }
+    for (const [roomId, room] of Object.entries(body.rooms?.join ?? {})) {
+      const events = [...room.state?.events ?? [], ...room.timeline?.events ?? []];
+      if (events.some(event => event.type === "m.room.encryption" || event.type === "m.room.encrypted")) {
+        if (this.encryptedRooms.size >= 1000 && !this.encryptedRooms.has(roomId)) this.privacyOverflow = true;
+        else this.encryptedRooms.add(roomId);
+      }
+      const count = room.summary?.["m.joined_member_count"];
+      if (count !== undefined) this.memberCounts.set(roomId, count);
+      else if (room.timeline?.limited === true || events.some(event => event.type === "m.room.member")) this.memberCounts.delete(roomId);
+    }
+    while (this.memberCounts.size > 1000) this.memberCounts.delete(this.memberCounts.keys().next().value!);
+  }
+  private directRoom(roomId: string): boolean {
+    return !this.privacyOverflow && !!this.directPeers.get(roomId) && this.memberCounts.get(roomId) === 2 && !this.encryptedRooms.has(roomId);
   }
   /** Questions a 👍 / 👎 annotation may answer, by the question's own event id (src/channels/reaction-answers.ts). */
   private readonly answers = new ReactionAnswers();
@@ -161,11 +206,12 @@ export class MatrixAdapter implements ChannelAdapter {
       .safeParse((event.content as Record<string, unknown> | undefined)?.["m.relates_to"]);
     const sender = event.sender ?? "";
     if (!relates.success || !sender || sender === this.options.userId) return null;
-    const chatId = handle(roomId, "room"), senderId = handle(sender, "who");
+    const chatId = this.eventChats.get(`${roomId}:${relates.data.event_id}`), senderId = handle(sender, "who");
+    if (!chatId) return null;
     const said = this.answers.read(relates.data.event_id, chatId, senderId, relates.data.key);
     if (!said) return null;
     if (chatId !== roomId) this.rooms.set(chatId, roomId);
-    return { channel: this.id, chatId, chatKind: "group", chatTitle: roomId, senderId, senderName: sender, text: said, addressed: true,
+    return { channel: this.id, chatId, chatKind: this.directRoom(roomId) ? "direct" : "group", chatTitle: roomId, senderId, senderName: sender, text: said, addressed: true,
       messageId: handle(event.event_id ?? randomUUID(), "msg") };
   }
   /**
@@ -179,7 +225,11 @@ export class MatrixAdapter implements ChannelAdapter {
     if (!relates.success || !fresh.success) return null;
     const original = this.authors.get(relates.data.event_id);
     if (!original || original !== event.sender) return null; // only its own sender's edit of a message this adapter read
-    const inbound = this.inbound(roomId, { ...event, event_id: relates.data.event_id, content: fresh.data });
+    const chatId = this.eventChats.get(`${roomId}:${relates.data.event_id}`);
+    if (!chatId) return null;
+    const root = this.threads.get(chatId);
+    const renewed = root ? { ...fresh.data, "m.relates_to": { rel_type: "m.thread", event_id: root } } : fresh.data;
+    const inbound = this.inbound(roomId, { ...event, event_id: relates.data.event_id, content: renewed });
     return inbound ? { ...inbound, edited: true } : null;
   }
   private inbound(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
@@ -193,16 +243,16 @@ export class MatrixAdapter implements ChannelAdapter {
     }
     const text = event.content.body ?? "", sender = event.sender ?? "";
     if (!text || !sender || sender === this.options.userId) return null;
-    const chatId = handle(roomId, "room");
-    if (chatId !== roomId) this.rooms.set(chatId, roomId);
+    const chatId = this.chat(roomId, event.content);
     const messageId = handle(event.event_id ?? randomUUID(), "msg");
     if (event.event_id) {
-      this.received.set(messageId, { roomId, eventId: event.event_id });
+      this.received.set(messageId, { roomId, eventId: event.event_id, chatId });
+      this.rememberEvent(roomId, event.event_id, chatId);
       if (this.received.size > 200) this.received.delete(this.received.keys().next().value!);
     }
     const name = this.options.userId.split(":")[0]!.replace(/^@/, "");
     return {
-      channel: this.id, chatId, chatKind: "group", chatTitle: roomId,
+      channel: this.id, chatId, chatKind: this.directRoom(roomId) ? "direct" : "group", chatTitle: roomId,
       senderId: handle(sender, "who"), senderName: sender, text,
       addressed: text.includes(this.options.userId) || text.includes(name),
       messageId,
@@ -216,8 +266,12 @@ export class MatrixAdapter implements ChannelAdapter {
     const content = event.content!, sender = event.sender ?? "";
     const mxc = /^mxc:\/\/([^/]+)\/([A-Za-z0-9_-]+)$/.exec(content.url ?? "");
     if (!mxc || !sender || sender === this.options.userId) return null;
-    const chatId = handle(roomId, "room");
-    if (chatId !== roomId) this.rooms.set(chatId, roomId);
+    const chatId = this.chat(roomId, content);
+    if (event.event_id) {
+      this.received.set(handle(event.event_id, "msg"), { roomId, eventId: event.event_id, chatId });
+      if (this.received.size > 200) this.received.delete(this.received.keys().next().value!);
+      this.rememberEvent(roomId, event.event_id, chatId);
+    }
     const mediaType = content.info?.mimetype?.split(";")[0] ?? (content.msgtype === "m.image" ? "image/jpeg" : "application/octet-stream");
     const host = new RegExp(`^${new URL(this.base).hostname.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
     const bytes = () => fetchCapped(this.fetch, `${this.base}/_matrix/client/v1/media/download/${encodeURIComponent(mxc[1]!)}/${encodeURIComponent(mxc[2]!)}`,
@@ -233,6 +287,15 @@ export class MatrixAdapter implements ChannelAdapter {
   readonly maxFileBytes = 50 * 1024 * 1024;
   /** CHAT-105: a file into the room, uploaded to this homeserver first, as a picture, video, audio or file. */
   async sendFile(chatId: string, file: OutgoingFile): Promise<string | undefined> {
+    const uri = await this.uploadFile(file);
+    const kind = attachmentKind(file.mediaType);
+    const msgtype = file.mediaType.startsWith("audio/") ? "m.audio" : kind === "picture" ? "m.image" : kind === "video" ? "m.video" : "m.file";
+    const eventId = await this.put(chatId, { msgtype, body: file.name, url: uri, info: { mimetype: file.mediaType, size: file.bytes.byteLength },
+      ...(file.voice ? { "org.matrix.msc3245.voice": {}, "org.matrix.msc1767.audio": {} } : {}) });
+    if (file.caption) await this.send(chatId, file.caption);
+    return eventId ? handle(eventId, "msg") : undefined;
+  }
+  private async uploadFile(file: OutgoingFile): Promise<string> {
     const upload = await this.fetch(`${this.base}/_matrix/media/v3/upload?filename=${encodeURIComponent(file.name)}`, {
       method: "POST", headers: { authorization: `Bearer ${this.options.accessToken}`, "content-type": file.mediaType },
       body: new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), redirect: "error", signal: AbortSignal.timeout(120000),
@@ -240,12 +303,47 @@ export class MatrixAdapter implements ChannelAdapter {
     if (upload.status === 413) throw new Error("The Matrix homeserver said the file is too large");
     if (!upload.ok) throw new Error(`The Matrix homeserver refused the file (${upload.status})`);
     const { content_uri: uri } = z.object({ content_uri: z.string().regex(/^mxc:\/\//) }).passthrough().parse(await upload.json());
-    const kind = attachmentKind(file.mediaType);
-    const msgtype = file.mediaType.startsWith("audio/") ? "m.audio" : kind === "picture" ? "m.image" : kind === "video" ? "m.video" : "m.file";
-    const eventId = await this.put(chatId, { msgtype, body: file.name, url: uri, info: { mimetype: file.mediaType, size: file.bytes.byteLength },
-      ...(file.voice ? { "org.matrix.msc3245.voice": {}, "org.matrix.msc1767.audio": {} } : {}) });
-    if (file.caption) await this.send(chatId, file.caption);
-    return eventId ? handle(eventId, "msg") : undefined;
+    return uri;
+  }
+  /** Recheck current membership and encryption before and after an upload. */
+  private async pictureRoom(chatId: string, expectedPeer?: string): Promise<{ roomId: string; peer: string }> {
+    const roomId = this.rooms.get(chatId) ?? chatId, peer = this.directPeers.get(roomId);
+    if (!peer || (expectedPeer && peer !== expectedPeer) || !this.directRoom(roomId)) throw new Error("Matrix pictures require a known unencrypted direct room.");
+    const base = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}`;
+    const options = { headers: { authorization: `Bearer ${this.options.accessToken}` }, redirect: "error" as const, signal: AbortSignal.timeout(20000) };
+    const members = await this.fetch(`${base}/joined_members`, options);
+    if (!members.ok) throw new Error("Matrix could not verify the picture audience.");
+    const joined = z.object({ joined: z.record(z.string(), z.unknown()) }).parse(await members.json()).joined;
+    if (Object.keys(joined).length !== 2 || !(this.options.userId in joined) || !(peer in joined)) throw new Error("Matrix pictures are limited to two-member direct rooms.");
+    const encryption = await this.fetch(`${base}/state/m.room.encryption`, options);
+    const missing = encryption.status === 404 && z.object({ errcode: z.literal("M_NOT_FOUND") }).passthrough().safeParse(await encryption.json()).success;
+    if (!missing || !this.directRoom(roomId) || this.directPeers.get(roomId) !== peer) throw new Error("Matrix pictures require a currently unencrypted direct room.");
+    return { roomId, peer };
+  }
+  private async pictureContent(chatId: string, file: OutgoingFile): Promise<{ roomId: string; peer: string; content: Record<string, unknown> }> {
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.mediaType) || !file.bytes.byteLength || file.bytes.byteLength > 2 * 1024 * 1024)
+      throw new Error("Matrix live pictures must be supported images of at most 2 MB.");
+    const { roomId, peer } = await this.pictureRoom(chatId), url = await this.uploadFile(file);
+    if ((await this.pictureRoom(chatId, peer)).roomId !== roomId) throw new Error("The Matrix picture audience changed.");
+    return { roomId, peer, content: matrixPictureContent(file, url) };
+  }
+  /** View-only: Matrix has no inline owner browser control buttons. */
+  async sendPicture(chatId: string, file: OutgoingFile, _buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+    const { roomId, peer, content } = await this.pictureContent(chatId, file), reply = replyToMessageId ? this.received.get(replyToMessageId) : undefined;
+    const eventId = await this.put(chatId, { ...content, ...(reply?.roomId === roomId ? { "m.relates_to": { "m.in_reply_to": { event_id: reply.eventId } } } : {}) });
+    if (!eventId) throw new Error("Matrix did not identify the picture it sent.");
+    const short = handle(eventId, "msg"); this.pictures.set(short, { roomId, eventId, peer });
+    if (this.pictures.size > 200) this.pictures.delete(this.pictures.keys().next().value!);
+    return short;
+  }
+  async editPicture(chatId: string, messageId: string, file: OutgoingFile, _buttons: { label: string; value: string }[]): Promise<void> {
+    const original = this.pictures.get(messageId), roomId = this.rooms.get(chatId) ?? chatId;
+    if (!original || original.roomId !== roomId) throw new Error("Matrix: that picture was not sent in this room.");
+    if (this.directPeers.get(roomId) !== original.peer) throw new Error("The Matrix direct-room peer changed.");
+    const { content, peer } = await this.pictureContent(chatId, file);
+    if (peer !== original.peer) throw new Error("The Matrix direct-room peer changed.");
+    if (!await this.put(chatId, { ...content, body: `* ${content.body}`, "m.new_content": content,
+      "m.relates_to": { rel_type: "m.replace", event_id: original.eventId } })) throw new Error("Matrix did not identify the picture edit.");
   }
   /** CHAT-094: a spoken reply, as an audio message clients show as a voice message. */
   async sendVoice(chatId: string, audio: Uint8Array, mediaType: string): Promise<string | undefined> {
@@ -268,6 +366,7 @@ export class MatrixAdapter implements ChannelAdapter {
     const target = this.received.get(messageId), roomId = this.rooms.get(chatId) ?? chatId;
     if (!target || target.roomId !== roomId) throw new Error("Matrix: that message is not in this room");
     const prior = this.reactions.get(messageId);
+    if (target.chatId !== chatId) throw new Error("Matrix: that message is not in this thread");
     if (prior?.emoji === emoji) return;
     if (prior) { await this.redact(roomId, prior.eventId); this.reactions.delete(messageId); }
     const eventId = await this.put(chatId, { "m.relates_to": { rel_type: "m.annotation", event_id: target.eventId, key: emoji } }, "m.reaction");
@@ -275,43 +374,51 @@ export class MatrixAdapter implements ChannelAdapter {
     this.reactions.set(messageId, { emoji, eventId });
     if (this.reactions.size > 200) this.reactions.delete(this.reactions.keys().next().value!);
   }
-  private async redact(roomId: string, eventId: string): Promise<void> {
+  /** A `gate` (an owner's own-message delete) is checked last before sending, and its signal aborts the request. */
+  private async redact(roomId: string, eventId: string, gate?: SendGate): Promise<void> {
     const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/redact/${encodeURIComponent(eventId)}/${randomUUID()}`;
+    const timeout = AbortSignal.timeout(20000), signal = gate ? AbortSignal.any([timeout, gate.signal]) : timeout;
+    gate?.check();
     const response = await this.fetch(address, { method: "PUT", headers: { authorization: `Bearer ${this.options.accessToken}`, "content-type": "application/json" },
-      body: "{}", redirect: "error", signal: AbortSignal.timeout(20000) });
+      body: "{}", redirect: "error", signal });
     if (response.status === 429) {
       const body = z.object({ retry_after_ms: z.number().optional() }).passthrough().safeParse(await response.json().catch(() => ({})));
       throw Object.assign(new Error("Matrix asked us to slow down"), { retryAfter: ((body.success ? body.data.retry_after_ms : undefined) ?? 1000) / 1000 });
     }
     if (!response.ok) throw new Error(`Matrix refused to replace the status reaction (${response.status})`);
   }
-  async send(chatId: string, text: string, replyTo?: string, format?: MessageFormat): Promise<string | undefined> {
+  async send(chatId: string, text: string, replyTo?: string, format?: MessageFormat, gate?: SendGate): Promise<string | undefined> {
     // CHAT-116: a reply quotes the person's own message (m.in_reply_to), only one received in this same room.
     const quoted = replyTo ? this.received.get(replyTo) : undefined;
-    const inReply = quoted && quoted.roomId === (this.rooms.get(chatId) ?? chatId) ? { "m.relates_to": { "m.in_reply_to": { event_id: quoted.eventId } } } : {};
-    const eventId = await this.put(chatId, { ...MatrixAdapter.content(text.slice(0, this.maxTextLength), format), ...inReply });
+    const inReply = quoted && quoted.chatId === chatId ? { "m.relates_to": { "m.in_reply_to": { event_id: quoted.eventId } } } : {};
+    const eventId = await this.put(chatId, { ...MatrixAdapter.content(text.slice(0, this.maxTextLength), format), ...inReply }, "m.room.message", gate);
     if (!eventId) return undefined;
     const short = handle(eventId, "msg");
     this.sent.set(short, eventId);
-    if (this.sent.size > 200) this.sent.delete(this.sent.keys().next().value!);
+    this.sentChats.set(short, chatId);
+    this.rememberEvent(this.rooms.get(chatId) ?? chatId, eventId, chatId);
+    if (this.sent.size > 200) {
+      const oldest = this.sent.keys().next().value!;
+      this.sent.delete(oldest); this.sentChats.delete(oldest);
+    }
     return short;
   }
   /**
    * Replaces the words of a message this adapter sent, the Matrix way: a new event that says it replaces the old one
    * (`m.replace`), which every client shows in the old one's place.
    */
-  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
+  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat, gate?: SendGate): Promise<void> {
     const eventId = this.sent.get(messageId);
-    if (!eventId) throw new Error("Matrix: that message was not sent from here, so it cannot be edited");
-    const content = MatrixAdapter.content(text.slice(0, this.maxTextLength), format);
+    if (!eventId || this.sentChats.get(messageId) !== chatId) throw new Error("Matrix: that message was not sent in this conversation, so it cannot be edited");
+    const content = this.threadContent(chatId, MatrixAdapter.content(text.slice(0, this.maxTextLength), format));
     await this.put(chatId, { ...content, body: `* ${content.body}`, "m.new_content": content,
-      "m.relates_to": { rel_type: "m.replace", event_id: eventId } });
+      "m.relates_to": { rel_type: "m.replace", event_id: eventId } }, "m.room.message", gate);
   }
   /** Redacts an event this adapter sent (only its own, by the handle it gave it). */
-  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+  async deleteMessage(chatId: string, messageId: string, gate?: SendGate): Promise<void> {
     const eventId = this.sent.get(messageId);
-    if (!eventId) throw new Error("Matrix: that message was not sent from here, so it cannot be removed");
-    await this.redact(this.rooms.get(chatId) ?? chatId, eventId);
+    if (!eventId || this.sentChats.get(messageId) !== chatId) throw new Error("Matrix: that message was not sent in this conversation, so it cannot be removed");
+    await this.redact(this.rooms.get(chatId) ?? chatId, eventId, gate);
   }
   /** Plain words, with the code as Matrix's HTML beside them when there is any. */
   private static content(text: string, format?: MessageFormat): Record<string, unknown> {
@@ -343,19 +450,48 @@ export class MatrixAdapter implements ChannelAdapter {
     if (!relates.success || !sender || sender === this.options.userId) return null;
     const value = this.questions.get(relates.data.event_id)?.get(relates.data.key.replace(/️/g, ""));
     if (!value) return null;
-    const chatId = handle(roomId, "room");
-    if (chatId !== roomId) this.rooms.set(chatId, roomId);
-    return { channel: this.id, chatId, chatKind: "group", chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
+    const chatId = this.eventChats.get(`${roomId}:${relates.data.event_id}`);
+    if (!chatId) return null;
+    return { channel: this.id, chatId, chatKind: this.directRoom(roomId) ? "direct" : "group", chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
       text: value, addressed: true, messageId: handle(event.event_id ?? randomUUID(), "msg") };
+  }
+  /** A thread is its own router conversation; room-only messages keep their existing address. */
+  private chat(roomId: string, content?: Record<string, unknown>): string {
+    const relation = z.object({ rel_type: z.literal("m.thread"), event_id: z.string().min(1).max(300) }).passthrough()
+      .safeParse(content?.["m.relates_to"]);
+    const root = relation.success ? relation.data.event_id : undefined;
+    const chatId = root ? `thread:${createHash("sha256").update(JSON.stringify([roomId, root])).digest("hex").slice(0, 32)}` : handle(roomId, "room");
+    this.rooms.set(chatId, roomId);
+    if (root) this.threads.set(chatId, root);
+    return chatId;
+  }
+  private rememberEvent(roomId: string, eventId: string, chatId: string): void {
+    this.eventChats.set(`${roomId}:${eventId}`, chatId);
+    if (this.eventChats.size > 400) this.eventChats.delete(this.eventChats.keys().next().value!);
+  }
+  /** Replies, files and progress stay in their thread. Edits keep their m.replace relation. */
+  private threadContent(chatId: string, content: Record<string, unknown>): Record<string, unknown> {
+    const root = this.threads.get(chatId);
+    if (!root) return content;
+    const relation = content["m.relates_to"] as Record<string, unknown> | undefined;
+    if (relation?.rel_type === "m.replace") return content;
+    return { ...content, "m.relates_to": { ...relation, rel_type: "m.thread", event_id: root,
+      is_falling_back: !relation?.["m.in_reply_to"],
+      "m.in_reply_to": relation?.["m.in_reply_to"] ?? { event_id: root } } };
   }
   /** Questions this adapter asked with reactions: the question's event, and what each reaction on it answers. */
   private readonly questions = new Map<string, Map<string, string>>();
-  private async put(chatId: string, content: Record<string, unknown>, eventType = "m.room.message"): Promise<string | undefined> {
+  /** A `gate` (an owner's own-message edit) is checked last before sending, and its signal aborts the request. */
+  private async put(chatId: string, content: Record<string, unknown>, eventType = "m.room.message", gate?: SendGate): Promise<string | undefined> {
+    if (chatId.startsWith("thread:") && !this.threads.has(chatId))
+      throw new Error("Matrix: this thread has not been read since reconnecting; send a message there first");
     const roomId = this.rooms.get(chatId) ?? chatId;
     const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/${encodeURIComponent(eventType)}/${randomUUID()}`;
+    const timeout = AbortSignal.timeout(20000), signal = gate ? AbortSignal.any([timeout, gate.signal]) : timeout;
+    gate?.check();
     const response = await this.fetch(address, {
       method: "PUT", headers: { authorization: `Bearer ${this.options.accessToken}`, "content-type": "application/json" },
-      body: JSON.stringify(content), redirect: "error", signal: AbortSignal.timeout(20000),
+      body: JSON.stringify(eventType === "m.room.message" ? this.threadContent(chatId, content) : content), redirect: "error", signal,
     });
     if (response.status === 429) {
       const wait = z.object({ retry_after_ms: z.number().optional() }).passthrough().safeParse(await response.json().catch(() => ({})));

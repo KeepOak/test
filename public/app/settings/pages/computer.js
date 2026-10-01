@@ -8,7 +8,10 @@
    part background-screen (POST /api/reach/switch). Lockdown still wins over each: the engine reads them as off and refuses
    the tools while it is on. "Ask before opening an app it hasn’t used" is the engine's own switch for it
    (GET/POST /api/desktop/app-ask, src/desktop-app-ask.ts): a program a Trunk has never opened is asked about once, for
-   that Trunk; the approval preset is not touched. Borrowing your own browser stays greyed.
+   that Trunk; the approval preset is not touched. Borrowing your own browser stays greyed: it is lent one task at a
+   time, never as a standing choice. The browser's own switches are the owner's comfort card "browser" (GET/POST
+   /api/comfort): Ask before a site it hasn't visited, Open the browser full size, Record browser tasks and Number the
+   clickable things; Run the browser in a sandbox is the sandbox's own mode (GET/POST /api/browser/container).
    Paired devices (GET /api/devices): "Stop lending" switches off everything a phone lends (POST
    /api/devices/<id>/switch, on: false, for each), and "Remove" unpairs a device after a confirm (POST
    /api/devices/<id>/revoke; its key stops working at once). Both are the owner's alone in the engine.
@@ -26,12 +29,14 @@ import { onPaired } from "../../flows/pair.js";
 import { glyphSvg, hexOr } from "../../flows/name-device.js"; // finish-soon-a
 import { t } from "../../../i18n.js";
 import { trunkRow17, settingsCloudOffer, loadAll as loadComputers17, viewOf } from "../../flows/computers17.js"; // pass 17 part D §9, §1
-import { id15, sw15, btn15, code15, seg15, sec15 } from "../rows15.js";
+import { id15, sw15, btn15, code15, seg15, sec15, fact15 } from "../rows15.js";
 import { computer17 } from "../p17-more.js";
 import { siteRow, loadSites, initSites } from "../sites17.js"; // Site skills (siteb17)
 import { initCiSetup } from "../ci-setup.js"; // wire-greyed: Branch in CI › Copy the setup
 
-const D = { coding: null, notes: null, prs: null, devices: null, desktop: null, wall: null, reach: null, appAsk: null };
+const D = { coding: null, notes: null, prs: null, devices: null, desktop: null, wall: null, reach: null, appAsk: null, care: null, container: null };
+/* The owner's browser care card (src/comfort/settings.ts ComfortBrowserSchema); only the fields changed are sent. */
+const setCare = async (values) => { D.care = (await api("comfort", { card: "browser", values })).values?.browser ?? D.care; };
 const onMode = (mode) => (mode ? mode !== "off" : false);
 const coding = (part) => onMode(D.coding?.modes?.[part]);
 const setCoding = (part, on) => api("coding/switch", { part, mode: on ? "when-needed" : "off" });
@@ -53,13 +58,17 @@ const WIRES = {
   "c-ask": [() => D.appAsk?.on === true, (on) => api("desktop/app-ask", { on })],
   "f15-work-in-apps-in-the-background": [() => onMode(D.reach?.modes?.["background-screen"]),
     (on) => api("reach/switch", { part: "background-screen", mode: on ? "when-needed" : "off" })],
+  "b-new": [() => D.care?.askNewSites === true, (on) => setCare({ askNewSites: on })],
+  "b-watch": [() => D.care?.openFullSize === true, (on) => setCare({ openFullSize: on })],
+  "f15-record-browser-tasks": [() => D.care?.recordTasks === true, (on) => setCare({ recordTasks: on })],
+  "f15-number-the-clickable-things": [() => D.care?.numberMarks === true, (on) => setCare({ numberMarks: on })],
 };
 const sw = (title, sub) => sw15(title, sub, WIRES[id15(title)]?.[0]() ?? false);
 
 async function loadAll() {
-  const [c, n, p, d, desktop, wall, reach, appAsk] = await Promise.all(["coding", "browser/notes/settings", "developer/pull-requests", "devices", "desktop/settings", "os-sandbox", "reach", "desktop/app-ask"]
+  const [c, n, p, d, desktop, wall, reach, appAsk, comfort, container] = await Promise.all(["coding", "browser/notes/settings", "developer/pull-requests", "devices", "desktop/settings", "os-sandbox", "reach", "desktop/app-ask", "comfort", "browser/container"]
     .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
-  Object.assign(D, { coding: c, notes: n?.settings ?? null, prs: p, devices: d, desktop, wall, reach, appAsk });
+  Object.assign(D, { coding: c, notes: n?.settings ?? null, prs: p, devices: d, desktop, wall, reach, appAsk, care: comfort?.values?.browser ?? null, container });
   await loadSites();
   render();
   await loadComputers17();
@@ -69,7 +78,9 @@ export function init() {
   markLive(["sw:f15-page-notes-and-send-to-branch-", "sw:f15-try-ideas-on-a-branch", "sw:f15-check-and-format-files-after-editing",
     "sw:f15-draft-a-pull-request-from-a-task", "sw:f15-remember-the-shell", "sw:f15-read-a-file-before-editing-it",
     "sw:f15-keep-large-tool-outputs", "sw:f15-read-jupyter-notebooks", "sw:f15-review-checks-and-a-checklist-per-task",
-    "lend15", "dev-remove", "dev-remove-yes", "sw:c-screen", "sw:c-ask", "sw:f15-work-in-apps-in-the-background", "c-where"]);
+    "lend15", "dev-remove", "dev-remove-yes", "sw:c-screen", "sw:c-ask", "sw:f15-work-in-apps-in-the-background", "c-where",
+    "sw:b-new", "sw:b-watch", "sw:f15-record-browser-tasks", "sw:f15-number-the-clickable-things", "b-sandbox"]);
+  on("b-sandbox", (el) => sandbox(el.dataset.v));
   on("lend15", (el) => stopLending(el.dataset.v));
   initCiSetup();
   on("dev-remove", (el) => removeDialog(el.dataset.v));
@@ -83,10 +94,20 @@ export function init() {
     try { await wire[1](e.target.checked); } catch (error) { toast(error.message); }
     await loadAll();
   });
-  loadAll();
+  return loadAll();
 }
 
+/* The page's switches are drawn from what the engine keeps, so it is shown once its first read is back: drawn before,
+   every switch read off until the read arrived (settings.js waitFirst). */
+export const waitFirst = true;
+
 export async function load() { await loadAll(); }
+
+/* Run the browser in a sandbox: the sandbox's own three-way mode; the rest of its record (Docker or a server) is kept. */
+async function sandbox(mode) {
+  try { D.container = await api("browser/container", { mode }); } catch (error) { toast(error.message); }
+  await loadAll();
+}
 
 /* Where scripts run: the wall's whole record goes back with only its mode changed, as the route replaces it. */
 async function where(v) {
@@ -141,7 +162,7 @@ function onAComputer() {
   return `<div class="sec"><h2>${t("window.settings.computer.on-a-computer")}</h2><div class="ctl"><b>${t("window.settings.computer.see-the-screen-and-use-the")}</b><input class="sw" type="checkbox" id="c-screen" ${D.desktop?.enabled ? "checked" : ""} aria-label="${t("window.settings.computer.see-the-screen-and-use-the")}" data-sw="set"><small>${t("window.settings.computer.needed-for-apps-without-a-connection")}</small></div><div class="ctl"><b>${t("window.settings.computer.ask-before-opening-an-app-it")}</b><input class="sw" type="checkbox" id="c-ask" ${D.appAsk?.on ? "checked" : ""} aria-label="${t("window.settings.computer.ask-before-opening-an-app-it")}" data-sw="set"><small>${t("window.settings.computer.once-per-app-per-trunk")}</small></div>${seg15(t("settings.card.where-scripts-run"), sub, [["sealed", t("window.settings.computer.sealed-box")], ["this", t("dashboard.computer.title")]], cur, "c-where", "f15-where-scripts-run")}</div>`;
 }
 
-const BROWSER = () => `<div class="sec"><h2>${t("settingsGrown.bucket.computer.browser")}</h2>${seg15(t("window.settings.computer.which-browser"), t("window.settings.computer.its-own-profile-keeps-your-tabs"), [["own", t("window.settings.computer.branchs-own")], ["chrome", t("window.settings.computer.your-chrome")]], null, "seg", "f15-which-browser")}<div class="ctl"><b>${t("window.settings.computer.ask-before-a-site-it-hasnt")}</b><input class="sw" type="checkbox" id="b-new" aria-label="${t("window.settings.computer.ask-before-a-site-it-hasnt")}" data-sw="set"><small>${t("window.settings.computer.you-say-yes-once-per-site")}</small></div><div class="ctl"><b>${t("window.settings.computer.open-the-browser-full-size-when")}</b><input class="sw" type="checkbox" id="b-watch" aria-label="${t("window.settings.computer.open-the-browser-full-size-when")}" data-sw="set"><small>${t("window.settings.computer.otherwise-it-stays-small-in-the")}</small></div></div>`;
+const BROWSER = () => `<div class="sec"><h2>${t("settingsGrown.bucket.computer.browser")}</h2>${seg15(t("window.settings.computer.which-browser"), t("window.settings.computer.its-own-profile-keeps-your-tabs"), [["own", t("window.settings.computer.branchs-own")], ["chrome", t("window.settings.computer.your-chrome")]], null, "seg", "f15-which-browser")}<div class="ctl"><b>${t("window.settings.computer.ask-before-a-site-it-hasnt")}</b><input class="sw" type="checkbox" id="b-new" ${D.care?.askNewSites ? "checked" : ""} aria-label="${t("window.settings.computer.ask-before-a-site-it-hasnt")}" data-sw="set"><small>${t("window.settings.computer.you-say-yes-once-per-site")}</small></div><div class="ctl"><b>${t("window.settings.computer.open-the-browser-full-size-when")}</b><input class="sw" type="checkbox" id="b-watch" ${D.care?.openFullSize ? "checked" : ""} aria-label="${t("window.settings.computer.open-the-browser-full-size-when")}" data-sw="set"><small>${t("window.settings.computer.otherwise-it-stays-small-in-the")}</small></div></div>`;
 
 /* Phones lent to Branch: every paired phone, with what it lends in the engine's words, so one lending nothing can
    still be removed. A phone a Tailscale invitation let in has no device record (GET /api/devices doorPhones); it lends
@@ -192,7 +213,7 @@ async function removeDevice(id) {
 }
 
 const browserMore = () => sec15(t("window.settings.computer.the-browser-more"),
-  seg15(t("window.settings.computer.run-the-browser-in-a-sandbox"), "", [["off", t("accounts.switch.off")], ["when-needed", t("accounts.switch.when-needed")], ["on", t("accounts.switch.on")]], null, "seg", "f15-run-the-browser-in-a-sandbox")
+  seg15(t("window.settings.computer.run-the-browser-in-a-sandbox"), t("window.settings.computer.sandbox-sub"), [["off", t("accounts.switch.off")], ["when-needed", t("accounts.switch.when-needed")], ["on", t("accounts.switch.on")]], D.container?.mode ?? null, "b-sandbox", "f15-run-the-browser-in-a-sandbox")
   + sw("Record browser tasks", "A step-by-step trace you can replay.")
   + sw("Number the clickable things", "Faster and steadier on busy pages.")
   // Site skills: the websites the owner's skills know about, with See N and Forget (settings/sites17.js).
@@ -201,7 +222,7 @@ const browserMore = () => sec15(t("window.settings.computer.the-browser-more"),
 
 const code = () => sec15(t("window.settings.computer.code"),
   sw("Try ideas on a branch", "A plan can be tried, compared and merged; a forked conversation gets its own copy.")
-  + sw("Code map", "A ranked outline of a repository so a Trunk finds its way.")
+  + fact15("Code map", "f15-code-map")
   + sw("Check and format files after editing", "")
   + sw("AI! and AI? comments start tasks", "Write “AI! add tests” in a file and a Trunk picks it up.")
   + sw("Draft a pull request from a task", "Never merged by Branch.")

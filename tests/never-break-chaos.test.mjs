@@ -1,3 +1,4 @@
+import { processRunning } from "./process-running.mjs";
 /**
  * Never breaks: chaos. The engine and the gateway are killed at random points in a scripted task,
  * the gateway's settings are filled with rubbish, and the disk fills up part-way through — and every
@@ -56,7 +57,7 @@ async function folder(t, seed) {
   return root;
 }
 const exited = (child) => new Promise((done) => { if (child.exitCode !== null || child.signalCode !== null) done(); else child.once("exit", () => done()); });
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } };
+const alive = (pid) => processRunning(pid, () => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } });
 
 /**
  * What must be true however the task was cut off: nothing that reaches outside happened twice; a
@@ -69,7 +70,10 @@ async function checkOutcome(root, result, label) {
   const statuses = result.runs.map((run) => run.status);
   assert.ok(!statuses.includes("failed"), `${label}: a task failed: ${JSON.stringify(result.runs)}`);
   const finished = result.runs.some((run) => run.status === "completed" && run.output === "all done");
-  const asked = result.runs.some((run) => run.status === "needs_input" && /may already have happened/.test(run.output));
+  const asked = result.runs.some((run) => run.status === "needs_input" && (
+    /may already have happened/.test(run.output)
+    || (/The original task's Trunk scope is unavailable.*Reconcile it before continuing/.test(run.output)
+      && result.report.some((entry) => entry.runId === run.id && entry.outcome === "asked"))));
   assert.ok(finished || asked, `${label}: neither finished nor asked: ${JSON.stringify(result.runs)} ${JSON.stringify(result.report)}`);
   if (finished) {
     const seen = `${JSON.stringify(result.report)} ${JSON.stringify(result.steps)}`;

@@ -46,9 +46,26 @@ export async function orchestrationApi(
   }
   // Wave 8: the to-do list, and "Save as report" in its three forms.
   if (path.startsWith("/api/todos")) {
-    const answered = await todosApi(app.todos, owner, request, path, () => readBody(request),
-      (todo) => remindAbout(app.scheduler, app.runtime.context({}), todo));
-    return answered ?? notFound();
+    const scope = app.store.profiles.scope();
+    let revoked = request.aborted;
+    const revoke = () => { revoked = true; };
+    const stopProfile = app.store.profiles.onSwitched(revoke);
+    const stopLock = app.sessionLock.onLocked(revoke);
+    request.on("aborted", revoke);
+    const current = () => {
+      if (revoked || request.aborted || app.sessionLock.locked() || app.store.profiles.scope() !== scope)
+        throw new OrchestrationApiError(403, "The to-do request's original owner context is no longer available. Try again after unlocking Branch.");
+      app.store.profiles.requireOwner("The to-do list");
+    };
+    try {
+      current();
+      const answered = await todosApi(app.todos, owner, request, path, () => readBody(request),
+        (todo) => remindAbout(app.scheduler, app.runtime.context({}), todo), current);
+      current();
+      return answered ?? notFound();
+    } finally {
+      stopProfile(); stopLock(); request.off("aborted", revoke);
+    }
   }
   if (path.startsWith("/api/reports")) {
     const answered = await reportsApi(app.store, owner, request, path, () => readBody(request, 512_000));
@@ -113,7 +130,7 @@ async function deferredApi(
   }
   if (request.method === "POST" && path === "/api/deferred/settle") {
     const value = SettleDeferredSchema.parse(await readBody(request));
-    return app.runtime.settleDeferred(value.id, value.outcome);
+    return app.runtime.settleDeferred(value.id, value.outcome, value.action);
   }
   return notFound();
 }
@@ -162,6 +179,20 @@ async function pluginCatalogApi(
       throw error instanceof AddOnsApiError ? new OrchestrationApiError(error.status, error.message) : error;
     });
   if (request.method !== "POST") return notFound();
+  if (path === "/api/plugin-catalog/evaluate") return app.pluginEvaluations.evaluate(await readBody(request, 1_000_000));
+  if (path === "/api/plugin-catalog/status") {
+    const body = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/) }).strict().parse(await readBody(request));
+    return app.pluginEvaluations.status(body.id);
+  }
+  if (path === "/api/plugin-catalog/promote") {
+    const body = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/), evaluationId: z.string().uuid() }).strict().parse(await readBody(request));
+    return app.pluginEvaluations.promote(body.id, body.evaluationId);
+  }
+  if (path === "/api/plugin-catalog/restore") {
+    const body = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/), sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      expectedCurrent: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(await readBody(request));
+    return app.pluginEvaluations.restore(body.id, body.sha256, body.expectedCurrent);
+  }
   if (path === "/api/plugin-catalog/inspect") return app.pluginCatalog.inspect(pluginSource.parse(await readBody(request)).source);
   if (path === "/api/plugin-catalog/install") {
     const body = pluginSource.parse(await readBody(request));

@@ -271,3 +271,65 @@ test("gmailBody walks nested parts and stops at a bounded depth", () => {
   assert.equal(gmailBody(payload).plain, "");
   assert.equal(gmailBody({ mimeType: "multipart/alternative", parts: [{ mimeType: "text/html", body: { data: Buffer.from("<b>x</b>").toString("base64url") } }] }).html, "<b>x</b>");
 });
+
+test("RES-408: checking a Google sign-in reads only metadata, names each capability, and a refused read keeps the sign-in", async () => {
+  const store = fakeStore();
+  on(store, "google");
+  const web = fakeWeb([
+    [/gmail\.googleapis\.com\/gmail\/v1\/users\/me\/labels/, { labels: [{ id: "INBOX", name: "a label name that must not be kept" }] }],
+    [/calendar\/v3\/calendars\/primary\/events/, () => new Response("{}", { status: 403 })],
+    [/drive\/v3\/files/, () => new Response("{}", { status: 503 })],
+  ]);
+  const oauth = { start: async () => ({ id: "x", url: "https://accounts.google.com/x" }), waitFor: () => new Promise(() => {}),
+    saved: async () => ({ expiresAt: null, scope: "read" }), accessToken: async () => "the-token" };
+  const signIn = new SignIn({ store, owner: "local", fetch: web.fetch, oauth, secret: async () => "shh" }, "google", "google");
+  signIn.save({ clientId: "abc" });
+  const health = await signIn.test();
+  assert.equal(health.ok, false);
+  assert.deepEqual(health.checks.map((check) => [check.capability, check.ok]),
+    [["Gmail", true], ["Google Calendar", false], ["Google Drive", false]]);
+  assert.match(health.checks[1].reason, /has not allowed this read/);
+  assert.match(health.checks[2].reason, /HTTP 503/);
+  assert.ok(web.seen.every((request) => request.method === "GET" && request.headers.authorization === "Bearer the-token"
+    && !request.url.includes("the-token")), "reads only, with the key in the header alone");
+  const status = await signIn.status();
+  assert.equal(status.signedIn, true, "a refused read never signs the owner out");
+  assert.deepEqual(status.health, health);
+  assert.equal(JSON.stringify(store.get("settings", "local", "personal-connection-health:google").data).includes("label name"), false,
+    "only outcomes are kept, never what the service answered");
+  signIn.save({ clientId: "changed" });
+  assert.equal((await signIn.status()).health, null, "changing the sign-in forgets the old check");
+});
+test("RES-408: the Home Assistant check is one read of GET /api/ and says working only when the API answers", async () => {
+  const store = fakeStore();
+  on(store, "home-control");
+  const web = fakeWeb([[/\/api\/$/, { message: "API running." }]]);
+  const home = new HomeControl(store, "local", web.fetch, async () => "ha-token");
+  await assert.rejects(home.test(), /Add your Home Assistant address/);
+  home.save({ url: "https://home.example.net/" });
+  const health = await home.test();
+  assert.equal(health.ok, true);
+  assert.equal(health.checks.length, 1);
+  const wrong = new HomeControl(store, "local", fakeWeb([[/\/api\/$/, { message: "something else" }]]).fetch, async () => "ha-token");
+  assert.equal((await wrong.test()).ok, false, "an answer that is not the API's own is not working");
+});
+
+test("RES-408: a check still reading the old grant is not kept once a new sign-in has finished", async () => {
+  const store = fakeStore();
+  on(store, "google");
+  let finish, release;
+  const finished = new Promise((resolve) => { finish = resolve; });
+  const slow = new Promise((resolve) => { release = resolve; });
+  const fetch = async () => { await slow; return new Response("{}", { status: 200, headers: { "content-type": "application/json" } }); };
+  const oauth = { start: async () => ({ id: "x", url: "https://accounts.google.com/x" }), waitFor: () => finished,
+    saved: async () => ({ expiresAt: null, scope: "read" }), accessToken: async () => "the-old-token" };
+  const signIn = new SignIn({ store, owner: "local", fetch, oauth, secret: async () => "shh" }, "google", "google");
+  signIn.save({ clientId: "abc" });
+  await signIn.start();
+  const checking = signIn.test();
+  finish({ ok: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  await assert.rejects(checking, /connection changed/);
+  assert.equal((await signIn.status()).health, null, "the new grant is not labelled by the old grant's check");
+});
