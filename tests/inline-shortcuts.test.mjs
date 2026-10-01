@@ -11,6 +11,7 @@ import { inlineShortcuts } from "../dist/channels/inline-shortcuts.js";
 import { setPaused } from "../dist/reach/platform.js";
 import { Deliveries } from "../dist/channels/deliveries.js";
 import { DiscordAdapter } from "../dist/channels/discord.js";
+import { saveCommandSettings } from "../dist/commands/settings.js";
 
 const authored = (text, spans = []) => ({ text, protected: spans });
 
@@ -232,6 +233,7 @@ test("a pause and resume while Discord's reply to the first answer is still arri
   } });
   discord.start = async () => {}; discord.stop = async () => {};
   const f = await fixture(t, discord);
+  saveCommandSettings(f.app.store, f.app.runtime.owner, { mode: "on" }); // /whoami is one of the newer chat commands
   const text = "Please /status /whoami then summarise the notes";
   const handled = f.app.channels.handle(f.message(text, { authoredCommandText: authored(text) }));
   while (posts.length === 0) await new Promise((resolve) => setTimeout(resolve, 10));
