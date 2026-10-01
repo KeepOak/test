@@ -140,11 +140,17 @@ export async function todosApi(
   todos: Todos, owner: string, request: { method?: string | undefined }, path: string,
   body: () => Promise<unknown>,
   remind: (todo: Todo) => { scheduleId: string },
+  current: () => void = () => undefined,
 ): Promise<unknown | null> {
+  current();
   const method = request.method ?? "GET";
   if (path === "/api/todos") {
     if (method === "GET") return { todos: todos.list(owner, { includeDone: true }) };
-    if (method === "POST") return todos.add(owner, await body(), "owner");
+    if (method === "POST") {
+      const input = await body();
+      current();
+      return todos.add(owner, input, "owner");
+    }
     return null;
   }
   const match = /^\/api\/todos\/([a-f0-9-]{36})(?:\/(done|remind))?$/.exec(path);
@@ -153,6 +159,7 @@ export async function todosApi(
   if (method === "DELETE" && !match[2]) return todos.remove(owner, id);
   if (method === "POST" && match[2] === "done") {
     const wanted = z.object({ done: z.boolean().default(true) }).strict().parse(await body().catch(() => ({})));
+    current();
     return todos.done(owner, id, wanted.done);
   }
   if (method === "POST" && match[2] === "remind") {

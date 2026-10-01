@@ -41,9 +41,14 @@ test("an opening of Ctrl K never lists archived conversations an earlier opening
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   const list = () => page.locator("#pal-list").innerText();
 
+  const firstRead = page.waitForResponse((response) => response.url().includes("/api/sessions/put-away?kind=archived") && response.ok());
   await page.keyboard.press("Control+k");
   await page.locator("#pal-in").fill("archive");
-  await page.waitForFunction(() => /the owl archive/.test(document.querySelector("#pal-list")?.textContent ?? ""), null, { timeout: 10000 });
+  await firstRead;
+  await page.waitForFunction(() => {
+    const text = document.querySelector("#pal-list")?.textContent ?? "";
+    return /the owl archive/.test(text) && /Archived/.test(text);
+  }, null, { timeout: 10000 });
   await page.keyboard.press("Escape");
 
   // The owl conversation is deleted and the elk one archived; the next opening's read is held until checked.
@@ -51,15 +56,27 @@ test("an opening of Ctrl K never lists archived conversations an earlier opening
   await call(`sessions/${elk}/archive`, { archived: true });
   let release;
   const held = new Promise((resolve) => { release = resolve; });
+  let initiated;
+  const routed = new Promise((resolve) => { initiated = resolve; });
   let asked = 0;
-  await page.route("**/api/sessions/put-away?kind=archived*", async (route) => { asked++; await held; await route.continue().catch(() => undefined); });
+  await page.route("**/api/sessions/put-away?kind=archived*", async (route) => { asked++; initiated(); await held; await route.continue().catch(() => undefined); });
   await page.keyboard.press("Control+k");
-  await page.locator("#pal-in").fill("owl archive");
-  await page.waitForFunction(() => document.querySelector("#pal-in")?.value === "owl archive");
-  for (let i = 0; i < 100 && !asked; i++) await page.waitForTimeout(20);
-  assert.equal(asked, 1, "typing reads the archived list again for this opening");
-  assert.doesNotMatch(await list(), /the owl archive/, "the earlier opening's read is not listed");
-  release();
+  const requested = page.waitForRequest((request) => request.url().includes("/api/sessions/put-away?kind=archived"));
+  try {
+    // Reproduce a sidebar refresh between deleting the old archive and archiving
+    // the new one: its cached count is zero when typing starts, the engine's is not.
+    await page.evaluate(async () => {
+      const { E } = await import("/app/core/state.js");
+      E.putAway.archived = 0;
+      const input = document.querySelector("#pal-in");
+      input.value = "owl archive";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await requested;
+    await routed;
+    assert.equal(asked, 1, "typing reads the archived list again even with a stale zero count");
+    assert.doesNotMatch(await list(), /the owl archive/, "the earlier opening's read is not listed");
+  } finally { release(); }
   await page.locator("#pal-in").fill("elk archive");
   await page.waitForFunction(() => /the elk archive/.test(document.querySelector("#pal-list")?.textContent ?? ""), null, { timeout: 10000 });
   await page.locator("#pal-in").fill("owl archive");

@@ -139,7 +139,8 @@ export function openPalette() {
 function loadArchived() {
   if (P.asked === P.opened) return;
   const opened = (P.asked = P.opened), who = E.profiles?.active?.id ?? null;
-  if (!E.putAway?.archived) return;
+  // The sidebar count may still be from before an archive change. Read the
+  // authoritative list once for this opening even when that cached count is zero.
   allOf("archived").then((rows) => {
     if (opened !== P.opened || who !== (E.profiles?.active?.id ?? null)) return;
     P.archived = rows;

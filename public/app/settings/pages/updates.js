@@ -12,6 +12,7 @@ import { waiting } from "../../flows/whatsnew.js";
 import { updates17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
 import { channelSection, initChannel, loadChannel, channelStatus } from "../updates-channel.js";
+import { initUpdateFailure, loadUpdateFailure, updateFailureSection } from "../update-failure.js";
 import { holdingTasks, lastLook, waitingLine } from "../../shell/autoupdate.js";
 import { clock, failDetail, failedWords, gentleWords, installing, keptWords, stageWords, targetWords, updateNow } from "../../shell/updating.js";
 
@@ -100,6 +101,8 @@ async function saveAutoUpdate(on) {
 
 let moreOpen = false;
 export function init() {
+  initUpdateFailure();
+  loadUpdateFailure();
   loadComfort();
   loadPlan();
   loadRemoval();
@@ -118,6 +121,7 @@ let next = null;
 const notesRow = (version) => `<div class="rn-row17d">${ic("news17d", "s")}<span class="grow">${esc(next ? t("window.flows.whatsnew.have-next", { version, next: next.version }) : t("window.flows.whatsnew.have", { version }))}</span><button class="btn sm" type="button" data-act="relnotes17d">${t("window.flows.whatsnew.release-notes")}</button></div>`;
 
 export async function load() {
+  await loadUpdateFailure();
   loadPlan();
   loadRemoval();
   next = await waiting().catch((e) => { toast(e.message); return null; });
@@ -181,6 +185,7 @@ function draw() {
   let html = `<h1>${esc(t("settings.page.about"))}</h1>`;
   if (version) html += "<p class=\"lede\">Branch Agent " + esc(version) + ".</p>" + notesRow(version);
   if (!notOwner() && bridgeHere()) html += statusCard(autoUpdate);
+  html += updateFailureSection(updateNow()?.phase === "error" || Boolean(lastLook.problem?.message));
 
   // The prototype's "Updating" section, under its heading. The switch says how often it really looks: every minute on Beta, once a day on Stable (src/comfort/auto-update.ts).
   html += `<div class="sec upd18-self"><h2>${t("window.settings.updates.updating")}</h2><div class="ctl"><b>${t("comfort.update.install")}</b><input class="sw" type="checkbox" id="u-auto" ${autoUpdate ? "checked" : ""} aria-label="${t("comfort.update.install")}" data-sw="set"><small>${t(beta ? "window.updates.card.checks-every-few-minutes" : "window.settings.updates.checks-every-day")}</small></div></div>`;

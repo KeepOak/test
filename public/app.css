@@ -331,6 +331,12 @@ details[open]>summary .chev{transform:rotate(90deg)}
 .art details summary{font-size:12.5px;color:var(--ink-3);cursor:pointer;list-style:none;display:inline-flex;gap:6px;align-items:center}
 .art details summary::-webkit-details-marker{display:none}
 .art pre{margin:8px 0 0;font:12px/1.5 var(--mono);background:var(--fill);border-radius:10px;padding:10px 12px;overflow-x:auto;color:var(--ink-2)}
+.code-window14{margin:12px 0;max-width:100%;min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--fill)}
+.code-window14-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 10px;border-bottom:1px solid var(--line)}
+.code-window14-head>span{min-width:0;overflow-wrap:anywhere;font:12px/1.4 var(--mono);color:var(--ink-3)}
+.code-window14-head>button{flex-shrink:0}
+.code-window14 pre{margin:0;padding:12px;overflow:auto;font:12px/1.6 var(--mono);color:var(--ink-2)}
+.code-window14 pre code{font:inherit;white-space:pre}
 
 /* composer */
 .dock{flex:none;padding:6px 24px 16px;position:relative}
