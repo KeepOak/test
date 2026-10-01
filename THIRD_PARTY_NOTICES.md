@@ -4110,6 +4110,10 @@ Copyright 2012 Mozilla Foundation
 
 Licensed under the Apache License, Version 2.0 (the License); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0. Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an AS IS BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License. The complete Apache-2.0 license is reproduced above.
 
+## PDF simple-font encodings (UP-RESEARCH-055)
+
+`src/pdf-font-encodings.ts` retains the encoding and glyph Unicode tables from Mozilla PDF.js `src/core/encodings.js` and `glyphlist.js` at 18e8a26a3813a319b38c806076f0b0ef9baf1bf4. Copyright 2012 Mozilla Foundation, Apache-2.0. Lookup construction was rewritten as typed static tables. `src/document-pdf.ts` adapts the evaluator Differences index iteration, and Unicode name recovery follows `src/core/unicode.js`; malformed Unicode scalars are refused. No PDF.js engine or rendering dependency is included. Full Apache-2.0 license is reproduced above.
+
 ## Hermes Agent profile import preview
 
 The Trunk import preview/apply flow adapts the staged manifest review in [hermes_cli/profile_distribution.py](https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/profile_distribution.py) (`plan_install`/`install_distribution`), reviewed on 2026-09-29. The implementation uses Branch Trunk JSON and its existing import route; no archive installer is included.

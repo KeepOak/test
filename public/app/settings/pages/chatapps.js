@@ -42,13 +42,15 @@ const unlocked = () => !document.getElementById("app")?.classList.contains("lock
 /* The owner, the same person as when a read began, with the window unlocked: what a late answer may still change. */
 const sameOwner = (profile) => ownerHere() && activeId() === profile && unlocked();
 
+let appsRead = 0;
 async function loadApps() {
   const profile = activeId();
   if (!ownerHere() || !unlocked()) return; // the owner's chat apps: no page asks for them on a household person's profile
+  const read = ++appsRead, current = () => read === appsRead && sameOwner(profile);
   A.at = Date.now();
-  const [live, setup, routing] = await Promise.all(["channels", "channel-setup", "channels/routes"].map((path) => api(path).catch((error) => { if (sameOwner(profile)) toast(error.message); return null; })));
-  if (!sameOwner(profile)) return;
-  A.channels = live?.channels ?? [];
+  const [live, setup, routing] = await Promise.all(["channels", "channel-setup", "channels/routes"].map((path) => api(path).catch((error) => { if (current()) toast(error.message); return null; })));
+  if (!current()) return;
+  A.channels = live?.channels ?? A.channels; // a failed read is unknown, never evidence that no app is connected
   A.intake = live?.intake ?? null;
   A.watchdogLog = live?.watchdogLog ?? [];
   A.live = live?.live ?? null;
@@ -61,7 +63,7 @@ async function loadApps() {
   A.permissions = live?.permissions ?? null;
   A.apps = setup?.channels ?? [];
   await Promise.all([loadFormats(), loadReplyStyles(), loadPhoneAccess()]);
-  if (sameOwner(profile)) render();
+  if (current()) render();
 }
 
 const nameOf = (id) => A.apps.find((x) => x.id === id)?.name ?? id;
