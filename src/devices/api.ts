@@ -28,6 +28,7 @@ export class DevicesHttpError extends Error {
 }
 
 export interface DevicesHttpDeps {
+  chatPairing?: { list(): unknown[]; consume(id: string, kind: "phone" | "computer"): void };
   devices: Devices; store: Store; owner: string; method: string;
   readBody: () => Promise<unknown>;
   /** The address a device should dial: the paired door while it is open, otherwise this computer. */
@@ -40,6 +41,8 @@ export interface DevicesHttpDeps {
   heldWindowKey?: (id: string) => boolean;
   /** B6: the request came through the paired door (a phone), not this computer's own. */
   viaDoor?: boolean;
+  /** Hears App lock; answers a function that stops listening (src/session-lock.ts onLocked). */
+  onLocked?: (listener: () => void) => () => void;
   /**
    * A phone paired before phones had keys of their own, and so handed the window's key, is removed: a new window key
    * replaces it (src/remote/window-key.ts), and this answers it once it is in use.
@@ -227,6 +230,10 @@ async function findRoute(deps: DevicesHttpDeps, path: string): Promise<unknown> 
 /** The owner's routes. Answers undefined for a path it does not know. */
 export async function devicesApi(deps: DevicesHttpDeps, path: string): Promise<unknown> {
   const { devices, method } = deps;
+  if (path === "/api/devices/chat-pairing" && method === "GET") {
+    if (deps.viaDoor !== false) throw new DevicesHttpError(403, phoneInviteHereOnly);
+    return { proposals: deps.chatPairing?.list() ?? [] };
+  }
   if (path === "/api/devices" && method === "GET") return overview(deps);
   const picked = pickedPath.exec(path);
   if (picked && method === "GET") return pickedFor(deps, picked[1]!);
@@ -236,9 +243,23 @@ export async function devicesApi(deps: DevicesHttpDeps, path: string): Promise<u
   if (method !== "POST") return undefined;
   if (path === "/api/devices/mode") return { mode: devices.setMode(await deps.readBody()) };
   if (path === "/api/devices/invite") {
-    const { phone } = z.object({ phone: z.boolean().optional() }).strict().parse((await deps.readBody()) ?? {});
+    // The owner's admission is sticky across the body wait: any profile switch or App lock during it, even one undone
+    // before the body arrives, consumes no request and makes no invitation.
+    let revoked = false;
+    const revoke = () => { revoked = true; };
+    const offSwitch = deps.store.profiles.onSwitched(revoke), offLock = deps.onLocked?.(revoke) ?? (() => undefined);
+    let body: unknown;
+    try { body = await deps.readBody(); } finally { offSwitch(); offLock(); }
+    if (revoked || !deps.store.profiles.isOwner())
+      throw new DevicesHttpError(403, "The original owner request is no longer authorized. Ask for the invitation again.");
+    const { phone, proposalId } = z.object({ phone: z.boolean().optional(), proposalId: z.string().regex(/^[a-f0-9]{32}$/).optional() }).strict().parse(body ?? {});
     // B6: a phone invitation hands the window's key to the phone let in, so only this computer's window makes one.
     if (phone === true && deps.viaDoor !== false) throw new DevicesHttpError(403, phoneInviteHereOnly);
+    if (proposalId) {
+      if (deps.viaDoor !== false || !deps.chatPairing) throw new DevicesHttpError(403, phoneInviteHereOnly);
+      try { deps.chatPairing.consume(proposalId, phone === true ? "phone" : "computer"); }
+      catch { throw new DevicesHttpError(409, "That chat pairing request expired or is no longer authorized. Send /pair again."); }
+    }
     const offer = devices.book.invite({ phone: phone === true });
     const link = `${deps.baseUrl.replace(/\/+$/, "")}/devices/pair?offer=${offer.id}`;
     return { ...offer, link, qr: qrRows(encodeQr(link)) };

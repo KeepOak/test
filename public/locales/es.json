@@ -1323,6 +1323,7 @@
   "commands.menu": "Comandos",
   "commands.model": "qué modelo responde; /model solo los lista",
   "commands.new": "empezar una conversación nueva",
+  "commands.pair": "pedir el emparejamiento de un dispositivo en la ventana de este ordenador; los códigos y la aprobación se quedan allí",
   "commands.pane": "mostrar u ocultar el panel lateral",
   "commands.personality": "elegir el tono de las respuestas para la próxima tarea de este chat",
   "commands.plan": "activar o desactivar hacer primero un plan breve",

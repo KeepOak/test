@@ -411,6 +411,7 @@ export const ROUTES = {
   // mac7/nodes: the owner's devices; pairing and the device socket carry their own proof (src/devices/).
   "/api/devices": "secret-read",
   "/api/devices/": "prefix",
+  "/api/devices/chat-pairing": "secret-read",
   "/api/devices/pair": "pre-auth POST",
   "/api/devices/pair/status": "pre-auth POST",
   "/api/devices/pair/session": "pre-auth POST",

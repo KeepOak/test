@@ -1323,6 +1323,7 @@
   "commands.menu": "Commands",
   "commands.model": "which model answers; /model on its own lists them",
   "commands.new": "start a fresh conversation",
+  "commands.pair": "request device pairing in this computer's window; codes and approval stay there",
   "commands.pane": "show or hide the side pane",
   "commands.personality": "choose the reply tone for this chat's next task",
   "commands.plan": "turn a short plan first on or off",

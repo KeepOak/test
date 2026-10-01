@@ -57,6 +57,7 @@ import { commandBytesExact, commandPermission, commandShown, ownerCommands, owne
 import { ReplyStream, ReplyDeliveryUncertain, type PlacedReply } from "./reply-stream.js";
 import { nextQuote, quoteState, replyStyle, type QuoteState, type ReplyStyle } from "./reply-style.js";
 import { ModelPicker, staleModelMenu } from "./model-picker.js";
+import { DevicePairProposals } from "./device-pair-proposals.js";
 import { listModels } from "../model-switch.js";
 
 /**
@@ -1256,6 +1257,15 @@ export class ChannelRouter {
     const same = (account: { channel: string; sender: string }) => account.channel === channel && account.sender === senderId;
     return ownerCommands(this.store, this.runtime.owner).accounts.some(same) || platformSettings(this.store, this.runtime.owner).owners.some(same);
   }
+  readonly devicePairProposals = new DevicePairProposals((proposal) => !lockedDown(this.store, this.runtime.owner)
+    && !this.appLocked() && this.ownAccount(proposal.channel, proposal.senderId)
+    && this.pair(proposal.channel, proposal.senderId)?.status === "approved"
+    && this.pairProposalAccess(proposal));
+  private pairProposalAccess(proposal: { channel: string; senderId: string }): boolean {
+    const attached = this.adapters.get(proposal.channel);
+    return !!attached && ownerDmHere(this.store, this.runtime.owner, attached.adapter.kind, { ...proposal, chatKind: "direct" })
+      && this.access(proposal, attached.policy) === "allowed";
+  }
   /** The command a message is, if commands are switched on for this moment. */
   private commandIn(message: InboundMessage): ChatCommand | null {
     // Starting a fresh conversation is part of the thread model, even when optional slash commands are off.
@@ -1474,6 +1484,10 @@ export class ChannelRouter {
     if (named) this.trunkCommands.set(chatKey(message), named);
     const work = () => named?.dropped ? Promise.resolve("Dropped that. Nothing was started.") : runChatCommand(command, {
       runtime: this.runtime, channel, kind: this.adapters.get(channel)?.adapter.kind ?? channel, chatId, turn: turn ?? side,
+      requestPair: (argument: string) => message.chatKind !== "direct" || message.caughtUp || message.edited || message.voice
+        ? "Device pairing requests are accepted only from a live typed message in your own approved direct chat."
+        : this.devicePairProposals.request({ channel, chatId, senderId: message.senderId,
+          senderName: message.senderName.slice(0, 80), messageId: message.messageId }, argument),
       sessionId: this.sessionFor(channel, chatId), permissions: this.chatPermissions(message),
       ownerDm: ownerDmHere(this.store, this.runtime.owner, this.adapters.get(channel)?.adapter.kind ?? "", message),
       trunkRefusal: (id) => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "trunk", command.argument)

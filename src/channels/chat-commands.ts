@@ -47,6 +47,7 @@ export interface ChatCommandSpec {
  * message itself (who sent it, and where); the rest is the shared code.
  */
 const RUNNERS: Record<string, ChatCommandSpec["run"]> = {
+  pair: (a, c) => c.requestPair?.(a) ?? "Device pairing requests are unavailable on this chat surface.",
   stop: (_, c) => stop(c),
   status: (_, c) => status(c),
   new: (_, c) => fresh(c),
@@ -124,6 +125,8 @@ export interface ChatTurn {
   passed: number;
 }
 export interface CommandContext {
+  /** Router checks the original live owner DM; this never creates an invitation or device key. */
+  requestPair?: (argument: string) => string;
   runtime: Runtime;
   channel: string;
   kind?: string;

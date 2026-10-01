@@ -29,6 +29,7 @@ import { markLive } from "../core/features.js";
 import { qr } from "../core/qr.js";
 import { nameNewComputer } from "./name-device.js";
 import { t } from "../../i18n.js";
+import { initChatPairing } from "./chat-pairing.js";
 
 const P = { kind: null, frame: null, dlg: null, invite: null, request: null, seen: new Set(), error: null, canSwitch: false, triedOn: false, timer: null, stopping: null, canOpen: false, doorError: null, doorOn: false, opening: false };
 /* Told after a device is let in or refused ({ approve, kind, request }), so a page listing devices reads them again. */
@@ -164,7 +165,9 @@ async function begin() {
     view = await api("devices");
     P.seen = new Set((view.requests ?? []).map((r) => r.id));
     // B6: "Pair a phone" makes a phone invitation, the only kind whose phone collects its session after the yes.
-    P.invite = await api("devices/invite", P.kind === "phone" ? { phone: true } : {});
+    const proposalId = P.proposalId;
+    P.invite = await api("devices/invite", { ...(P.kind === "phone" ? { phone: true } : {}), ...(proposalId ? { proposalId } : {}) });
+    P.proposalId = null;
   } catch (error) {
     P.error = error.message;
     const lockdown = await api("lockdown").then((l) => l.on === true, (e) => { toast(e.message); return true; });
@@ -180,9 +183,9 @@ async function begin() {
 }
 
 /* Starts pairing: kind is "phone", "computer" or "code" (the tab); frame draws the body into another dialog. */
-export function startPairing(kind, frame = null) {
+export function startPairing(kind, frame = null, proposalId = null) {
   stop(false);
-  Object.assign(P, { kind, frame, triedOn: false, canOpen: false, doorError: null, doorOn: false });
+  Object.assign(P, { kind, frame, proposalId, triedOn: false, canOpen: false, doorError: null, doorOn: false });
   return begin();
 }
 
@@ -275,6 +278,7 @@ async function phoneAppShare(open) {
 }
 
 export function init() {
+  initChatPairing((kind, id) => startPairing(kind, null, id));
   markLive(["pair", "pair-cancel", "pair-letin", "pair-refuse", "pair-on", "ph-paired-dlg", "sw:pair-match", "sw:pair-door", "pair-copy",
     "phone-app", "phone-app-show", "phone-app-stop"]);
   on("phone-app", () => openPhoneApp());
