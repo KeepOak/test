@@ -10,6 +10,7 @@ import { createBranch } from "../dist/index.js";
 import { inlineShortcuts } from "../dist/channels/inline-shortcuts.js";
 import { setPaused } from "../dist/reach/platform.js";
 import { Deliveries } from "../dist/channels/deliveries.js";
+import { DiscordAdapter } from "../dist/channels/discord.js";
 
 const authored = (text, spans = []) => ({ text, protected: spans });
 
@@ -24,7 +25,12 @@ test("only exact shortcuts outside code, quotes and links are picked, and only t
   assert.equal(inlineShortcuts(authored("a /status", [{ offset: 5, length: 99 }]), "a /status"), null, "a broken span refuses the fast path");
 });
 
-async function fixture(t) {
+const policy = { activation: "always", pairing: true, allowlist: ["owner"] };
+const switchesOn = { liveStatus: "off", commands: "on", steering: "on", splitting: "on", steps: "off" };
+const fakeAdapter = (id, sent) => ({ id, kind: "fake", botName: () => "Branch", async start() {}, async stop() {},
+  async send(chatId, text) { sent.push(text); return String(sent.length); } });
+
+async function fixture(t, adapter) {
   const root = await mkdtemp(join(tmpdir(), "branch-inline-shortcuts-"));
   const prompts = [];
   const provider = { name: "scripted", async complete(request) {
@@ -34,11 +40,10 @@ async function fixture(t) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   t.after(async () => { await app.close(); await discardTemp(root); });
   app.channels.mergeWindowMs = 0;
-  app.channels.setSwitches({ liveStatus: "off", commands: "on", steering: "on", splitting: "on", steps: "off" });
+  app.channels.setSwitches(switchesOn);
   const sent = [];
-  const adapter = { id: "chat", kind: "fake", botName: () => "Branch", async start() {}, async stop() {},
-    async send(chatId, text) { sent.push(text); return String(sent.length); } };
-  await app.channels.attach(adapter, { activation: "always", pairing: true, allowlist: ["owner"] });
+  adapter ??= fakeAdapter("chat", sent);
+  await app.channels.attach(adapter, policy);
   let id = 1;
   const message = (text, extra = {}) => ({ channel: "chat", chatId: "c1", chatKind: "direct", senderId: "owner", senderName: "Sam",
     text, addressed: true, messageId: `m${id++}`, ...extra });
@@ -80,7 +85,6 @@ test("pausing the chat app while a shortcut's answer goes out stops the rest of 
 });
 
 test("pausing the chat app while a shortcut's answer is checked or waiting to send keeps that answer from going out", async (t) => {
-  const answer = "Nothing is working right now.";
   // Queue boundary: the pause lands while the outgoing check looks at the answer.
   const f = await fixture(t);
   const guard = f.app.channels.outboundGuard;
@@ -118,4 +122,80 @@ test("pausing the chat app while a shortcut's answer is checked or waiting to se
   await g.app.channels.flush();
   assert.deepEqual(g.sent, [], "a queued answer is not sent once the chat app is paused");
   assert.ok(g.app.channels.deliveries.outstanding().every((row) => row.status === "dead"), "the held answer is not retried");
+});
+
+const answer = "Nothing is working right now.";
+/** Takes the chat's say away and gives it back while the outgoing check looks at the shortcut's answer. */
+async function revokedAndRestoredDuringCheck(t, revoke, restore) {
+  const f = await fixture(t);
+  const guard = f.app.channels.outboundGuard;
+  f.app.channels.outboundGuard = async (words) => {
+    if (words === answer) { revoke(f.app); restore(f.app); }
+    return guard(words);
+  };
+  assert.equal(await f.app.channels.handle(f.message("/status", { authoredCommandText: authored("/status") })), "ignored");
+  assert.deepEqual(f.sent, [], "a revocation stays a revocation even when it is undone before the answer is queued");
+}
+
+test("a pause undone during the outgoing check still holds the shortcut's answer back", (t) => revokedAndRestoredDuringCheck(t,
+  (app) => setPaused(app.store, app.runtime.owner, "chat", true, "test"),
+  (app) => setPaused(app.store, app.runtime.owner, "chat", false, "test")));
+
+test("an App lock undone during the outgoing check still holds the shortcut's answer back", (t) => revokedAndRestoredDuringCheck(t,
+  (app) => app.sessionLock.lock(), (app) => app.sessionLock.unlock()));
+
+test("a sender blocked and allowed again during the outgoing check still has the shortcut's answer held back", (t) => revokedAndRestoredDuringCheck(t,
+  (app) => app.channels.setSenderAllowlist({ rules: [{ channel: "chat", sender: "owner", decision: "block" }] }),
+  (app) => app.channels.setSenderAllowlist({ rules: [] })));
+
+test("chat commands switched off and on during the outgoing check still hold the shortcut's answer back", (t) => revokedAndRestoredDuringCheck(t,
+  (app) => app.channels.setSwitches({ ...switchesOn, commands: "off" }), (app) => app.channels.setSwitches(switchesOn)));
+
+test("an answer waiting out Discord's rate limit is not sent when the chat app is paused and resumed during the wait", async (t) => {
+  const posts = [];
+  const discord = new DiscordAdapter({ id: "chat", token: "test-bot-token", fetch: async (url, init) => {
+    if (init?.method === "POST" && /\/channels\/[^/]+\/messages$/.test(String(url))) posts.push(JSON.parse(init.body).content);
+    return new Response(JSON.stringify({ id: `posted-${posts.length}` }), { status: 200 });
+  } });
+  discord.start = async () => {}; discord.stop = async () => {};
+  const f = await fixture(t, discord);
+  // Discord asked to slow down: the adapter waits before its request, and the owner pauses and resumes meanwhile.
+  discord.readyAt = Date.now() + 400;
+  setTimeout(() => {
+    setPaused(f.app.store, f.app.runtime.owner, "chat", true, "test");
+    setPaused(f.app.store, f.app.runtime.owner, "chat", false, "test");
+  }, 100);
+  assert.equal(await f.app.channels.handle(f.message("/status", { authoredCommandText: authored("/status") })), "ignored");
+  assert.deepEqual(posts, [], "the adapter checked the answer's authority at its last step and did not post it");
+});
+
+test("the same chat and message ids on two chat apps keep separate answers, each under its own authority", async (t) => {
+  const f = await fixture(t);
+  const sentB = [];
+  await f.app.channels.attach(fakeAdapter("chat2", sentB), policy);
+  const send = f.adapter.send;
+  f.adapter.send = async () => { f.adapter.send = send; throw new Error("offline for a moment"); };
+  const same = { messageId: "same-id", authoredCommandText: authored("/status") };
+  await f.app.channels.handle(f.message("/status", same));
+  await f.app.channels.handle(f.message("/status", { ...same, channel: "chat2" }));
+  assert.deepEqual(sentB, [answer], "the second app's answer is its own and goes out");
+  setPaused(f.app.store, f.app.runtime.owner, "chat", true, "test");
+  for (const row of f.app.channels.deliveries.outstanding()) f.app.channels.deliveries.retry(row.id);
+  await f.app.channels.flush();
+  assert.deepEqual(f.sent, [], "the paused app's queued answer was not re-authorized by the other app's");
+  assert.deepEqual(sentB, [answer]);
+});
+
+test("a queued answer keeps the authority it was queued under when the same message comes again", async (t) => {
+  const f = await fixture(t);
+  const send = f.adapter.send;
+  f.adapter.send = async () => { f.adapter.send = send; throw new Error("offline for a moment"); };
+  const same = { messageId: "same-id", authoredCommandText: authored("/status") };
+  await f.app.channels.handle(f.message("/status", same));
+  setPaused(f.app.store, f.app.runtime.owner, "chat", true, "test");
+  setPaused(f.app.store, f.app.runtime.owner, "chat", false, "test");
+  await f.app.channels.handle(f.message("/status", same));
+  for (const row of f.app.channels.deliveries.outstanding()) f.app.channels.deliveries.retry(row.id);
+  await f.app.channels.flush();
+  assert.deepEqual(f.sent, [], "a repeat of the message does not re-authorize the answer already queued");
 });
