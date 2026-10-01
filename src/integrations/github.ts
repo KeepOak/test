@@ -6,6 +6,7 @@ import { applyContentPolicy, detectInjection } from "../content-guard.js";
 import type { NetworkPolicy } from "../network-policy.js";
 import type { TrackerIssue } from "./issue-context.js";
 import { readGitHubChecks, type GitHubChecks } from "./github-checks.js";
+import { readCiQueue } from "../self-development-ci.js";
 import { ChecksPending, mergeEvidence, mergeOrEnqueue, markReadyForReview, queueStanding, type MergeEvidence, type MergeLine, type MergePin, type MergeResult } from "./github-merge.js";
 
 /**
@@ -46,6 +47,11 @@ export class GitHubAccess {
   get tokenSecret(): string { return this.config.tokenSecret; }
   async findPublication(input: PublicationLookup, signal: AbortSignal): Promise<unknown | null> {
     return matchingPublication(input, await this.request("GET", publicationLookupPath(input), undefined, undefined, signal));
+  }
+
+  /** Owner-triggered read, through the existing authenticated network policy. */
+  async ciQueue(repo: string, selected: number[] = []): Promise<Awaited<ReturnType<typeof readCiQueue>>> {
+    return readCiQueue((method, path) => this.request(method, path), repositoryPath.parse(repo), selected);
   }
 
   /** One REST call: the network policy decides whether the address may be reached at all. */

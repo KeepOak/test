@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
+import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile, SendGate } from "./router.js"; // R17-C: OutgoingFile
 import { telegramEntities } from "./progress-render.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
@@ -187,11 +187,11 @@ export class TelegramAdapter implements ChannelAdapter {
       .parse(await this.call("createForumTopic", { chat_id: target.chat_id, name }));
     return topicAddress(target.chat_id, result.message_thread_id);
   }
-  async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
+  async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat, gate?: SendGate): Promise<string | undefined> {
     const result = await this.call("sendMessage", {
       ...telegramTarget(chatId), text, ...formatted(format),
       ...(replyToMessageId && /^\d+$/.test(replyToMessageId) ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
-    });
+    }, false, false, gate);
     const parsed = z.object({ message_id: z.number() }).passthrough().safeParse(result);
     return parsed.success ? String(parsed.data.message_id) : undefined;
   }
@@ -199,11 +199,11 @@ export class TelegramAdapter implements ChannelAdapter {
    * Hermes Agent's private-chat send_draft contract (MIT), adapted to Branch's topic handles and plain preview.
    * Reusing the nonzero id animates the preview; it has no message id and never replaces the final sendMessage.
    */
-  async sendDraft(chatId: string, draftId: number, text: string): Promise<void> {
+  async sendDraft(chatId: string, draftId: number, text: string, gate?: SendGate): Promise<void> {
     const target = telegramTarget(chatId);
     if (!Number.isSafeInteger(target.chat_id) || target.chat_id <= 0 || !Number.isSafeInteger(draftId) || draftId <= 0)
       throw new Error("Telegram drafts require a private chat and a positive draft id");
-    const result = await this.call("sendMessageDraft", { ...target, draft_id: draftId, text: text.slice(0, 3500) });
+    const result = await this.call("sendMessageDraft", { ...target, draft_id: draftId, text: text.slice(0, 3500) }, false, false, gate);
     if (result !== true) throw new Error("Telegram refused the draft preview");
   }
   /** Sends a spoken reply as a Telegram voice note. Telegram wants the file as a form upload. */
@@ -416,19 +416,19 @@ export class TelegramAdapter implements ChannelAdapter {
       chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId), reaction: [{ type: "emoji", emoji }],
     });
   }
-  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
+  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat, gate?: SendGate): Promise<void> {
     try {
       await this.call("editMessageText", { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId), text,
-        ...formatted({ spans: format?.spans }) });
+        ...formatted({ spans: format?.spans }) }, false, false, gate);
     } catch (error) {
       // Sending the same words again is refused with this; the message already says them.
       if (!/message is not modified/i.test(error instanceof Error ? error.message : "")) throw error;
     }
   }
   /** Removes a message the bot sent (Telegram allows it for 48 hours; an older one stays). */
-  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+  async deleteMessage(chatId: string, messageId: string, gate?: SendGate): Promise<void> {
     if (!/^\d+$/.test(messageId)) throw new Error("Telegram: that is not a message this bot sent");
-    await this.call("deleteMessage", { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId) });
+    await this.call("deleteMessage", { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId) }, false, false, gate);
   }
   private inbound(message: z.infer<typeof messageSchema>): InboundMessage | null {
     const spoken = message.voice ?? message.audio;
@@ -510,9 +510,13 @@ export class TelegramAdapter implements ChannelAdapter {
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
     return bytes;
   }
-  private async call(method: string, body: unknown, longPoll = false, stoppable = longPoll): Promise<unknown> {
+  /** One Bot API request. A `gate` (an owner's own-message edit or delete) is checked last before sending, and its
+      signal aborts the request, including while the address is still being checked. */
+  private async call(method: string, body: unknown, longPoll = false, stoppable = longPoll, gate?: SendGate): Promise<unknown> {
     const timeout = AbortSignal.timeout(longPoll ? (this.pollTimeout + 10) * 1000 : 20000);
-    const signal = stoppable ? AbortSignal.any([this.stopping.signal, timeout]) : timeout;
+    const signals = [timeout, ...(stoppable ? [this.stopping.signal] : []), ...(gate ? [gate.signal] : [])];
+    const signal = signals.length > 1 ? AbortSignal.any(signals) : timeout;
+    gate?.check();
     const response = await this.fetch(`${this.base}/${method}`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal,
     });
