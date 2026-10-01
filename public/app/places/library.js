@@ -22,6 +22,7 @@ import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 import { initDocRead, revealable } from "./docread.js"; // dogfood D6, dogfood-ux-3
 import { pendingMemories, readPendingMemories, initMemoryReview } from "./memory-review.js";
 import { initMemoryDetail } from "./memory-detail.js";
+import { madeFiles } from "./library-made.js";
 import { lockdownOn } from "../chat/approvals.js";
 import { sessionPrincipal } from "../core/session-pages.js";
 
@@ -135,9 +136,9 @@ export function draw() {
   if (tab === "memory") html += pendingMemories() + memoryTab(mem) + learnSection();
   else if (tab === "documents") html += documentsTab();
   else if (tab === "made") {
-    html += artsList.map((a) => `<div class="prow"><span class="fi">${esc((a.name || '').split('.').pop() || 'bin')}</span>
+    html += madeFiles(artsList, (a) => `<div class="prow"><span class="fi">${esc((a.name || '').split('.').pop() || 'bin')}</span>
         <span class="grow"><b>${esc(a.name)}</b><small>${esc([madeBy(a), when(a.createdAt)].filter(Boolean).join(" · "))}</small></span>
-        ${revealable() ? `<button class="btn ghost sm" type="button" data-act="made-reveal" data-v="${esc(a.path)}">${t("window.places.library.show-in-folder")}</button>` : ""}<button class="btn sm" type="button" data-act="made-open" data-v="${esc(a.path)}">${t("ov.open")}</button></div>`).join('');
+        ${revealable() ? `<button class="btn ghost sm" type="button" data-act="made-reveal" data-v="${esc(a.path)}">${t("window.places.library.show-in-folder")}</button>` : ""}<button class="btn sm" type="button" data-act="made-open" data-v="${esc(a.path)}">${t("ov.open")}</button></div>`);
     if (artsKey === "[]") html += empty18("library:made"); // read, and nothing made yet
   }
 
