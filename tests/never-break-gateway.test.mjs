@@ -1,3 +1,4 @@
+import { processRunning } from "./process-running.mjs";
 /**
  * Never breaks, threats 2 and 3: the gateway keeps Branch's address open, replaces a worker that
  * dies, puts back the last good settings when new ones will not start, and takes nothing with it
@@ -24,7 +25,7 @@ import { neverBreakApi } from "../dist/never-break/api.js";
 import { answerHeader, answerMark, askHeader, newBoot, proveOnce, sessionKey, watchEngine } from "../dist/engine-proof.js";
 
 const worker = resolve("tests/fixtures/never-break-worker.mjs");
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } };
+const alive = (pid) => processRunning(pid, () => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } });
 async function until(check, what, ms = 20000) {
   const end = Date.now() + ms;
   while (Date.now() < end) { const value = await check(); if (value) return value; await delay(50); }
