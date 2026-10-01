@@ -6,12 +6,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright"; // a real headless Chromium opens these pages (CI installs it for this file)
 import { discardTemp } from "./temp-dir.mjs";
 import { Budget, RunArtifacts, ToolRegistry } from "../dist/index.js";
+import { WorkspaceFiles } from "../dist/files.js";
 import { BranchBrowser, registerBrowser } from "../dist/integrations/browser.js";
 import { sensitiveBrowserTools } from "../dist/comfort/browser-safety.js";
 
@@ -19,10 +20,12 @@ assert.equal(typeof chromium.launch, "function");
 
 const KEY = "ghp_" + "1a2B3c4D5e6F7g8H9i0J1k2L3m4N5o6P7q8R";
 const MAIN = `<!doctype html><meta charset="utf-8"><title>Tools</title><body style="margin:0">
+  <img src="/pic.png?sig=private-sig" alt="A red fox" width="300" height="200"><img src="/dot.png" alt="" width="1" height="1">
   <nav><button id="menu" onmouseenter="document.getElementById('sub').hidden=false">Menu</button><div id="sub" hidden>Opened by hovering</div></nav>
   <label>Size <select id="size"><option value="s">Small</option><option value="m">Medium</option><option value="l">Large</option></select></label>
   <label>Notes <input id="notes"></label><p id="loading">Loading…</p><a href="/second">Second</a>
   <div style="height:3000px"></div><p id="end">The end</p><button id="pic" style="width:120px;height:40px">Picture me</button>
+  <label>Attach <input id="one" type="file"></label><label>Photos <input id="many" type="file" multiple></label>
   <script>
     console.log("hello from the page");
     console.warn("a warning with ${KEY} in it");
@@ -45,6 +48,10 @@ async function fixture(t) {
   const origin = `http://127.0.0.1:${server.address().port}`;
   const browser = new BranchBrowser({ allowedOrigins: [origin] });
   browser.artifacts = new RunArtifacts(join(root, "artifacts"));
+  await mkdir(join(root, "workspace"), { recursive: true });
+  await writeFile(join(root, "workspace", "a.txt"), "first");
+  await writeFile(join(root, "workspace", "b.txt"), "second");
+  browser.files = new WorkspaceFiles(join(root, "workspace"));
   const registry = new ToolRegistry();
   registerBrowser(registry, browser);
   t.after(async () => { await browser.close(); server.close(); await discardTemp(root); });
@@ -130,4 +137,36 @@ test("every new step is held to the owner's approval rules like the others: typi
   for (const name of ["browser.hover", "browser.keys", "browser.select", "browser.history"]) assert.equal(permission(name), "browser.interact", name);
   for (const name of ["browser.scroll", "browser.console", "browser.network"]) assert.equal(permission(name), "browser.read", name);
   assert.ok(sensitiveBrowserTools.includes("browser.keys") && sensitiveBrowserTools.includes("browser.select"));
+});
+
+test("a file goes to a file box found by its name or number, several only where the box takes several, never from outside", async (t) => {
+  const { run, origin, browser } = await fixture(t);
+  await run("browser.navigate", { url: `${origin}/` });
+  await run("browser.upload", { name: "Attach", path: "a.txt" });
+  const page = browser.browser.contexts()[0].pages()[0];
+  assert.deepEqual(await page.$eval("#one", (box) => [...box.files].map((f) => f.name)), ["a.txt"]);
+  await run("browser.upload", { name: "Photos", paths: ["a.txt", "b.txt"] });
+  assert.deepEqual(await page.$eval("#many", (box) => [...box.files].map((f) => f.name)), ["a.txt", "b.txt"]);
+  const marks = await run("browser.annotate", {});
+  const box = marks.marks.find((mark) => mark.role === "input:file");
+  assert.ok(box, JSON.stringify(marks.marks));
+  await run("browser.upload", { mark: box.id, path: "b.txt" });
+  assert.deepEqual(await page.$eval("#one", (el) => [...el.files].map((f) => f.name)), ["b.txt"], "by its number from browser.annotate");
+  await assert.rejects(run("browser.upload", { name: "Attach", paths: ["a.txt", "b.txt"] }), /one file at a time/);
+  await assert.rejects(run("browser.upload", { name: "Attach", path: "../outside.txt" }));
+  await assert.rejects(run("browser.upload", { path: "a.txt" }), /Name one file box/);
+});
+
+test("the page's pictures are listed with the words it gives them, without queries, and tiny ones can be skipped", async (t) => {
+  const { run, origin } = await fixture(t);
+  await run("browser.navigate", { url: `${origin}/` });
+  const all = await run("browser.images", {});
+  assert.equal(all.untrusted, true);
+  const fox = all.images.find((image) => image.alt === "A red fox");
+  assert.ok(fox, JSON.stringify(all));
+  assert.equal(fox.src, `${origin}/pic.png?…`);
+  assert.doesNotMatch(JSON.stringify(all), /private-sig/);
+  const big = await run("browser.images", { minWidth: 50 });
+  assert.deepEqual(big.images.map((image) => image.alt), ["A red fox"]);
+  assert.equal((await run("browser.images", { filter: "fox" })).images.length, 1);
 });

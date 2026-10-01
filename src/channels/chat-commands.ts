@@ -9,6 +9,14 @@ import { available, commandMode, commandsFor } from "../commands/settings.js";
 import { executeCommand } from "../commands/execute.js";
 import { commandHost } from "../commands/host.js";
 import { improveCommand } from "../self-development-requests.js";
+import { chatTrunkCommand } from "./trunk-command.js";
+import { chatBranchCommand } from "./branch-command.js";
+import { chatDiffCommand } from "./diff-command.js";
+import { chatTopicCommand } from "./topic-command.js";
+import { chatSessionCommand } from "./session-command.js";
+import { chatPersonalityCommand } from "./personality-command.js";
+import { voiceCommand } from "./chat-voice.js";
+import { stepsDisplayFor, stepsSettings, verboseInChat } from "./steps-display.js";
 
 /**
  * Commands a person can type in a chat app while Branch works: stop the task, ask where it is,
@@ -47,6 +55,15 @@ const RUNNERS: Record<string, ChatCommandSpec["run"]> = {
   btw: (a, c) => aside(a, c),
   help: (a, c) => (a && modeHere(c) !== "off" ? shared("help")(a, c) : chatCommandHelp(modeHere(c))),
   improve: (a, c) => improveCommand(a, c),
+  trunk: (a, c) => chatTrunkCommand(a, c),
+  branch: (a, c) => chatBranchCommand(a, c),
+  diff: (a, c) => chatDiffCommand(a, c),
+  topic: (a, c) => chatTopicCommand(a, c),
+  session: (a, c) => chatSessionCommand(a, c),
+  personality: (a, c) => chatPersonalityCommand(a, c),
+  voice: (a, c) => voiceCommand(c.runtime.store, c.runtime.owner, c.channel, c.chatId, a, c.ownAccount === true),
+  verbose: (a, c) => verboseInChat(c.runtime.store, c.runtime.owner, c.channel, c.chatId, a,
+    stepsDisplayFor(stepsSettings(c.runtime.store, c.runtime.owner), { id: c.channel, kind: c.kind ?? c.channel })),
 };
 const modeHere = (context: CommandContext): FeatureMode => commandMode(context.runtime.store, context.runtime.owner);
 /** A command carried out by the shared code, for this chat, with what this chat's sender may do. */
@@ -109,12 +126,28 @@ export interface ChatTurn {
 export interface CommandContext {
   runtime: Runtime;
   channel: string;
+  kind?: string;
   chatId: string;
   /** The conversation this chat carries on, when it has one. */
   sessionId: string | undefined;
   turn: ChatTurn | undefined;
   /** What a task from this chat may use; a side question gets none of it. */
   permissions: string[];
+  /** Router-verified live owner account in a direct chat; never inferred from pairing alone. */
+  ownerDm?: boolean;
+  /** The same target-Trunk channel reach gate ordinary routed messages use. */
+  trunkRefusal?: (trunkId: string) => string | null;
+  onTrunkStarted?: (runId: string) => void;
+  branchRefusal?: () => string | null;
+  bindBranch?: (parentSessionId: string, sessionId: string) => boolean;
+  diffRefusal?: () => string | null;
+  maxReplyChars?: number;
+  topicRefusal?: () => string | null;
+  createTopic?: (name: string) => Promise<string>;
+  sessionRefusal?: () => string | null;
+  personalityRefusal?: () => string | null;
+  /** The sender is one of the accounts the owner named as their own (router `ownAccount`). */
+  ownAccount?: boolean;
   /** The message the command came in: who sent it, so a request to change Branch says so. */
   from?: { senderId: string; senderName: string; messageId: string };
   /** Drops a message that is still waiting to start. True when there was one. */
@@ -172,6 +205,7 @@ function status(context: CommandContext): string {
 function fresh(context: CommandContext): string {
   if (context.turn) return "I am still working on something. Send /stop first, then /new.";
   if (!context.sessionId) return "This chat has no conversation yet; your next message starts one.";
+  context.runtime.stopHelpers(context.sessionId); // helper-lifecycle: the helpers it started stop with it
   context.forget();
   return "Your next message starts a new conversation. The earlier one is kept in the app.";
 }

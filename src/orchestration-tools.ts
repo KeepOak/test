@@ -13,6 +13,8 @@ import { HelperSelectionSchema, helperRouteTarget, type HelperSelection } from "
  */
 /** Most children one task may run at the same time; the delegation limit in the runtime. */
 const parallelConcurrency = 4;
+/** A share of tokens as the model and the event log read it: a figure, or "no limit". */
+const shown = (tokens: number): number | string => (tokens === Infinity ? "no limit" : tokens);
 const ParallelTaskSchema = z.object({
   ...HelperSelectionSchema.shape,
   specialist: z.string().min(1).max(200),
@@ -45,12 +47,11 @@ export async function pooled<T, R>(items: T[], limit: number, work: (item: T, in
  */
 export async function runParallel(runtime: Runtime, knowledge: Knowledge, context: ToolContext, input: unknown) {
   const { tasks, failFast } = ParallelSchema.parse(input);
-  const share = Math.max(1, Math.floor(context.budget.remaining() / tasks.length));
-  const steps = Math.max(2, Math.floor((context.budget.limits.maxSteps - context.budget.steps) / tasks.length));
+  const shares = context.budget.share(tasks.length), share = shares.maxTokens;
   const stop = new AbortController();
   const budgets: Budget[] = [];
   const branches = await pooled(tasks, Math.min(tasks.length, parallelConcurrency), async (task, index) => {
-    const budget = new Budget({ maxSteps: steps, maxTokens: share });
+    const budget = new Budget(shares);
     budgets.push(budget);
     const branch: ToolContext = { ...context, budget, signal: AbortSignal.any([context.signal, stop.signal]) };
     const outcome = await oneBranch(runtime, knowledge, branch, task, index);
@@ -61,14 +62,14 @@ export async function runParallel(runtime: Runtime, knowledge: Knowledge, contex
   const spent = budgets.reduce((total, budget) => total + Math.min(budget.tokens, share), 0);
   if (context.runId)
     runtime.store.event(context.runId, "delegation.parallel", {
-      share, spent, failFast,
+      share: shown(share), spent, failFast,
       branches: branches.map((b) => ({ id: b.id, specialist: b.specialist, status: b.status, ...(b.runId ? { runId: b.runId } : {}) })),
     });
   // The branches spent from their own share; the total comes off this task's budget afterwards,
   // once every result is recorded, so a budget that runs out never loses work already paid for.
   context.budget.charge(spent);
   return {
-    branches, spent, tokensEach: share,
+    branches, spent, tokensEach: shown(share),
     synthesise: "Combine these branch answers into one answer for the person, and say plainly where a branch failed or where two disagree.",
   };
 }

@@ -57,14 +57,15 @@ test("this test needs a real browser, and says so", () => {
   assert.equal(chromium.name(), "chromium", "this test declares the browser engine it requires");
 });
 
-test("every comfort setting ships as Branch has always behaved, but for a chime and updating by itself", () => {
+test("every comfort setting ships as Branch has always behaved, but for a chime, updating by itself and the browser opening full size", () => {
   const values = allComfort(memoryStore(), "local");
   assert.deepEqual(values, {
-    keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "Ctrl+L", stopTask: "Ctrl+Shift+S", searchHistory: "Ctrl+Shift+F", lookInside: "", quickAsk: "Ctrl+Shift+Space", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab", previousConversation: "Ctrl+Shift+Tab", switchPerson: "", vim: false },
+    keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "Ctrl+L", stopTask: "Ctrl+Shift+S", lockdownOn: "Ctrl+Shift+L", searchHistory: "Ctrl+Shift+F", lookInside: "", quickAsk: "Ctrl+Shift+Space", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab", previousConversation: "Ctrl+Shift+Tab", switchPerson: "", vim: false },
     display: { statusLine: null, timestamps: false, hideTimes: false },
     notify: { method: "system", sound: "chime", needsYes: true, taskDone: true, autoUpdate: "install", releaseChannel: "stable" },
     voice: { pushToTalkKey: "", maxRecordingSeconds: null },
-    browser: { confirmSensitive: false, blockUploads: false, dialogs: "dismiss" },
+    browser: { confirmSensitive: false, blockUploads: false, dialogs: "dismiss", askNewSites: false, openFullSize: true, numberMarks: true,
+      recordTasks: false, downloadsFrom: "anywhere" },
     network: { proxy: null, noProxy: [], caCertificates: [] },
     files: { respectGitignore: true, extraIgnoreFiles: [] },
     mcp: { startupTimeoutSeconds: 10 },
@@ -457,9 +458,27 @@ test("beta checks every minute without changing stable or interrupting busy work
   assert.equal(updatePlan(store, "local", facts(60_000)).step, "nothing");
   records["comfort-notify"] = { autoUpdate: "install", releaseChannel: "beta" };
   assert.equal(updatePlan(store, "local", facts(60_000, { busyTasks: 1, updaterPhase: "available" })).step, "nothing");
-  assert.equal(updatePlan(store, "local", facts(60_000, { updaterPhase: "available" })).step, "install");
+  assert.equal(updatePlan(store, "local", facts(59_999, { updaterPhase: "available" })).step, "install");
   records["comfort-notify"].autoUpdate = "off";
   assert.equal(updatePlan(store, "local", facts(60_000)).step, "nothing");
+});
+
+/* The owner's copy retried one waiting Beta build every 30 s for 7.5 hours: while the updater said "available" the plan
+   said install and never looked, so the newer builds that landed were never seen. */
+test("a ready update that keeps waiting does not stop the looks: when a look is due the plan looks first", () => {
+  const records = { "comfort-notify": { autoUpdate: "install", releaseChannel: "beta" }, "ship-on-chosen": { "comfort-notify": ["autoUpdate"] } };
+  const store = { get: (_k, _o, key) => ({ data: records[key] }), save: (_k, _o, key, data) => { records[key] = data; } };
+  const start = new Date("2026-09-30T06:00:00Z");
+  noteUpdateCheck(store, "local", start);
+  const facts = (milliseconds, extra = {}) => ({ busyTasks: 0, updaterPhase: "available", updaterTag: "dev-aaaaaaa", now: new Date(+start + milliseconds), ...extra });
+  assert.equal(updatePlan(store, "local", facts(30_000)).step, "install", "control: within the look window the one found is installed");
+  const due = updatePlan(store, "local", facts(60_000));
+  assert.equal(due.step, "check", "a look is due, so it looks for a newer one first");
+  assert.match(due.reason, /before installing/);
+  assert.equal(updatePlan(store, "local", facts(60_000, { busyTasks: 1, workingTasks: 1 })).step, "nothing", "a working task still holds it");
+  assert.equal(updatePlan(store, "local", facts(60_000, { installRequested: true })).step, "install", "the owner's own request is unchanged");
+  noteUpdateCheck(store, "local", new Date(+start + 60_000));
+  assert.equal(updatePlan(store, "local", facts(60_500)).step, "install", "after the look, what it found is installed");
 });
 
 test("R17-S16: the status line says the pieces picked, in order, or nothing when kept as always", () => {

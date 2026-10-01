@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import { ReplyStream } from "../dist/channels/reply-stream.js";
+import { ReplyStream, ReplyDeliveryUncertain } from "../dist/channels/reply-stream.js";
 import { createBranch } from "../dist/index.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -48,7 +48,7 @@ test("revocation mid-stream prevents edits and timer sends", async () => {
   stream.text("Some words "); await delay(20);
   allowed = false;
   stream.text("more words "); await delay(20);
-  assert.equal(await stream.finish("Full answer"), null);
+  await assert.rejects(stream.finish("Full answer"), ReplyDeliveryUncertain);
   assert.equal(calls.length, 1);
 });
 test("long final answer places first chunk and returns every remaining chunk", async () => {
@@ -80,14 +80,16 @@ test("rate limits hold further edits without counting as permanent failure", asy
   assert.equal(placed.text, "Final answer.");
   assert.equal(calls.at(-1), "Final answer.");
 });
-test("quick answers, no ids, permanent edit failure and cancel fall back", async () => {
+test("quick answers and cancel stay unsent; missing acknowledgements and failed edits hold delivery", async () => {
   const quick = fixture(); quick.stream.text("Quick");
   assert.equal(await quick.stream.finish("Quick"), null);
   await delay(20); assert.deepEqual(quick.calls, []);
   const missing = fixture({ noId: true }); missing.stream.text("Preview words "); await delay(20);
-  assert.equal(await missing.stream.finish("Answer"), null);
+  await assert.rejects(missing.stream.finish("Answer"), ReplyDeliveryUncertain);
+  assert.equal(missing.calls.filter((call) => call.op === "send").length, 1, "a missing acknowledgement never prompts a duplicate send");
   const failed = fixture({ fail: true }); failed.stream.text("Preview words "); await delay(20);
-  assert.equal(await failed.stream.finish("Answer"), null);
+  await assert.rejects(failed.stream.finish("Answer"), (error) => error instanceof ReplyDeliveryUncertain && error.messageId === "r1");
+  assert.equal(failed.calls.filter((call) => call.op === "send").length, 1, "an acknowledged preview with failed edit is held for reconciliation");
   const cancelled = fixture(); cancelled.stream.text("Some words "); cancelled.stream.cancel();
   await delay(20); assert.deepEqual(cancelled.calls, []);
 });

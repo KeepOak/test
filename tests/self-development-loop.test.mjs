@@ -240,7 +240,7 @@ test("on Windows a held command runs inside WSL: wsl.exe --exec node, a Linux pr
   for (const [path, program] of [["C:/n/node.exe", "node"], ["C:/n/NPX.CMD", "npx"], ["C:/Program Files/Git/cmd/git.exe", "git"]])
     assert.equal(wslProgram(path), program);
   for (const path of ["C:/Windows/System32/cmd.exe", "C:/x/powershell.exe", "C:/x/bash.exe", "C:/x/node-evil.exe"])
-    assert.throws(() => wslProgram(path), /only node, npm, npx and git are available/);
+    assert.throws(() => wslProgram(path), /only node, npm, npx, git, python3, pip, pip3, pipx, uv, curl, wget \(python for python3\) are available/); // SELF-015
   assert.throws(() => wslHeldPlan({ executable: { path: "C:/n/node.exe", args: [] }, args: [], cwd: "//server/share", workspace: "//server/share",
     env: {}, secrets: [], registry: false, timeoutMs: 1 }), /WSL, which cannot reach this folder/);
   const start = wslHeldStart({ runner: "C:/app/dist/integrations/wsl-held-runner.js", planFile: "C:/Temp/branch-held-1/held-plan.json",

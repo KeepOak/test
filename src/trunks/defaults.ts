@@ -99,10 +99,16 @@ export function adoptOrphans(input: AdoptInput): { toDefault: number; toTheirTru
     JOIN tasks t ON t.id=e.run_id WHERE e.kind='trunk.turn' AND t.owner=? ORDER BY e.id`).all(input.owner)
     .map((row) => [String(row.s), String(row.trunk ?? "")] as const));
   let toDefault = 0, toTheirTrunk = 0;
+  // Migration must not change the authority of unfinished work. Its original
+  // continuation can settle first; a later ordinary turn may join the default.
+  const unfinished = new Set(db.prepare(`SELECT DISTINCT session_id AS s FROM tasks
+    WHERE owner=? AND status IN ('running','interrupted','needs_input')`).all(input.owner)
+    .map((row) => String(row.s)));
   input.store.atomically(() => {
     for (const sessionId of open) {
       if (left.has(sessionId)) continue;
       const theirs = lastTurn.get(sessionId);
+      if (!theirs && unfinished.has(sessionId)) continue;
       const trunkId = theirs && input.here.has(theirs) ? theirs : input.to;
       if (!input.threads.claim(sessionId, trunkId, trunkId === input.to ? "migrated" : "claimed")) continue;
       if (trunkId === input.to) toDefault++; else toTheirTrunk++;

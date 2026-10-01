@@ -1,8 +1,13 @@
 import { describeToolCall } from "../activity.js";
 import type { FeatureMode } from "../feature-switches.js";
 import type { Runtime } from "../runtime.js";
+import type { Run } from "../contracts.js";
+import { outsideSourceOf } from "../outside-origin.js";
 import { runOrigin } from "../key-context.js"; // bucket 19 (integration review)
-import { outsideSourceOf } from "../outside-origin.js"; // mac7/outside-resume
+import { withRecoveryContext } from "./recovery-context.js";
+import { recordedRecoveryPerson } from "./recorded-person.js";
+import { underProject } from "../project-scope.js";
+import { defaultProjectId } from "../projects.js";
 import { asPerson, currentPerson } from "../people/context.js"; // bucket 19 (integration review)
 import { scopeOf } from "../tool-gate.js";
 import type { Store } from "../store.js";
@@ -93,29 +98,44 @@ async function redoStep(input: RecoveryInput, runId: string, step: OpenStep): Pr
   if (step.redacted) return false;
   let args: unknown;
   try { args = JSON.parse(step.arguments); } catch { return false; }
-  // A chat message's step is checked as the chat's, with the chat's tools, never as the owner's own;
-  // mac7/outside-resume: so is a trigger's, a schedule's or another program's, as that source.
-  const origin = runOrigin(input.store, runId);
-  const outside = outsideSourceOf(input.store, runId);
-  const context = input.runtime.context({ runId, ...(outside
-    ? { source: outside, ...(origin.permissions ? { permissions: origin.permissions } : {}) } : {}) });
-  const check = input.runtime.checkPolicy(step.tool, args, context);
-  if (check.decision !== "allow") return false;
-  // Q63: the call done again is recorded like any other call, under the run it is done for, so what
-  // that run did can be read back (a team task settles from these records, src/team-reconcile.ts).
-  const recorded = { name: step.tool, id: step.callId, redone: true };
-  input.store.event(runId, "tool.started", { ...recorded, label: label(step) });
   try {
-    // mac5/manual-actions: redone where the rule and the owner's wall say, as the first attempt was.
-    const result = await input.runtime.registry.execute(step.tool, args, { ...context, ...scopeOf(input.runtime, step.tool, args, context, check) });
-    const shown = input.runtime.hideSecrets(result);
-    input.store.event(runId, "tool.completed", { ...recorded, result: shown, receipt: await input.store.receipts.sign(runId, step.callId, step.tool, shown) });
-    return replaceResult(input.store, step.sessionId, step.callId, { ok: true, result, status: "redone",
-      note: "Branch was restarted while this step ran; it changes nothing or gives the same result every time, so it was simply done again." });
+    return await withRecoveryContext(input, runId, async (context) => {
+      context.signal.throwIfAborted();
+      const check = input.runtime.checkPolicy(step.tool, args, context);
+      if (check.decision !== "allow") return false;
+      // Q63: the call done again is recorded like any other call, under the run it is done for, so what
+      // that run did can be read back (a team task settles from these records, src/team-reconcile.ts).
+      const recorded = { name: step.tool, id: step.callId, redone: true };
+      input.store.event(runId, "tool.started", { ...recorded, label: label(step) });
+      try {
+        // mac5/manual-actions: redone where the rule and the owner's wall say, as the first attempt was.
+        const result = await input.runtime.registry.execute(step.tool, args, { ...context, ...scopeOf(input.runtime, step.tool, args, context, check) });
+        context.signal.throwIfAborted();
+        const shown = input.runtime.hideSecrets(result);
+        const receipt = await input.store.receipts.sign(runId, step.callId, step.tool, shown);
+        context.signal.throwIfAborted();
+        input.store.event(runId, "tool.completed", { ...recorded, result: shown, receipt });
+        return replaceResult(input.store, step.sessionId, step.callId, { ok: true, result, status: "redone",
+          note: "Branch was restarted while this step ran; it changes nothing or gives the same result every time, so it was simply done again." });
+      } catch (error) {
+        input.store.event(runId, "tool.failed", { ...recorded, error: input.runtime.hideSecrets(error instanceof Error ? error.message : String(error)) });
+        return false;
+      }
+    });
   } catch (error) {
-    input.store.event(runId, "tool.failed", { ...recorded, error: input.runtime.hideSecrets(error instanceof Error ? error.message : String(error)) });
+    const reason = input.runtime.hideSecrets(error instanceof Error ? error.message : String(error));
+    input.store.event(runId, "recovery.context_unavailable", { callId: step.callId, reason });
+    input.store.finish(runId, "needs_input", reason);
+    input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });
+    input.runtime.notifyEvent("approval.needed", { runId, question: reason });
     return false;
   }
+}
+
+function checkRecovery(input: RecoveryInput, runId: string): void {
+  const signal = input.runtime.activeRunSignal(runId);
+  if (!signal) throw new Error("The interrupted recovery was stopped or paused.");
+  signal.throwIfAborted();
 }
 
 const label = (step: OpenStep): string => {
@@ -129,7 +149,10 @@ async function settleNotStarted(input: RecoveryInput, runId: string, step: OpenS
   if (runNow) {
     let args: unknown = null;
     try { args = JSON.parse(step.arguments); } catch { /* redo refuses it */ }
-    const evidence = step.effects === "none" ? null : await evidenceFor(step.tool, args, input.runtime.context({ runId }).workspace).catch(() => null);
+    const evidence = step.effects === "none" ? null : await withRecoveryContext(input, runId, (context) => evidenceFor(step.tool, args, context.workspace)).catch(() => null);
+    const signal = input.runtime.activeRunSignal(runId);
+    if (!signal) throw new Error("Recovery was stopped before its journal retry.");
+    signal.throwIfAborted();
     let started = false;
     try { input.journal.start(step.id, evidence); started = true; } catch { /* not written down, so not done */ }
     if (started && await redo(input, runId, { ...step, evidence, state: "started" })) {
@@ -147,6 +170,7 @@ async function settleNotStarted(input: RecoveryInput, runId: string, step: OpenS
 /** Settles one step; `settled` is false when it was left for the model or the owner, so later steps wait. */
 async function settleStep(input: RecoveryInput, runId: string, step: OpenStep, carryOn: boolean): Promise<{ decision: StepDecision; settled: boolean }> {
   const decision = await decideStep(step);
+  if (carryOn) checkRecovery(input, runId);
   if (decision === "not-started") return { decision, settled: await settleNotStarted(input, runId, step, carryOn) };
   if (decision === "done") {
     replaceResult(input.store, step.sessionId, step.callId, { ok: true, status: "verified",
@@ -156,6 +180,7 @@ async function settleStep(input: RecoveryInput, runId: string, step: OpenStep, c
   }
   if (decision === "not-done" || decision === "redo") {
     const done = carryOn && await redo(input, runId, step);
+    if (carryOn) checkRecovery(input, runId);
     if (done) input.journal.finish(step.id, "redone");
     else if (decision === "redo") input.journal.finish(step.id, "abandoned");
     else {
@@ -211,26 +236,116 @@ async function recoverRun(input: RecoveryInput, runId: string, steps: OpenStep[]
   // chat app sends the message again: that message is held, and the owner decides in the app.
   if (inbound) holdReplay(input, inbound.data as Record<string, unknown>, runId);
   const carryOn = input.mode === "on" && !input.askOnly && !inbound;
-  noteFinishedWithoutResult(input, run);
   const decided: { tool: string; decision: StepDecision }[] = [];
   const asks: OpenStep[] = [];
-  let clear = true;
-  for (const step of steps) {
-    // Once a step is left undecided, the ones the model asked for after it are not run ahead of it.
-    const { decision, settled } = await settleStep(input, runId, step, carryOn && clear);
-    clear &&= settled;
-    decided.push({ tool: step.tool, decision });
-    if (decision === "ask") asks.push(step);
-  }
-  if (asks.length) { askOwner(input, runId, asks); return { runId, outcome: "asked", steps: decided }; }
-  if (!carryOn) {
-    input.store.event(runId, "run.can_continue", { note: "Branch was restarted while this task was working. Continue it when you are ready." });
+  const checkProject = () => {
+    if (!run.project || input.store.sessionProject(run.sessionId) !== run.project
+      || !input.store.projects.list(run.owner).some((project) => project.id === run.project))
+      throw new Error("The interrupted task's original project is unknown, deleted or differs from its conversation. Reconcile it before continuing.");
+  };
+  let recovery: ReturnType<Runtime["beginInterruptedRecovery"]> | null = null;
+  try {
+    if (carryOn) {
+      const person = recordedRecoveryPerson(input.store, runId, input.runtime.owner);
+      if (person && !currentPerson()) return asPerson({ profileId: person, keyId: "resumed" }, () => recoverRun(input, runId, steps));
+    }
+    if (carryOn) recovery = input.runtime.beginInterruptedRecovery(runId);
+    // Reconcile the saved role and workspace before any journal retry or automatic model continuation.
+    if (carryOn) {
+      try { checkProject(); await withRecoveryContext(input, runId, async () => undefined); checkProject(); }
+      catch (error) {
+        recovery?.signal.throwIfAborted();
+        const reason = input.runtime.hideSecrets(error instanceof Error ? error.message : String(error));
+        input.store.finish(runId, "needs_input", reason);
+        input.store.event(runId, "recovery.context_unavailable", { reason });
+        input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });
+        input.runtime.notifyEvent("approval.needed", { runId, question: reason });
+        return { runId, outcome: "asked", steps: [] };
+      }
+    }
+    recovery?.signal.throwIfAborted();
+    noteFinishedWithoutResult(input, run);
+    let clear = true;
+    for (const step of steps) {
+      // Once a step is left undecided, the ones the model asked for after it are not run ahead of it.
+      recovery?.signal.throwIfAborted();
+      if (carryOn) checkProject();
+      const { decision, settled } = await settleStep(input, runId, step, carryOn && clear);
+      recovery?.signal.throwIfAborted();
+      clear &&= settled;
+      decided.push({ tool: step.tool, decision });
+      if (decision === "ask") asks.push(step);
+    }
+    if (input.store.run(runId)?.status === "needs_input") return { runId, outcome: "asked", steps: decided };
+    if (asks.length) { askOwner(input, runId, asks); return { runId, outcome: "asked", steps: decided }; }
+    if (!carryOn) {
+      input.store.event(runId, "run.can_continue", { note: "Branch was restarted while this task was working. Continue it when you are ready." });
+      return { runId, outcome: "offered", steps: decided };
+    }
+    recovery?.signal.throwIfAborted();
+    checkProject();
+    // Journal reconciliation has a saved context; normal resume must independently preserve that authority.
+    const restriction = await withRecoveryContext(input, runId, async (context, copy) => input.runtime.recoveryHandoff(runId, context, copy));
+    recovery?.signal.throwIfAborted();
+    checkProject();
+    // Each step keeps its call id, so a team task can tell which of them it has a record of (src/team-reconcile.ts).
+    // Record success only after normal resume has admitted its new run, not before its
+    // asynchronous authority checks. Rejection remains actionable on the original task.
+    let accept!: () => void, reject!: (error: unknown) => void;
+    const admission = new Promise<void>((resolve, fail) => { accept = resolve; reject = fail; });
+    let admitted = false;
+    recovery?.release();
+    const resumed = underProject(run.project ?? defaultProjectId, () => input.runtime.resume(runId, restriction, (next) => {
+      input.store.event(runId, "run.auto_resumed", { resumedRunId: next.id,
+        steps: steps.map((step, index) => ({ ...decided[index], callId: step.callId })) });
+      admitted = true;
+      accept();
+    })).then((result) => {
+      if (!admitted) reject(new Error(result?.output
+        ? `The continuation was not admitted: ${result.output}` : "The continuation finished without a recorded admission receipt."));
+      return result;
+    }).catch((error: unknown) => {
+      if (!admitted) reject(error);
+      else {
+        const reason = input.runtime.hideSecrets(error instanceof Error ? error.message : String(error));
+        input.store.event(runId, "recovery.continuation_failed", { reason });
+        input.store.finish(runId, "needs_input", reason);
+        input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });
+        input.runtime.notifyEvent("approval.needed", { runId, question: reason });
+      }
+      return undefined;
+    });
+    await admission;
+    return { runId, outcome: "resumed", steps: decided, resumed };
+  } catch (error) {
+    const reason = input.runtime.hideSecrets(error instanceof Error ? error.message : String(error));
+    if (recovery?.signal.aborted) {
+      const stopped = recovery.signal.reason instanceof Error ? recovery.signal.reason.message : reason;
+      input.store.event(runId, "run.recovery_stopped", { reason: input.runtime.hideSecrets(stopped) });
+      if (recovery.cancelled()) {
+        // Registered recovery Stop returns through runtime.cancel, bypassing the server's
+        // waiting-task cleanup. Abandon only this task's plan, never a newer session plan.
+        if (input.runtime.orchestration.plan(run.sessionId)?.runId === runId)
+          input.runtime.orchestration.clearPlan(run.sessionId);
+        input.store.finish(runId, "cancelled", "Stopped during interrupted recovery. No automatic continuation was started.");
+        return { runId, outcome: "gone", steps: decided };
+      }
+      input.store.finish(runId, "needs_input", reason);
+      input.store.event(runId, "recovery.context_unavailable", { reason });
+      input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });
+      input.runtime.notifyEvent("approval.needed", { runId, question: reason });
+      return { runId, outcome: "asked", steps: decided };
+    }
+    if (recovery) {
+      input.store.finish(runId, "needs_input", reason);
+      input.store.event(runId, "recovery.context_unavailable", { reason });
+      input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });
+      input.runtime.notifyEvent("approval.needed", { runId, question: reason });
+      return { runId, outcome: "asked", steps: decided };
+    }
+    input.store.event(runId, "run.can_continue", { note: reason });
     return { runId, outcome: "offered", steps: decided };
-  }
-  // Each step keeps its call id, so a team task can tell which of them it has a record of (src/team-reconcile.ts).
-  input.store.event(runId, "run.auto_resumed", { steps: steps.map((step, index) => ({ ...decided[index], callId: step.callId })) });
-  const resumed = input.runtime.resume(runId).catch(() => undefined);
-  return { runId, outcome: "resumed", steps: decided, resumed };
+  } finally { recovery?.release(); }
 }
 
 /** True when a step of this task that could reach the outside world was started, whatever became of it. */
@@ -274,18 +389,46 @@ const settledKinds = new Set(["run.auto_resumed", "run.can_continue", "run.left_
 /**
  * hot-update: tasks an engine stopped after a whole step so a newer engine could take over (`run.handed_over`). Whichever
  * engine starts next (the new one, or the old one again when the new one failed its check) carries each on once: the
- * carry-on is written down (`run.auto_resumed`) before it starts, so no later start carries it on a second time. No step
+ * carry-on is written down (`run.auto_resumed`) when the replacement task is admitted. No step
  * was cut off, so nothing is checked or done again; a chat app's task is carried on too, since that app sends nothing again.
  */
-export function resumeHandedOver(input: Pick<RecoveryInput, "store" | "runtime" | "maxAgeMs">): { runId: string; resumed: Promise<unknown> }[] {
+type HandedOverContinuation = { runId: string; resumed: Promise<Run | undefined>; admission: Promise<boolean> };
+const pendingHandovers = new WeakMap<Runtime, Map<string, HandedOverContinuation>>();
+export function resumeHandedOver(input: Pick<RecoveryInput, "store" | "runtime" | "maxAgeMs">): HandedOverContinuation[] {
   const since = new Date(Date.now() - (input.maxAgeMs ?? 86_400_000)).toISOString();
   const rows = input.store.sqlite.prepare(`SELECT DISTINCT t.id AS id FROM tasks t JOIN events e ON e.run_id=t.id AND e.kind='run.handed_over'
     WHERE t.status='interrupted' AND t.updated_at >= ? AND NOT EXISTS (SELECT 1 FROM events x WHERE x.run_id=t.id AND x.kind='run.auto_resumed')
     ORDER BY t.created_at`).all(since) as { id: unknown }[];
+  let pending = pendingHandovers.get(input.runtime);
+  if (!pending) { pending = new Map(); pendingHandovers.set(input.runtime, pending); }
+  const active = pending;
   return rows.map((row) => {
     const runId = String(row.id);
-    input.store.event(runId, "run.auto_resumed", { steps: [], handedOver: true });
-    return { runId, resumed: input.runtime.resume(runId).catch(() => undefined) };
+    const existing = active.get(runId);
+    if (existing) return existing;
+    let admitted = false;
+    let receipt!: (accepted: boolean) => void;
+    const admission = new Promise<boolean>((resolve) => { receipt = resolve; });
+    const resumed = input.runtime.resume(runId, undefined, (next) => {
+      input.store.event(runId, "run.auto_resumed", { steps: [], handedOver: true, resumedRunId: next.id });
+      admitted = true;
+      receipt(true);
+    }).then((result) => {
+      if (!admitted) throw new Error(result?.output
+        ? `The handed-over continuation was not admitted: ${result.output}` : "The handed-over continuation finished without a recorded admission receipt.");
+      return result;
+    }).catch((error: unknown) => {
+      receipt(false);
+      const reason = input.runtime.hideSecrets(error instanceof Error ? error.message : String(error));
+      input.store.event(runId, "recovery.continuation_failed", { reason, handedOver: true, admitted });
+      input.store.finish(runId, "needs_input", reason);
+      input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });
+      input.runtime.notifyEvent("approval.needed", { runId, question: reason });
+      return undefined;
+    }).finally(() => { active.delete(runId); });
+    const continuation = { runId, resumed, admission };
+    active.set(runId, continuation);
+    return continuation;
   });
 }
 
@@ -335,17 +478,26 @@ export function lateNote(dueAt: unknown, now: Date, graceMs = 120_000): string |
 }
 
 /**
- * A repeating job whose turn was cut off by the restart goes back on the list for its next turn,
- * instead of staying stuck as "interrupted" for ever. The cut-off turn itself is settled with its task.
+ * Every interrupted job turn is settled independently of task replay. A repeating job moves to its
+ * next turn; a one-time job stays failed until the owner asks to run it, never replaying side effects.
  */
 export function releaseInterruptedSchedules(store: Store, nextTurn: (data: Record<string, unknown>, now: Date) => string, now = new Date()): number {
   const rows = store.sqlite.prepare("SELECT id, owner, data FROM schedules WHERE json_extract(data,'$.status')='interrupted'").all();
   let released = 0;
   for (const row of rows) {
     const data = JSON.parse(String(row.data)) as Record<string, unknown>;
-    if (typeof data.intervalMs !== "number" && typeof data.dailyAt !== "string" && typeof data.cron !== "string") continue;
-    store.save("schedules", String(row.owner), String(row.id), { ...data, status: "pending", dueAt: nextTurn(data, now),
-      lastInterruption: { at: now.toISOString(), note: "Branch was restarted during this job's turn. That turn is settled with its task; the job carries on at its next turn." } });
+    const repeats = typeof data.intervalMs === "number" || typeof data.dailyAt === "string" || typeof data.cron === "string";
+    let status = repeats ? "pending" : "failed", dueAt = data.dueAt;
+    let note = repeats ? "Branch restarted during this job's turn. That turn was interrupted; the job carries on at its next turn."
+      : "Branch restarted during this one-time job. It was not replayed because its steps may already have taken effect. Review its task, then use Run now if needed.";
+    if (repeats) try { dueAt = nextTurn(data, now); }
+    catch { status = "failed"; note = "Branch restarted during this job, and its next turn could not be calculated. Review the schedule before running it again."; }
+    const history = Array.isArray(data.history) ? data.history.map((entry: unknown) => {
+      if (!entry || typeof entry !== "object" || (entry as { status?: unknown }).status !== "running") return entry;
+      return { ...entry, status: "interrupted", finishedAt: now.toISOString() };
+    }) : [];
+    store.save("schedules", String(row.owner), String(row.id), { ...data, status, dueAt, history,
+      ...(status === "failed" ? { error: note } : {}), lastInterruption: { at: now.toISOString(), note } });
     released++;
   }
   return released;
@@ -353,18 +505,21 @@ export function releaseInterruptedSchedules(store: Store, nextTurn: (data: Recor
 
 /**
  * What a real start (the app window, the background engine, or an engine run by the gateway) does
- * once it is listening: settle interrupted tasks and put cut-off repeating jobs back on the list.
- * With the switch off it does nothing, which is how Branch behaved before.
+ * once it is listening: settle interrupted jobs and, with task replay on, recover interrupted tasks.
+ * Settling a job never runs its interrupted turn, even when task replay is switched off.
  */
 export async function recoverOnStart(input: RecoveryInput & { nextTurn: (data: Record<string, unknown>, now: Date) => string }): Promise<RecoveredRun[]> {
+  const released = releaseInterruptedSchedules(input.store, input.nextTurn);
   // hot-update: a newer engine carries them on only once it has passed its check (main asks it to, `carryOnHandedOver`).
   const handedOver = process.env.BRANCH_HOLD_HANDED_OVER === "1" ? [] : resumeHandedOver(input);
-  if (handedOver.length) console.log(`Carried on from the engine this one replaced: ${handedOver.length} task(s).`);
-  if (input.mode === "off") return handedOver.map(({ runId, resumed }) => ({ runId, outcome: "resumed" as const, steps: [], resumed }));
-  const released = releaseInterruptedSchedules(input.store, input.nextTurn);
-  const report = await recoverAfterRestart({ ...input, askOnly: input.askOnly || process.env.BRANCH_RESUME === "ask" });
+  const handoverReport: RecoveredRun[] = await Promise.all(handedOver.map(async ({ runId, resumed, admission }) => ({
+    runId, outcome: await admission ? "resumed" as const : "asked" as const, steps: [], resumed,
+  })));
+  if (handoverReport.length) console.log(`Engine handover reconciled: ${handoverReport.filter((run) => run.outcome === "resumed").length} admitted, ${handoverReport.filter((run) => run.outcome === "asked").length} held.`);
+  if (input.mode === "off") return handoverReport;
+  const report = [...handoverReport, ...await recoverAfterRestart({ ...input, askOnly: input.askOnly || process.env.BRANCH_RESUME === "ask" })];
   const counts = report.reduce<Record<string, number>>((all, run) => ({ ...all, [run.outcome]: (all[run.outcome] ?? 0) + 1 }), {});
   if (report.length || released)
-    console.log(`Picked up after a restart: ${JSON.stringify(counts)}; repeating jobs put back: ${released}.`);
+    console.log(`Picked up after a restart: ${JSON.stringify(counts)}; interrupted jobs settled: ${released}.`);
   return report;
 }

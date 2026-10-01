@@ -24,9 +24,11 @@ import { ic, toast, openDlg, closeDlg } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
+import { reason } from "../core/why.js";
 import { pill17, btn17 } from "./parts17.js";
 import { onDemo17, demoPlace17, demoDlg17 } from "./demo17.js";
 import { t, language } from "../../i18n.js";
+import { openPriceWatches, initPriceWatches } from "../flows/price-watch.js";
 
 const A = { orders: [], loops: [], paused: null, pauseKnown: false, pauseError: "" };
 
@@ -133,10 +135,8 @@ function registerDemos() {
     demoDlg17("ledger", { title: t("window.places.automations17.ready-to-run-alone"), lead: t("window.places.automations17.the-ledger-lists-every-choice-an"), rows: entries.map((e) => [e.title, e.detail, ["idle", e.status]]) });
   } });
   onDemo17("holidays", { open: () => openHolidays(), go: () => addDayOff() });
-  onDemo17("watches", { open: async () => {
-    const { monitors } = await api("monitors");
-    demoDlg17("watches", { title: t("window.places.automations17.watches"), lead: t("window.places.automations17.what-your-trunks-are-watching"), go: t("window.places.automations17.add-a-watch"), rows: monitors.map((m) => [m.label || m.target, m.target, ["ok", t("window.places.automations17.watching")]]) });
-  } });
+  initPriceWatches();
+  onDemo17("watches", { open: () => openPriceWatches() });
   onDemo17("leads", { open: async () => {
     const { top } = await api("asks/leads");
     shown.leads = top;
@@ -156,7 +156,8 @@ function registerDemos() {
   }, go: () => sendTest() });
   onDemo17("hooks", { open: async () => {
     const { hooks } = await api("hooks");
-    demoDlg17("hooks", { title: t("window.places.automations17.before-and-after-each-step"), lead: t("window.places.automations17.hooks-on-this-computer"), go: t("window.places.automations17.run-the-checks"), rows: hooks.map((h) => [h.event, h.executable, onOff(h.enabled)]) });
+    // No primary: Branch runs each hook only when its event happens, never by hand, and the lead says so (window.why.d17-hooks-go).
+    demoDlg17("hooks", { title: t("window.places.automations17.before-and-after-each-step"), lead: `${t("window.places.automations17.hooks-on-this-computer")} ${reason("d17-hooks-go")}`, go: "", rows: hooks.map((h) => [h.event, h.executable, onOff(h.enabled)]) });
   } });
   onDemo17("turnhook", { open: async () => {
     const { hooks } = await api("hooks");

@@ -8,6 +8,7 @@ import type { Store } from "./store.js";
 import type { Runtime } from "./runtime.js";
 import { makeScorer, scoreAll, type Evaluator, type ScoredTask, type ScoredTrajectory, type ScorerContext, type ScoreResult } from "./evaluation-scorers.js";
 import { estimateCost, pricingSettings } from "./pricing.js";
+import { evaluationHelpers } from "./evaluation-helper-receipts.js";
 
 /**
  * One finished task read back in the shape a scorer understands. Tool calls and their arguments
@@ -31,7 +32,8 @@ export function readTrajectory(
   // the events the runtime writes as each round starts. "model.selected" is written once per task,
   // not once per round, so counting that would make every budget on rounds pass.
   const steps = store.events(runId).filter((event) => event.kind === "model.started").length;
-  return { runId, calls, steps: steps || messages.filter((message) => message.role === "assistant").length, ...extras };
+  return { runId, calls, helpers: evaluationHelpers(store, runId),
+    steps: steps || messages.filter((message) => message.role === "assistant").length, ...extras };
 }
 
 /**
